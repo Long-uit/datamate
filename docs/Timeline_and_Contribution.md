@@ -175,16 +175,16 @@ Thư mục `research/reviews/` chứa 35 bản tóm tắt phân tích chuyên s�
 > **Mục tiêu đọc:** Nắm vững cơ chế tính điểm phạt của cuộc thi và kiến trúc tối giản chuyển câu hỏi thành mã Python/SQL.
 
 - **Tài liệu đọc chung (Long & Phát):**
-  - [Benchmarking Text-to-SQL Reliability with Penalty-Based Scoring.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/Benchmarking%20Text-to-SQL%20Reliability%20with%20Penalty-Based%20Scoring.md) (**TrustSQL**): Bản lề lý thuyết của thước đo Penalized Accuracy ($PA = +1 / 0 / -1$). Cả hai cần hiểu tại sao đoán mò là "tự sát" ($E[s] < 0$ khi confidence $< 0.5$) và kiêng trả lời (*abstain*) là chiến lược sống còn.
-  - [A Survey of Text-to-SQL in the Era of LLMs.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/A%20Survey%20of%20Text-to-SQL%20in%20the%20Era%20of%20LLMs.md): Nắm bức tranh toàn cảnh về quy trình Text-to-SQL hiện đại (Schema Linking $\to$ Code Generation $\to$ Execution).
+  - [Benchmarking Text-to-SQL Reliability with Penalty-Based Scoring.md](../research/reviews/Benchmarking%20Text-to-SQL%20Reliability%20with%20Penalty-Based%20Scoring.md) (**TrustSQL**): Bản lề lý thuyết của thước đo Penalized Accuracy ($PA = +1 / 0 / -1$). Cả hai cần hiểu tại sao đoán mò là "tự sát" ($E[s] < 0$ khi confidence $< 0.5$) và kiêng trả lời (*abstain*) là chiến lược sống còn.
+  - [A Survey of Text-to-SQL in the Era of LLMs.md](../research/reviews/A%20Survey%20of%20Text-to-SQL%20in%20the%20Era%20of%20LLMs.md): Nắm bức tranh toàn cảnh về quy trình Text-to-SQL hiện đại (Schema Linking $\to$ Code Generation $\to$ Execution).
 
 - **Tài liệu dành cho Long (AI Architect & Model Lead):**
-  - [SheetBrain.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/SheetBrain.md): Học cách thiết kế prompt hướng dẫn LLM đóng vai trò lập trình viên phân tích dữ liệu, sinh mã Python/Pandas thực thi tất định thay vì để LLM tự tính toán nhẩm số học.
-  - [Towards Building Open-source Language Models for Text-to-SQL.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/Towards%20Building%20Open-source%20Language%20Models%20for%20Text-to-SQL.md) (**CodeS**): Đánh giá năng lực các mô hình Coder chuyên trách phân khúc nhỏ ($\le 15\text{B}$ tham số) như Qwen2.5-Coder và thiết lập tham số suy luận chuẩn (Greedy Decoding $T=0$).
+  - [SheetBrain.md](../research/reviews/SheetBrain.md): Học cách thiết kế prompt hướng dẫn LLM đóng vai trò lập trình viên phân tích dữ liệu, sinh mã Python/Pandas thực thi tất định thay vì để LLM tự tính toán nhẩm số học.
+  - [Towards Building Open-source Language Models for Text-to-SQL.md](../research/reviews/Towards%20Building%20Open-source%20Language%20Models%20for%20Text-to-SQL.md) (**CodeS**): Đánh giá năng lực các mô hình Coder chuyên trách phân khúc nhỏ ($\le 15\text{B}$ tham số) như Qwen2.5-Coder và thiết lập tham số suy luận chuẩn (Greedy Decoding $T=0$).
 
 - **Tài liệu dành cho Phát (Data Engineer & System Lead):**
-  - [Encoding Spreadsheets for Large Language Models.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/Encoding%20Spreadsheets%20for%20Large%20Language%20Models.md) (**SpreadSheetLLM**): Tìm hiểu đặc thù cấu trúc bảng tính (ô trống, ô gộp, đa bảng) để thiết kế parser nạp dữ liệu thô ban đầu không làm thất thoát thông tin.
-  - [Can LLM Already Serve as A Database Interface.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/Can%20LLM%20Already%20Serve%20as%20A%20Database%20Interface.md): Kỹ thuật ánh xạ dữ liệu file phẳng (CSV, Excel) vào cấu trúc bảng cơ sở dữ liệu quan hệ tối giản.
+  - [Encoding Spreadsheets for Large Language Models.md](../research/reviews/Encoding%20Spreadsheets%20for%20Large%20Language%20Models.md) (**SpreadSheetLLM**): Tìm hiểu đặc thù cấu trúc bảng tính (ô trống, ô gộp, đa bảng) để thiết kế parser nạp dữ liệu thô ban đầu không làm thất thoát thông tin.
+  - [Can LLM Already Serve as A Database Interface.md](../research/reviews/Can%20LLM%20Already%20Serve%20as%20A%20Database%20Interface.md): Kỹ thuật ánh xạ dữ liệu file phẳng (CSV, Excel) vào cấu trúc bảng cơ sở dữ liệu quan hệ tối giản.
 
 ---
 
@@ -192,17 +192,17 @@ Thư mục `research/reviews/` chứa 35 bản tóm tắt phân tích chuyên s�
 > **Mục tiêu đọc:** Xây dựng lá chắn phát hiện câu hỏi bất khả thi (`unanswerable`), xử lý dữ liệu bảng bẩn và chuẩn hóa thực thể tiếng Việt.
 
 - **Tài liệu đọc chung (Long & Phát):**
-  - [A Practical Text-to-SQL Benchmark for Electronic Health Records.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/A%20Practical%20Text-to-SQL%20Benchmark%20for%20Electronic%20Health%20Records.md) (**EHRSQL**): Nghiên cứu cách phân loại câu hỏi không thể trả lời (*unanswerable questions*) trong thực tế (thiếu dữ liệu, hỏi ngoài phạm vi thời gian) để cả hai thống nhất ranh giới giữa trả lời và từ chối.
+  - [A Practical Text-to-SQL Benchmark for Electronic Health Records.md](../research/reviews/A%20Practical%20Text-to-SQL%20Benchmark%20for%20Electronic%20Health%20Records.md) (**EHRSQL**): Nghiên cứu cách phân loại câu hỏi không thể trả lời (*unanswerable questions*) trong thực tế (thiếu dữ liệu, hỏi ngoài phạm vi thời gian) để cả hai thống nhất ranh giới giữa trả lời và từ chối.
 
 - **Tài liệu dành cho Long (AI Architect & Model Lead):**
-  - [AbstentionBench.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/AbstentionBench.md): **Cảnh báo cốt tử:** Các mô hình Reasoning bị ảo giác tự tin (+24%) trên câu hỏi bất khả thi. *Long áp dụng:* Kiên quyết dùng **Deterministic Feasibility Gate** (kiểm tra code logic cứng về Date Range và cột thiếu) để gán nhãn `unanswerable` ăn +1 điểm, tuyệt đối không để LLM đoán mò.
-  - [Query Carefully.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/Query%20Carefully.md): Kỹ thuật nhận diện các câu hỏi vi phạm ràng buộc dữ liệu hoặc hỏi vượt quá dữ liệu hiện có của doanh nghiệp.
-  - [Disambiguate First, Parse Later.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/Disambiguate%20First,%20Parse%20Later.md) & [AmbiSQL.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/AmbiSQL.md): Kỹ thuật giải quyết sự đa nghĩa của câu hỏi bằng cách đối chiếu với từ điển quy tắc (Rulebook Injection).
+  - [AbstentionBench.md](../research/reviews/AbstentionBench.md): **Cảnh báo cốt tử:** Các mô hình Reasoning bị ảo giác tự tin (+24%) trên câu hỏi bất khả thi. *Long áp dụng:* Kiên quyết dùng **Deterministic Feasibility Gate** (kiểm tra code logic cứng về Date Range và cột thiếu) để gán nhãn `unanswerable` ăn +1 điểm, tuyệt đối không để LLM đoán mò.
+  - [Query Carefully.md](../research/reviews/Query%20Carefully.md): Kỹ thuật nhận diện các câu hỏi vi phạm ràng buộc dữ liệu hoặc hỏi vượt quá dữ liệu hiện có của doanh nghiệp.
+  - [Disambiguate First, Parse Later.md](../research/reviews/Disambiguate%20First,%20Parse%20Later.md) & [AmbiSQL.md](../research/reviews/AmbiSQL.md): Kỹ thuật giải quyết sự đa nghĩa của câu hỏi bằng cách đối chiếu với từ điển quy tắc (Rulebook Injection).
 
 - **Tài liệu dành cho Phát (Data Engineer & System Lead):**
-  - [Large Language Models for Spreadsheets.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/Large%20Language%20Models%20for%20Spreadsheets.md) & [FinSheet-Bench.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/FinSheet-Bench.md): Kỹ thuật làm sạch bảng tính (Rule 8: Group forward-fill các ô trống cấp đơn hàng, lọc trùng lặp) và ánh xạ các công thức nghiệp vụ tài chính.
-  - [Contextual Harnessing for Efficient SQL Synthesis.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/Contextual%20Harnessing%20for%20Efficient%20SQL%20Synthesis.md) (**CHESS**): Áp dụng kỹ thuật Candidate Values Retrieval (kết hợp BM25 + Jaro-Winkler) để xây dựng Entity Linker nhận diện tên sản phẩm, size cà phê, tên khách hàng viết tắt/teencode.
-  - [SchemaGraphSQL.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/SchemaGraphSQL.md) & [LinkAlign.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/LinkAlign.md): Cách xây dựng đồ thị liên kết bảng (Schema Linking) và đánh chỉ mục (Index) trên SQLite In-Memory để tăng tốc độ JOIN bảng lên hàng trăm lần.
+  - [Large Language Models for Spreadsheets.md](../research/reviews/Large%20Language%20Models%20for%20Spreadsheets.md) & [FinSheet-Bench.md](../research/reviews/FinSheet-Bench.md): Kỹ thuật làm sạch bảng tính (Rule 8: Group forward-fill các ô trống cấp đơn hàng, lọc trùng lặp) và ánh xạ các công thức nghiệp vụ tài chính.
+  - [Contextual Harnessing for Efficient SQL Synthesis.md](../research/reviews/Contextual%20Harnessing%20for%20Efficient%20SQL%20Synthesis.md) (**CHESS**): Áp dụng kỹ thuật Candidate Values Retrieval (kết hợp BM25 + Jaro-Winkler) để xây dựng Entity Linker nhận diện tên sản phẩm, size cà phê, tên khách hàng viết tắt/teencode.
+  - [SchemaGraphSQL.md](../research/reviews/SchemaGraphSQL.md) & [LinkAlign.md](../research/reviews/LinkAlign.md): Cách xây dựng đồ thị liên kết bảng (Schema Linking) và đánh chỉ mục (Index) trên SQLite In-Memory để tăng tốc độ JOIN bảng lên hàng trăm lần.
 
 ---
 
@@ -210,18 +210,18 @@ Thư mục `research/reviews/` chứa 35 bản tóm tắt phân tích chuyên s�
 > **Mục tiêu đọc:** Tối ưu hóa kỹ thuật Fine-Tuning mô hình Coder $\le 15\text{B}$, tạo dữ liệu tổng hợp quy mô lớn và thiết lập cơ chế tự sửa lỗi trong Sandbox.
 
 - **Tài liệu đọc chung (Long & Phát):**
-  - [Evaluating Language Models on Real-World Enterprise Text-to-SQL Workflows.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/Evaluating%20Language%20Models%20on%20Real-World%20Enterprise%20Text-to-SQL%20Workflows.md) (**BIRD**): Nghiên cứu phương pháp Error Analysis trong các workflow cơ sở dữ liệu doanh nghiệp phức tạp để cùng phân tích các câu bị phạt (-1) trên dev set hàng ngày.
+  - [Evaluating Language Models on Real-World Enterprise Text-to-SQL Workflows.md](../research/reviews/Evaluating%20Language%20Models%20on%20Real-World%20Enterprise%20Text-to-SQL%20Workflows.md) (**BIRD**): Nghiên cứu phương pháp Error Analysis trong các workflow cơ sở dữ liệu doanh nghiệp phức tạp để cùng phân tích các câu bị phạt (-1) trên dev set hàng ngày.
 
 - **Tài liệu dành cho Long (AI Architect & Model Lead):**
-  - [Simple Rewards, Strong Reasoning in Text-to-SQL.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/Simple%20Rewards,%20Strong%20Reasoning%20in%20Text-to-SQL.md) (**Arctic-Text2SQL-R1**): Kỹ thuật huấn luyện suy luận sâu với phần thưởng thực thi (Execution Feedback DPO/GRPO): Thưởng +1 khi script chạy khớp đáp án, phạt -1 khi script lỗi cú pháp hoặc tính sai.
-  - [A Multi-Agent Collaborative Framework for Text-to-SQL.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/A%20Multi-Agent%20Collaborative%20Framework%20for%20Text-to-SQL.md) (**MAC-SQL**) & [MAGIC.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/MAGIC.md): Cách thiết lập vòng lặp tự sửa lỗi (Self-Correction Loop) trong Execution Sandbox: bắt traceback lỗi runtime/syntax và đưa lại cho LLM sửa (giới hạn tối đa 2 vòng).
-  - [ExCoT.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/ExCoT.md) (Execution-guided Chain-of-Thought): Kỹ thuật sinh mã từng bước gắn liền với kết quả thực thi trung gian.
-  - [Encoding Spreadsheets for Large Language Models.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/Encoding%20Spreadsheets%20for%20Large%20Language%20Models.md) (Phần **SheetCompressor**): Kỹ thuật nén schema (chỉ nạp tên bảng, danh sách cột, kiểu dữ liệu, từ điển phân loại và 3 dòng mẫu) giúp tiết kiệm context window và tăng tốc suy luận.
+  - [Simple Rewards, Strong Reasoning in Text-to-SQL.md](../research/reviews/Simple%20Rewards,%20Strong%20Reasoning%20in%20Text-to-SQL.md) (**Arctic-Text2SQL-R1**): Kỹ thuật huấn luyện suy luận sâu với phần thưởng thực thi (Execution Feedback DPO/GRPO): Thưởng +1 khi script chạy khớp đáp án, phạt -1 khi script lỗi cú pháp hoặc tính sai.
+  - [A Multi-Agent Collaborative Framework for Text-to-SQL.md](../research/reviews/A%20Multi-Agent%20Collaborative%20Framework%20for%20Text-to-SQL.md) (**MAC-SQL**) & [MAGIC.md](../research/reviews/MAGIC.md): Cách thiết lập vòng lặp tự sửa lỗi (Self-Correction Loop) trong Execution Sandbox: bắt traceback lỗi runtime/syntax và đưa lại cho LLM sửa (giới hạn tối đa 2 vòng).
+  - [ExCoT.md](../research/reviews/ExCoT.md) (Execution-guided Chain-of-Thought): Kỹ thuật sinh mã từng bước gắn liền với kết quả thực thi trung gian.
+  - [Encoding Spreadsheets for Large Language Models.md](../research/reviews/Encoding%20Spreadsheets%20for%20Large%20Language%20Models.md) (Phần **SheetCompressor**): Kỹ thuật nén schema (chỉ nạp tên bảng, danh sách cột, kiểu dữ liệu, từ điển phân loại và 3 dòng mẫu) giúp tiết kiệm context window và tăng tốc suy luận.
 
 - **Tài liệu dành cho Phát (Data Engineer & System Lead):**
-  - [Synthesizing High-quality Text-to-SQL Data at Scale.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/Synthesizing%20High-quality%20Text-to-SQL%20Data%20at%20Scale.md) (**SynSQL**): Kỹ thuật sinh dữ liệu tổng hợp (Synthetic Data) chất lượng cao: mở rộng 15.000 – 20.000 mẫu câu hỏi tiếng Việt có/không dấu, teencode ("dthu", "hnay"), biến thể mùa vụ Tết và các câu hỏi unanswerable gài bẫy.
-  - [ReAcTable.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/ReAcTable.md): Phân chia kiến trúc Dual-Engine: đẩy các tác vụ lọc/nhóm/tính tổng cho SQLite xử lý tốc độ cao, và dùng Python xử lý các logic phức tạp (quy đổi đơn vị đa tầng, xử lý lịch âm).
-  - [AutoLink.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/AutoLink.md): Kỹ thuật liên kết thực thể tự động giữa ngôn ngữ tự nhiên và cơ sở dữ liệu để lọc sạch dữ liệu huấn luyện SFT.
+  - [Synthesizing High-quality Text-to-SQL Data at Scale.md](../research/reviews/Synthesizing%20High-quality%20Text-to-SQL%20Data%20at%20Scale.md) (**SynSQL**): Kỹ thuật sinh dữ liệu tổng hợp (Synthetic Data) chất lượng cao: mở rộng 15.000 – 20.000 mẫu câu hỏi tiếng Việt có/không dấu, teencode ("dthu", "hnay"), biến thể mùa vụ Tết và các câu hỏi unanswerable gài bẫy.
+  - [ReAcTable.md](../research/reviews/ReAcTable.md): Phân chia kiến trúc Dual-Engine: đẩy các tác vụ lọc/nhóm/tính tổng cho SQLite xử lý tốc độ cao, và dùng Python xử lý các logic phức tạp (quy đổi đơn vị đa tầng, xử lý lịch âm).
+  - [AutoLink.md](../research/reviews/AutoLink.md): Kỹ thuật liên kết thực thể tự động giữa ngôn ngữ tự nhiên và cơ sở dữ liệu để lọc sạch dữ liệu huấn luyện SFT.
 
 ---
 
@@ -229,13 +229,13 @@ Thư mục `research/reviews/` chứa 35 bản tóm tắt phân tích chuyên s�
 > **Mục tiêu đọc:** Hiệu chuẩn ngưỡng từ chối an toàn $\tau^*$ để tối đa hóa điểm PA, tối ưu hóa runtime offline và hoàn thiện hệ thống khép kín.
 
 - **Tài liệu đọc chung (Long & Phát):**
-  - [WorkstreamBench.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/WorkstreamBench.md): Bài học về kiểm thử độ ổn định (Reliability) và tính tái lập (Reproducibility) trong các hệ thống phân tích tự hành doanh nghiệp.
+  - [WorkstreamBench.md](../research/reviews/WorkstreamBench.md): Bài học về kiểm thử độ ổn định (Reliability) và tính tái lập (Reproducibility) trong các hệ thống phân tích tự hành doanh nghiệp.
 
 - **Tài liệu dành cho Long (AI Architect & Model Lead):**
-  - [LatentRefusal.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/LatentRefusal.md) & [AbstentionBench.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/AbstentionBench.md): Cơ chế hiệu chuẩn độ bất định (Uncertainty Estimation) để xây dựng **Calibrated Abstention Gate**: tính điểm tin cậy $C \in [0, 1]$ và quét tìm ngưỡng $\tau^*$ tối ưu trên tập dev. Những câu có $C < \tau^*$ tự động xuất `abstain` (nhận 0 điểm an toàn, bảo vệ toàn bộ điểm số).
-  - [Benchmarking Text-to-SQL Reliability with Penalty-Based Scoring.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/Benchmarking%20Text-to-SQL%20Reliability%20with%20Penalty-Based%20Scoring.md) (Phần **Reliability Calibration & Decision Boundary**): Thiết lập ranh giới quyết định toán học giữa 3 trạng thái: Trả lời giá trị / Unanswerable / Abstain.
+  - [LatentRefusal.md](../research/reviews/LatentRefusal.md) & [AbstentionBench.md](../research/reviews/AbstentionBench.md): Cơ chế hiệu chuẩn độ bất định (Uncertainty Estimation) để xây dựng **Calibrated Abstention Gate**: tính điểm tin cậy $C \in [0, 1]$ và quét tìm ngưỡng $\tau^*$ tối ưu trên tập dev. Những câu có $C < \tau^*$ tự động xuất `abstain` (nhận 0 điểm an toàn, bảo vệ toàn bộ điểm số).
+  - [Benchmarking Text-to-SQL Reliability with Penalty-Based Scoring.md](../research/reviews/Benchmarking%20Text-to-SQL%20Reliability%20with%20Penalty-Based%20Scoring.md) (Phần **Reliability Calibration & Decision Boundary**): Thiết lập ranh giới quyết định toán học giữa 3 trạng thái: Trả lời giá trị / Unanswerable / Abstain.
 
 - **Tài liệu dành cho Phát (Data Engineer & System Lead):**
-  - [A Survey on Employing Large Language Models for.md](file:///d:/Projects/AI%20%20project/datamate/research/reviews/A%20Survey%20on%20Employing%20Large%20Language%20Models%20for.md) (Phần **Tabular Deployment & Efficiency**): Kỹ thuật tối ưu hóa bộ nhớ RAM và IO khi nạp toàn bộ CSDL vào In-Memory SQLite RAM disk (`/dev/shm`), đảm bảo thời gian suy luận toàn bộ Private Test chỉ mất < 4 giờ (xa dưới mức trần 6 giờ của BTC).
-  - Quy chuẩn Docker từ [DataMate_Zalo_AI_Challenge_2026.md](file:///d:/Projects/AI%20%20project/datamate/docs/DataMate_Zalo_AI_Challenge_2026.md): Thiết lập Dockerfile cô lập 100% offline (`--network none`), tích hợp vLLM và PyTorch tối ưu cho kiến trúc Blackwell 2x NVIDIA RTX 5090 (CUDA 12.8+).
+  - [A Survey on Employing Large Language Models for.md](../research/reviews/A%20Survey%20on%20Employing%20Large%20Language%20Models%20for.md) (Phần **Tabular Deployment & Efficiency**): Kỹ thuật tối ưu hóa bộ nhớ RAM và IO khi nạp toàn bộ CSDL vào In-Memory SQLite RAM disk (`/dev/shm`), đảm bảo thời gian suy luận toàn bộ Private Test chỉ mất < 4 giờ (xa dưới mức trần 6 giờ của BTC).
+  - Quy chuẩn Docker từ [DataMate_Zalo_AI_Challenge_2026.md](./DataMate_Zalo_AI_Challenge_2026.md): Thiết lập Dockerfile cô lập 100% offline (`--network none`), tích hợp vLLM và PyTorch tối ưu cho kiến trúc Blackwell 2x NVIDIA RTX 5090 (CUDA 12.8+).
 
