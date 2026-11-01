@@ -7,3 +7,5 @@ __pycache__/
 src/eda/output/*.json
 src/eda/output/*.txt
 src/eda/scratch_demo.py
+
+.venv/
