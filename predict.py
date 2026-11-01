@@ -179,6 +179,7 @@ def main():
     parser.add_argument("--id", type=str, default=None, help="Chỉ chạy câu hỏi theo ID cụ thể")
     parser.add_argument("--dry_run", action="store_true", help="Chế độ chạy thử: chỉ nạp prompt/schema, không nạp LLM vào GPU")
     parser.add_argument("--no_fill_abstain", action="store_true", help="Không tự động điền 'abstain' cho các câu hỏi còn lại khi dùng --limit")
+    parser.add_argument("--resume", action="store_true", help="Tiếp tục chạy từ câu hỏi chưa hoàn thành (bỏ qua các câu đã có trong file submission)")
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
@@ -214,10 +215,33 @@ def main():
         target_questions = [q for q in target_questions if q.get("id") == args.id]
         print(f"• Lọc theo Question ID  : {args.id} ({len(target_questions)} câu)")
 
+    # Xử lý tính năng Resume nếu được kích hoạt
+    existing_completed_ids = set()
+    output_path = Path(args.output_file)
+    write_mode = "w"
+
+    if args.resume and output_path.exists():
+        try:
+            with open(output_path, "r", encoding="utf-8") as f_ex:
+                for line in f_ex:
+                    if line.strip():
+                        item = json.loads(line)
+                        if "id" in item:
+                            existing_completed_ids.add(item["id"])
+            if existing_completed_ids:
+                write_mode = "a"
+                print(f"• [Resume Mode] Phát hiện {len(existing_completed_ids)} câu đã hoàn thành trước đó trong {output_path.name}.")
+        except Exception as exc:
+            print(f"⚠️ Không đọc được file cũ để resume: {exc}. Chạy ở chế độ ghi mới.")
+
+    # Lọc bỏ các câu đã hoàn thành nếu resume
+    if existing_completed_ids:
+        target_questions = [q for q in target_questions if q["id"] not in existing_completed_ids]
+
     total_target = len(target_questions)
     active_limit = args.limit if args.limit is not None else total_target
     active_questions = target_questions[:active_limit]
-    active_qids = {q["id"] for q in active_questions}
+    active_qids = {q["id"] for q in active_questions} | existing_completed_ids
 
     print(f"• Số câu chạy suy luận  : {len(active_questions)} câu")
     if len(active_questions) < len(all_questions) and not args.no_fill_abstain:
@@ -234,7 +258,7 @@ def main():
         print(f"[VRAM] Bộ nhớ GPU đã sử dụng: {stats_vram.get('allocated_gb', 0):.2f} GB")
 
     # Mở SubmissionWriter
-    writer = SubmissionWriter(output_file=args.output_file, log_dir=args.log_dir).open()
+    writer = SubmissionWriter(output_file=args.output_file, log_dir=args.log_dir, mode=write_mode).open()
     written_count = 0
     t_pipeline_start = time.time()
 
