@@ -161,7 +161,7 @@ flowchart TD
    - Nạp toàn bộ dữ liệu sạch của doanh nghiệp vào một instance SQLite trong bộ nhớ RAM (với 512GB RAM của server thi đấu, toàn bộ dữ liệu 300K dòng nạp vào RAM chỉ mất < 200MB, tốc độ truy vấn tính bằng mili-giây).
    - Tự động lập chỉ mục (`CREATE INDEX`) trên các cột khóa: `Mã đơn hàng`, `Ngày đặt hàng`, `Mã SKU`, `Mã khách hàng`.
 4. **Trích xuất Metadata & Phạm vi Ngày (Data Range Profiling):**
-   - Lưu trữ khoảng ngày hoạt động của shop: $[\text{min\_date}, \text{max\_date}]$.
+   - Lưu trữ khoảng ngày hoạt động của shop: `[min_date, max_date]`.
    - Lập danh mục tên cột, kiểu dữ liệu, các giá trị phân loại (categorical values) như danh sách trạng thái đơn (`hoàn thành`, `huỷ`, `trả hàng`, `đang giao`).
 
 ---
