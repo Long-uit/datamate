@@ -29,13 +29,53 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import numpy as np
 
-# Đảm bảo hiển thị Unicode tiếng Việt trên console Windows
+# Đảm bảo hiển thị Unicode tiếng Việt trên console Windows an toàn tuyệt đối
 if sys.platform == "win32":
     try:
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
+
+class DualLogger:
+    """Tự động ghi đồng thời ra màn hình console và tệp log UTF-8 không lo lỗi pipe PowerShell."""
+    def __init__(self, filepath: Path | str, mode: str = "a"):
+        self.terminal = sys.stdout
+        self.filepath = Path(filepath)
+        self.filepath.parent.mkdir(parents=True, exist_ok=True)
+        self.logfile = open(self.filepath, mode, encoding="utf-8", errors="replace")
+
+    def write(self, message):
+        try:
+            self.terminal.write(message)
+            self.terminal.flush()
+        except Exception:
+            try:
+                self.terminal.buffer.write(message.encode("ascii", errors="replace"))
+                self.terminal.buffer.flush()
+            except Exception:
+                pass
+        try:
+            self.logfile.write(message)
+            self.logfile.flush()
+        except Exception:
+            pass
+
+    def flush(self):
+        try:
+            self.terminal.flush()
+        except Exception:
+            pass
+        try:
+            self.logfile.flush()
+        except Exception:
+            pass
+
+    def close(self):
+        try:
+            self.logfile.close()
+        except Exception:
+            pass
 
 # Nhập các thành phần cốt lõi của package datamate
 from datamate.llm.client import LLMClient
@@ -174,6 +214,7 @@ def main():
     parser.add_argument("--data_dir", type=str, default=default_data_dir, help=f"Thư mục chứa dữ liệu test (mặc định: {default_data_dir})")
     parser.add_argument("--output_file", type=str, default=default_output_file, help=f"Đường dẫn file xuất kết quả (mặc định: {default_output_file})")
     parser.add_argument("--log_dir", type=str, default=default_log_dir, help=f"Thư mục lưu log chi tiết từng câu hỏi (mặc định: {default_log_dir})")
+    parser.add_argument("--log_file", type=str, default=None, help="Đường dẫn tệp để tự động ghi toàn bộ nhật ký console UTF-8 (thay thế cho Tee-Object)")
     parser.add_argument("--limit", type=int, default=None, help="Giới hạn số lượng câu hỏi cần chạy suy luận bằng LLM (mặc định: toàn bộ)")
     parser.add_argument("--biz", type=str, default=None, help="Chỉ chạy câu hỏi thuộc doanh nghiệp cụ thể (ví dụ: biz_201)")
     parser.add_argument("--id", type=str, default=None, help="Chỉ chạy câu hỏi theo ID cụ thể")
@@ -181,6 +222,12 @@ def main():
     parser.add_argument("--no_fill_abstain", action="store_true", help="Không tự động điền 'abstain' cho các câu hỏi còn lại khi dùng --limit")
     parser.add_argument("--resume", action="store_true", help="Tiếp tục chạy từ câu hỏi chưa hoàn thành (bỏ qua các câu đã có trong file submission)")
     args = parser.parse_args()
+
+    # Kích hoạt bộ ghi log song song nội bộ nếu người dùng truyền --log_file
+    dual_logger = None
+    if args.log_file:
+        dual_logger = DualLogger(args.log_file, mode="a" if args.resume else "w")
+        sys.stdout = dual_logger
 
     data_dir = Path(args.data_dir)
     questions_path = data_dir / "questions.jsonl"
@@ -346,6 +393,9 @@ def main():
 
     finally:
         writer.close()
+        if dual_logger:
+            sys.stdout = dual_logger.terminal
+            dual_logger.close()
         # Đóng toàn bộ SQLite in-memory connections
         for _, con_c, _, _ in _BUSINESS_CACHE.values():
             if con_c:
