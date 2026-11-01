@@ -39,13 +39,7 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# Thêm thư mục src vào sys.path để import
-PROJECT_ROOT = Path(__file__).parent.parent.resolve()
-SRC_DIR = PROJECT_ROOT / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
-
-from models.llm_client import (
+from datamate.llm.client import (
     validate_code,
     extract_python_code,
     cut_after_first_solution,

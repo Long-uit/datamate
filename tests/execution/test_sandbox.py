@@ -12,10 +12,8 @@ import pytest
 import pandas as pd
 import numpy as np
 
-# Thêm thư mục src vào sys.path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from src.runner import RunResult, run_code
+from datamate.execution.sandbox import RunResult, run_code
 
 
 

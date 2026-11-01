@@ -36,13 +36,7 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# Thêm thư mục src vào sys.path để import trực tiếp module cần kiểm thử
-PROJECT_ROOT = Path(__file__).parent.parent.resolve()
-SRC_DIR = PROJECT_ROOT / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
-
-from models.prompt_builder import (
+from datamate.llm.prompt_builder import (
     classify_intent,
     select_few_shots,
     resolve_temporal_context,

@@ -15,10 +15,8 @@ import openpyxl
 import pandas as pd
 import pytest
 
-# Thêm thư mục src vào sys.path để import ingest
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-import ingest as ing
+import datamate.ingestion.loader as ing
 
 
 # ===========================================================================

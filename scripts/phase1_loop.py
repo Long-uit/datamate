@@ -71,20 +71,13 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# Thêm thư mục src vào sys.path để import các module nội bộ
-CURRENT_DIR = Path(__file__).parent.resolve()
-PROJECT_ROOT = CURRENT_DIR.parent.resolve()
-SRC_DIR = PROJECT_ROOT / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
-
-from models.prompt_builder import build_prompt, load_rulebook, resolve_temporal_context
-from models.llm_client import LLMClient
-from ingest import load_business, to_sqlite
+from datamate.llm.prompt_builder import build_prompt, load_rulebook, resolve_temporal_context
+from datamate.llm.client import LLMClient
+from datamate.ingestion.loader import load_business, to_sqlite
 
 # Tích hợp các module runner và submission của Phát
-from runner import run_code, RunResult
-from submission import (
+from datamate.execution.sandbox import run_code, RunResult
+from datamate.output.submission import (
     to_answer,
     make_abstain,
     SubmissionWriter,
