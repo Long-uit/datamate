@@ -25,3 +25,11 @@ after.txt
 
 # Model weights
 weights/
+
+#personal analysis
+count_answer_types.ipynb
+
+#submission file
+submission_logs/
+run_full_public_test.log
+submission.jsonl
