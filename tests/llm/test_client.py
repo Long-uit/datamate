@@ -308,7 +308,7 @@ def solution(data):
             code = client.generate_code("Hãy viết hàm tính tổng", max_retries=1)
 
             self.assertIn("def solution(data):", code)
-            self.assertIn('return "unanswerable"', code)
+            self.assertTrue("return None" in code or 'return "unanswerable"' in code)
             self.assertEqual(client._generate_raw.call_count, 2)
             print(f"  • {criterion} -> [ĐẠT]")
         except Exception as exc:

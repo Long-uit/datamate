@@ -112,8 +112,10 @@ def normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _empty_to_na(df: pd.DataFrame) -> pd.DataFrame:
-    """Chuyển chuỗi rỗng / chỉ khoảng trắng thành pd.NA."""
-    return df.where(df.apply(lambda col: col.str.strip() != ""), other=pd.NA)
+    """Chuyển chuỗi rỗng / chỉ khoảng trắng thành pd.NA một cách nhanh chóng (vectorized)."""
+    if df.empty:
+        return df
+    return df.replace(r"^\s*$", pd.NA, regex=True).fillna(pd.NA).astype(object)
 
 
 def _col_signature(df: pd.DataFrame) -> frozenset[str]:
@@ -245,8 +247,24 @@ def _read_sheet_with_header(ws, header_row: int) -> pd.DataFrame:
         str(c) if c is not None else ""
         for c in all_rows[header_row]
     ]
+    if not header:
+        return pd.DataFrame()
+
     data_rows = all_rows[header_row + 1:]
-    df = pd.DataFrame(data_rows, columns=header)
+    if not data_rows:
+        return pd.DataFrame(columns=header)
+
+    n_cols = len(header)
+    padded_data: list[list] = []
+    for r in data_rows:
+        r_list = list(r)
+        if len(r_list) < n_cols:
+            r_list.extend([None] * (n_cols - len(r_list)))
+        elif len(r_list) > n_cols:
+            r_list = r_list[:n_cols]
+        padded_data.append(r_list)
+
+    df = pd.DataFrame(padded_data, columns=header)
     # Ép mọi ô thành str
     df = df.astype(str)
     # Xoá dòng / cột trống hoàn toàn
@@ -258,7 +276,7 @@ def _read_sheet_with_header(ws, header_row: int) -> pd.DataFrame:
     return df
 
 
-def load_excel(path: Path) -> list[TableInfo]:
+def load_excel(path: Path, errors: Optional[list[str]] = None) -> list[TableInfo]:
     """
     Nạp tất cả sheet của file Excel.
     Gộp sheet cùng cấu trúc cột (theo tháng) thành một bảng.
@@ -284,7 +302,10 @@ def load_excel(path: Path) -> list[TableInfo]:
                 df = _empty_to_na(df)
                 sheet_tables.append((sheet_name, df, header_row))
             except Exception as exc:
-                log.warning("Sheet '%s' trong %s: %s", sheet_name, path.name, exc)
+                err_msg = f"Sheet '{sheet_name}' trong {path.name}: {exc}"
+                log.warning(err_msg)
+                if errors is not None:
+                    errors.append(err_msg)
     finally:
         wb.close()
 
@@ -345,7 +366,7 @@ def load_excel(path: Path) -> list[TableInfo]:
 # Đọc SQLite
 # ---------------------------------------------------------------------------
 
-def load_sqlite(path: Path) -> list[TableInfo]:
+def load_sqlite(path: Path, errors: Optional[list[str]] = None) -> list[TableInfo]:
     """
     Nạp mọi bảng (trừ sqlite_*) từ file SQLite bằng chế độ chỉ đọc.
     Mọi cột đọc dạng str.
@@ -385,7 +406,10 @@ def load_sqlite(path: Path) -> list[TableInfo]:
                     columns=df.columns.tolist(),
                 ))
             except Exception as exc:
-                log.warning("Bảng '%s' trong %s: %s", tbl, path.name, exc)
+                err_msg = f"Bảng '{tbl}' trong {path.name}: {exc}"
+                log.warning(err_msg)
+                if errors is not None:
+                    errors.append(err_msg)
     finally:
         con.close()
 
@@ -434,7 +458,7 @@ def load_business(business_dir: Path) -> BusinessData:
         # ---- Excel ----
         elif suffix in (".xlsx", ".xls", ".xlsm"):
             try:
-                tis = load_excel(fpath)
+                tis = load_excel(fpath, errors=bd.errors)
                 for ti in tis:
                     ti.table_id = next_table_id()
                     bd.tables.append(ti)
@@ -444,7 +468,7 @@ def load_business(business_dir: Path) -> BusinessData:
         # ---- SQLite ----
         elif suffix in (".sqlite", ".db", ".sqlite3"):
             try:
-                tis = load_sqlite(fpath)
+                tis = load_sqlite(fpath, errors=bd.errors)
                 for ti in tis:
                     ti.table_id = next_table_id()
                     bd.tables.append(ti)
@@ -491,7 +515,21 @@ def to_sqlite(business: BusinessData) -> sqlite3.Connection:
                 con,
                 if_exists="replace",
                 index=False,
+                chunksize=2_000,
+                method="multi",
             )
+        except Exception:
+            try:
+                ti.df.to_sql(
+                    ti.table_id,
+                    con,
+                    if_exists="replace",
+                    index=False,
+                    chunksize=5_000,
+                )
+            except Exception as exc:
+                log.warning("to_sqlite: không nạp được %s: %s", ti.table_id, exc)
+                continue
         except Exception as exc:
             log.warning("to_sqlite: không nạp được %s: %s", ti.table_id, exc)
             continue

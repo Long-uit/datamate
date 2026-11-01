@@ -142,7 +142,7 @@ def resolve_temporal_context(
                 "start_date": s_d,
                 "end_date": e_d,
                 "description": f"Dịp Tết {year} (lịch âm quy đổi): từ ngày '{s_d}' đến hết ngày '{e_d}'",
-                "code_hint": f"(df[date_col] >= '{s_d}') & (df[date_col] <= '{e_d}')"
+                "code_hint": f"(df[date_col].dt.date >= pd.to_datetime('{s_d}').date()) & (df[date_col].dt.date <= pd.to_datetime('{e_d}').date())"
             }
 
     # 2. N ngày gần nhất (kể cả hôm nay, ngày cuối là hôm nay)
@@ -156,7 +156,7 @@ def resolve_temporal_context(
             "start_date": start_d,
             "end_date": end_d,
             "description": f"{n_days} ngày gần nhất kết thúc tại hôm nay: từ ngày '{start_d}' đến ngày '{end_d}'",
-            "code_hint": f"(df[date_col] >= '{start_d}') & (df[date_col] <= '{end_d}')"
+            "code_hint": f"(df[date_col].dt.date >= pd.to_datetime('{start_d}').date()) & (df[date_col].dt.date <= pd.to_datetime('{end_d}').date())"
         }
 
     # 3. Tháng M/YYYY cụ thể (ví dụ: tháng 9/2025, thang 6/2026)
@@ -190,7 +190,7 @@ def resolve_temporal_context(
             "start_date": start_d,
             "end_date": end_d,
             "description": f"Quý {q}/{y}: từ ngày '{start_d}' đến hết ngày '{end_d}'",
-            "code_hint": f"(df[date_col] >= '{start_d}') & (df[date_col] <= '{end_d}')"
+            "code_hint": f"(df[date_col].dt.date >= pd.to_datetime('{start_d}').date()) & (df[date_col].dt.date <= pd.to_datetime('{end_d}').date())"
         }
 
     # 5. "Tháng này" (theo as_of_date, từ ngày 1 đến hết hôm nay)
@@ -202,7 +202,7 @@ def resolve_temporal_context(
             "start_date": start_d,
             "end_date": end_d,
             "description": f"Tháng này (từ đầu tháng đến hết hôm nay): từ ngày '{start_d}' đến ngày '{end_d}'",
-            "code_hint": f"(df[date_col] >= '{start_d}') & (df[date_col] <= '{end_d}')"
+            "code_hint": f"(df[date_col].dt.date >= pd.to_datetime('{start_d}').date()) & (df[date_col].dt.date <= pd.to_datetime('{end_d}').date())"
         }
 
     # 6. "Hôm nay" / "hnay"
@@ -328,35 +328,36 @@ FEW_SHOT_LIBRARY: Dict[str, str] = {
 Câu hỏi: "Tổng doanh thu trong tháng này là bao nhiêu?" (as_of_date = "2026-05-25")
 ```python
 def solution(data):
-    # 1. Tìm bảng bán hàng (bảng có cột ngày và cột tiền)
-    df_sales = None
-    date_col = None
-    amount_col = None
+    # 1. Tìm tất cả các bảng bán hàng / doanh thu (nếu shop chia theo từng năm/tháng/chi nhánh)
+    sales_dfs = []
     for name, df in data.items():
-        if any(k in name.lower() for k in ['nhap', 'chiphi', 'tonkho']):
+        if any(k in name.lower() for k in ['nhap', 'chiphi', 'tonkho', 'kiemke', 'ncc']):
             continue
         cols = df.columns.tolist()
         d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'ngaylap', 'thời gian'])), None)
         a_c = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu']) and 'thuế' not in str(c).lower()), None)
         if d_c and a_c:
-            df_sales = df.copy()
-            date_col = d_c
-            amount_col = a_c
-            break
-    if df_sales is None:
+            sub = df[[d_c, a_c]].copy()
+            sub.columns = ['date', 'amount']
+            status_col = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'tình trạng'])), None)
+            if status_col:
+                sub['status'] = df[status_col]
+            sales_dfs.append(sub)
+    if not sales_dfs:
         return "unanswerable"
 
-    # 2. Lọc thời gian: từ đầu tháng đến hết as_of_date (2026-05-25)
-    df_sales[date_col] = pd.to_datetime(df_sales[date_col], dayfirst=True, errors='coerce')
-    df_sales = df_sales[(df_sales[date_col] >= pd.Timestamp("2026-05-01")) & (df_sales[date_col] <= pd.Timestamp("2026-05-25"))]
+    df_sales = pd.concat(sales_dfs, ignore_index=True)
 
-    # 3. Bỏ đơn huỷ và trả hàng theo Rulebook
-    status_col = next((c for c in df_sales.columns if any(k in str(c).lower() for k in ['trạng thái', 'status'])), None)
-    if status_col:
-        df_sales = df_sales[~df_sales[status_col].astype(str).str.lower().str.contains('hủy|huỷ|trả|cancel')]
+    # 2. Lọc thời gian theo .dt.date để không sót đơn có giờ
+    df_sales['date'] = pd.to_datetime(df_sales['date'], dayfirst=True, errors='coerce')
+    df_sales = df_sales[(df_sales['date'].dt.date >= pd.to_datetime("2026-05-01").date()) & (df_sales['date'].dt.date <= pd.to_datetime("2026-05-25").date())]
+
+    # 3. Bỏ đơn huỷ và trả hàng
+    if 'status' in df_sales.columns:
+        df_sales = df_sales[~df_sales['status'].astype(str).str.lower().str.contains('hủy|huỷ|trả|cancel|return')]
 
     # 4. Tính tổng tiền đã làm sạch
-    total = pd.to_numeric(df_sales[amount_col].astype(str).str.replace(',', '').str.replace(' ', ''), errors='coerce').fillna(0).sum()
+    total = pd.to_numeric(df_sales['amount'].astype(str).str.replace(',', '').str.replace(' ', ''), errors='coerce').fillna(0).sum()
     return int(round(total))
 ```""",
 
@@ -564,6 +565,10 @@ NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN:
    - Danh sách Top K: Trả về kiểu `list` Python (ví dụ: `['A', 'B']`).
    - Bảng: Trả về dict `{"columns": [...], "rows": [[...], ...]}`.
    - Không thể trả lời: Trả về chuỗi `"unanswerable"`.
+
+5. TỐI ƯU HÓA MÃ NGUỒN:
+   - Viết code ngắn gọn, súc tích, đi thẳng vào giải pháp, KHÔNG viết comment rườm rà dài dòng để tránh bị cắt cụt token.
+   - Luôn đảm bảo hàm có câu lệnh `return` ở cuối luồng tính toán.
 """
 
 

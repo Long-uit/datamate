@@ -151,6 +151,8 @@ if 'solution' in globals() and callable(solution):
     _raw_sol = solution(_target_data)
     if _raw_sol == "unanswerable" or (isinstance(_raw_sol, str) and _raw_sol.strip().lower() in ("unanswerable", "không thể trả lời")):
         FINAL_RESULT = {"type": "unanswerable", "answer": None}
+    elif _raw_sol is None:
+        FINAL_RESULT = {"type": "abstain", "answer": None}
     else:
         FINAL_RESULT = _raw_sol
 """
@@ -643,7 +645,7 @@ def main():
             # 4. Sinh mã Python qua LLM Client
             t0 = time.time()
             assert llm is not None
-            code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=512)
+            code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=1024)
             gen_time = round(time.time() - t0, 2)
             stats["total_gen_time"] += gen_time
 

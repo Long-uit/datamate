@@ -281,6 +281,25 @@ class TestLoadExcel:
             t.sheet_name == "Tong" for t in not_merged
         ), "Sheet Tong phải là bảng riêng"
 
+    def test_excel_column_mismatch_padded(self, tmp_path: Path):
+        """Dòng dữ liệu thiếu cột cuối (do rỗng) phải được tự động đệm None/NA, không bị crash."""
+        xlsx = tmp_path / "mismatch.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Sheet1"
+        ws.append(["Mã đơn", "Ngày", "Tiền", "Ghi chú"])
+        ws.append(["ORD01", "2025-01-01", 100000])  # Thiếu cột Ghi chú
+        ws.append(["ORD02", "2025-01-02", 200000, "Có ghi chú"])
+        wb.save(xlsx)
+
+        tis = ing.load_excel(xlsx)
+        assert len(tis) == 1
+        df = tis[0].df
+        assert len(df) == 2
+        assert "Ghi chú" in df.columns
+        assert pd.isna(df.iloc[0]["Ghi chú"])
+        assert df.iloc[1]["Ghi chú"] == "Có ghi chú"
+
     def test_all_cols_str_excel(self, tmp_path: Path):
         """Mọi cột trong DataFrame đọc từ Excel phải là object."""
         xlsx = tmp_path / "types.xlsx"

@@ -36,8 +36,9 @@ except ImportError:
 # HÀM KIỂM TRA CÚ PHÁP VÀ TÍNH HỢP LỆ CỦA MÃ NGUỒN (CODE VALIDATION)
 # ==============================================================================
 
-# Danh sách các hàm / module bị hạn chế vì lý do an toàn
-DISALLOWED_MODULES = {"os.system", "os.popen", "subprocess", "shutil.rmtree", "socket", "pty", "eval(", "exec("}
+# Danh sách các module hoặc hàm bị cấm vì lý do an toàn
+DANGEROUS_MODULES = {"subprocess", "pty", "socket"}
+DANGEROUS_OS_FUNCS = {"system", "popen"}
 
 def validate_code(code_str: str) -> Tuple[bool, Optional[str]]:
     """
@@ -87,11 +88,28 @@ def validate_code(code_str: str) -> Tuple[bool, Optional[str]]:
     if not has_return:
         return False, "Hàm 'solution' không chứa lệnh 'return' để trả về kết quả"
 
-    # 5. Kiểm tra an toàn: phát hiện các lệnh gọi bị hạn chế
-    code_lower = code_str.lower()
-    for bad_call in DISALLOWED_MODULES:
-        if bad_call in code_lower:
-            return False, f"Mã nguồn chứa lệnh gọi bị hạn chế: '{bad_call}'"
+    # 5. Kiểm tra an toàn bằng AST: phát hiện import hoặc gọi hàm nguy hiểm
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root_pkg = alias.name.split(".")[0]
+                if root_pkg in DANGEROUS_MODULES:
+                    return False, f"Mã nguồn chứa lệnh import bị hạn chế: '{alias.name}'"
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                root_pkg = node.module.split(".")[0]
+                if root_pkg in DANGEROUS_MODULES:
+                    return False, f"Mã nguồn chứa lệnh import bị hạn chế: '{node.module}'"
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in ("eval", "exec"):
+                return False, f"Mã nguồn chứa lệnh gọi bị hạn chế: '{node.func.id}'"
+            elif isinstance(node.func, ast.Attribute):
+                if node.func.attr in DANGEROUS_OS_FUNCS:
+                    if isinstance(node.func.value, ast.Name) and node.func.value.id == "os":
+                        return False, f"Mã nguồn chứa lệnh gọi bị hạn chế: 'os.{node.func.attr}'"
+                if node.func.attr == "rmtree":
+                    if isinstance(node.func.value, ast.Name) and node.func.value.id == "shutil":
+                        return False, f"Mã nguồn chứa lệnh gọi bị hạn chế: 'shutil.rmtree'"
 
     return True, None
 
@@ -259,7 +277,7 @@ class LLMClient:
         else:
             print(f"[GPU Memory] Thiết bị hiện tại: {self.device}")
 
-    def _generate_raw(self, messages: List[Dict[str, str]], max_new_tokens: int = 512) -> str:
+    def _generate_raw(self, messages: List[Dict[str, str]], max_new_tokens: int = 1024) -> str:
         """Thực hiện một lần suy luận thô với cơ chế Greedy Decoding."""
         if not self.is_loaded or self.model is None or self.tokenizer is None:
             return ""
@@ -295,7 +313,7 @@ class LLMClient:
     def generate_code(
         self,
         prompt: str,
-        max_new_tokens: int = 512,
+        max_new_tokens: int = 1024,
         system_prompt: Optional[str] = None,
         max_retries: int = 1
     ) -> str:
@@ -350,13 +368,13 @@ class LLMClient:
             else:
                 error_msg = retry_error
 
-        # Nếu sau khi sửa vẫn không hợp lệ -> fallback an toàn để chương trình không sập
+        # Nếu sau khi sửa vẫn không hợp lệ -> fallback an toàn để chương trình không sập (trả về None để to_answer chuyển thành abstain 0 điểm)
         if not is_valid:
-            print(f"[Cảnh báo] Sau {max_retries} lần thử, mã nguồn vẫn không đạt chuẩn ({error_msg}). Sử dụng fallback.")
+            print(f"[Cảnh báo] Sau {max_retries} lần thử, mã nguồn vẫn không đạt chuẩn ({error_msg}). Sử dụng fallback abstain an toàn.")
             code = (
                 "def solution(data):\n"
                 "    # Fallback an toàn khi mã sinh ra không đạt chuẩn cú pháp\n"
-                "    return \"unanswerable\"\n"
+                "    return None\n"
             )
 
         self.last_latency_ms = int((time.time() - start_time) * 1000)
