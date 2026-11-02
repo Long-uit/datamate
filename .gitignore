@@ -1,10 +1,35 @@
-# Dữ liệu cuộc thi
+# Competition data
 competition_data/
 
 # Python cache
 __pycache__/
-*.pyc
-# EDA heavy machine output
+*.py[cod]
+*.egg-info/
+
+# Virtual environments
+.venv/
+
+# EDA generated artifacts - legacy structure
 src/eda/output/*.json
 src/eda/output/*.txt
 src/eda/scratch_demo.py
+
+# EDA generated artifacts - new structure
+notebooks/eda/output/*.json
+notebooks/eda/output/*.txt
+notebooks/eda/scratch_demo.py
+
+# Temporary files
+before.txt
+after.txt
+
+# Model weights
+weights/
+
+#personal analysis
+count_answer_types.ipynb
+
+#submission file
+submission_logs/
+run_full_public_test.log
+submission.jsonl

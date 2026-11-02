@@ -15,23 +15,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-# Thêm thư mục src vào sys.path để import
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-try:
-    from src.submission import (
-        SubmissionWriter,
-        make_abstain,
-        to_answer,
-        validate_submission,
-    )
-except ImportError:
-    from submission import (
-        SubmissionWriter,
-        make_abstain,
-        to_answer,
-        validate_submission,
-    )
+from datamate.output.submission import (
+    SubmissionWriter,
+    make_abstain,
+    to_answer,
+    validate_submission,
+)
 
 
 # ===========================================================================

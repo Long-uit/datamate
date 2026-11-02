@@ -71,20 +71,13 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# Thêm thư mục src vào sys.path để import các module nội bộ
-CURRENT_DIR = Path(__file__).parent.resolve()
-PROJECT_ROOT = CURRENT_DIR.parent.resolve()
-SRC_DIR = PROJECT_ROOT / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
-
-from prompt_builder import build_prompt, load_rulebook, resolve_temporal_context
-from llm_client import LLMClient
-from ingest import load_business, to_sqlite
+from datamate.llm.prompt_builder import build_prompt, load_rulebook, resolve_temporal_context
+from datamate.llm.client import LLMClient
+from datamate.ingestion.loader import load_business, to_sqlite
 
 # Tích hợp các module runner và submission của Phát
-from runner import run_code, RunResult
-from submission import (
+from datamate.execution.sandbox import run_code, RunResult
+from datamate.output.submission import (
     to_answer,
     make_abstain,
     SubmissionWriter,
@@ -158,6 +151,8 @@ if 'solution' in globals() and callable(solution):
     _raw_sol = solution(_target_data)
     if _raw_sol == "unanswerable" or (isinstance(_raw_sol, str) and _raw_sol.strip().lower() in ("unanswerable", "không thể trả lời")):
         FINAL_RESULT = {"type": "unanswerable", "answer": None}
+    elif _raw_sol is None:
+        FINAL_RESULT = {"type": "abstain", "answer": None}
     else:
         FINAL_RESULT = _raw_sol
 """
@@ -650,7 +645,7 @@ def main():
             # 4. Sinh mã Python qua LLM Client
             t0 = time.time()
             assert llm is not None
-            code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=512)
+            code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=1024)
             gen_time = round(time.time() - t0, 2)
             stats["total_gen_time"] += gen_time
 

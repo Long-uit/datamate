@@ -93,7 +93,7 @@ def main():
         sys.path.insert(0, str(root_src))
 
     import pandas as pd
-    from ingest import load_business, to_sqlite
+    from datamate.ingestion.loader import load_business, to_sqlite
 
     # Đọc mã nguồn cần thực thi
     code_str = code_file.read_text(encoding="utf-8")
@@ -201,8 +201,8 @@ def run_code(code: str, business_dir: Path, timeout_s: int = 60) -> RunResult:
         code_file.write_text(code, encoding="utf-8")
         worker_file.write_text(_SUBPROCESS_WORKER_SCRIPT, encoding="utf-8")
 
-        # Thư mục chứa ingest.py
-        src_dir = Path(__file__).parent.resolve()
+        # Thư mục src/ chứa package datamate
+        src_dir = Path(__file__).resolve().parents[2]  # sandbox.py -> execution -> datamate -> src
 
         # Tạo môi trường subprocess có PYTHONPATH trỏ vào src
         sub_env = os.environ.copy()

@@ -39,13 +39,7 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# Thêm thư mục src vào sys.path để import
-PROJECT_ROOT = Path(__file__).parent.parent.resolve()
-SRC_DIR = PROJECT_ROOT / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
-
-from llm_client import (
+from datamate.llm.client import (
     validate_code,
     extract_python_code,
     cut_after_first_solution,
@@ -314,7 +308,7 @@ def solution(data):
             code = client.generate_code("Hãy viết hàm tính tổng", max_retries=1)
 
             self.assertIn("def solution(data):", code)
-            self.assertIn('return "unanswerable"', code)
+            self.assertTrue("return None" in code or 'return "unanswerable"' in code)
             self.assertEqual(client._generate_raw.call_count, 2)
             print(f"  • {criterion} -> [ĐẠT]")
         except Exception as exc:
