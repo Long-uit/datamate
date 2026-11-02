@@ -194,12 +194,16 @@ def run_code(code: str, business_dir: Path, timeout_s: int = 60) -> RunResult:
     with tempfile.TemporaryDirectory(prefix="dm_runner_") as tmp_dir:
         tmp_path = Path(tmp_dir)
         code_file = tmp_path / "code.py"
-        worker_file = tmp_path / "worker.py"
         result_file = tmp_path / "result.json"
-
-        # Ghi worker và code vào tempfile
         code_file.write_text(code, encoding="utf-8")
-        worker_file.write_text(_SUBPROCESS_WORKER_SCRIPT, encoding="utf-8")
+
+        # Ưu tiên sử dụng worker.py chính thức
+        real_worker = Path(__file__).parent / "worker.py"
+        if real_worker.exists():
+            worker_file = real_worker
+        else:
+            worker_file = tmp_path / "worker.py"
+            worker_file.write_text(_SUBPROCESS_WORKER_SCRIPT, encoding="utf-8")
 
         # Thư mục src/ chứa package datamate
         src_dir = Path(__file__).resolve().parents[2]  # sandbox.py -> execution -> datamate -> src

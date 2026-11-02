@@ -21,6 +21,8 @@ from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any, List
 
+from datamate.grounding.rulebook import load_rulebook
+
 # Cấu hình encoding chuẩn trên Windows console
 if sys.platform == "win32":
     try:
@@ -30,24 +32,7 @@ if sys.platform == "win32":
         pass
 
 
-def load_rulebook(split_dir: str = "competition_data/train") -> str:
-    """
-    Đọc nội dung tệp rulebook.md của split dữ liệu tương ứng.
-    
-    Args:
-        split_dir (str): Đường dẫn thư mục split.
-        
-    Returns:
-        str: Nội dung rulebook.md hoặc chuỗi rỗng nếu không tìm thấy tệp.
-    """
-    rulebook_path = Path(split_dir) / "rulebook.md"
-    if rulebook_path.exists():
-        try:
-            return rulebook_path.read_text(encoding="utf-8-sig", errors="replace").strip()
-        except Exception as e:
-            print(f"[Cảnh báo] Không thể đọc {rulebook_path}: {e}")
-            return ""
-    return ""
+# (load_rulebook đã được chuyển sang datamate.grounding.rulebook)
 
 
 # ==============================================================================
