@@ -45,7 +45,7 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from models.llm_client import (
+from llm_client import (
     validate_code,
     extract_python_code,
     cut_after_first_solution,

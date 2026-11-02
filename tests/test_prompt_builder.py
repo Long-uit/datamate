@@ -42,7 +42,7 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from models.prompt_builder import (
+from prompt_builder import (
     classify_intent,
     select_few_shots,
     resolve_temporal_context,

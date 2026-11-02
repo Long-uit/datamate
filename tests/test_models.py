@@ -78,8 +78,8 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from models.prompt_builder import build_prompt, load_rulebook, resolve_temporal_context
-from models.llm_client import LLMClient
+from prompt_builder import build_prompt, load_rulebook, resolve_temporal_context
+from llm_client import LLMClient
 from ingest import load_business, to_sqlite
 
 # Tích hợp các module runner và submission của Phát
