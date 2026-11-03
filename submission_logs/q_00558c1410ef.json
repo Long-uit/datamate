@@ -1,0 +1,12 @@
+{
+  "question_id": "q_00558c1410ef",
+  "answer": {
+    "id": "q_00558c1410ef",
+    "type": "percent",
+    "answer": 2.26
+  },
+  "elapsed_ms": 36450,
+  "code": "import pandas as pd\n\ndef solution(data):\n    # 1. Tìm bảng hóa đơn\n    df_orders = None\n    date_col = None\n    status_col = None\n    for name, df in data.items():\n        cols = df.columns.tolist()\n        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'ngaylap'])), None)\n        s_c = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status'])), None)\n        if d_c and s_c:\n            df_orders = df.copy()\n            date_col = d_c\n            status_col = s_c\n            break\n    if df_orders is None:\n        return \"unanswerable\"\n\n    # 2. Lọc dữ liệu trong tháng 6/2025\n    df_orders[date_col] = pd.to_datetime(df_orders[date_col], dayfirst=True, errors='coerce')\n    df_period = df_orders[(df_orders[date_col].dt.year == 2025) & (df_orders[date_col].dt.month == 6)]\n    total_orders = len(df_period)\n    if total_orders == 0:\n        return \"unanswerable\"\n\n    # 3. Tỉ lệ huỷ đơn = (số đơn huỷ / tổng số đơn trong kỳ) * 100\n    cancelled_count = len(df_period[df_period[status_col].astype(str).str.lower().str.contains('hủy|huỷ|cancel')])\n    rate = (cancelled_count / total_orders) * 100.0\n    return round(float(rate), 2)",
+  "raw_result": 2.26,
+  "error": null
+}
