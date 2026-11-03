@@ -1,5 +1,13 @@
 # DataMate — Zalo AI Challenge 2026
 
+---
+
+## Tuyên bố Sứ mệnh (Mission Statement)
+
+> *"Millions of Vietnamese shop owners, teachers, clinics and small offices keep their records in spreadsheets and simple databases — but few can write a query. DataMate challenges you to build an AI agent that answers everyday questions in Vietnamese directly on messy, real-world tabular data: multi-sheet Excel exports, inconsistent product names, colloquial phrasing, and business logic like cost of goods or overdue debt. Your agent must find the right answer on its own — and know when the data cannot answer at all. Correct answers score, wrong answers cost, silence is free: build a system that is right when it speaks."*
+
+---
+
 > Tài liệu tổng hợp thông tin cuộc thi từ các phần **Description, Data, Evaluation và Rules** được cung cấp.
 
 ## Mục lục
@@ -34,13 +42,13 @@ Dữ liệu cuộc thi tập trung vào các hộ kinh doanh nhỏ tại Việt 
 
 Mỗi yêu cầu gồm các thành phần:
 
-| Thành phần | Nội dung |
-|---|---|
-| Data package | Gói dữ liệu của một doanh nghiệp, gồm một hoặc nhiều tệp `.csv`, `.xlsx`, `.sqlite` và tệp `README.md` mô tả doanh nghiệp. |
-| Question | Câu hỏi bằng tiếng Việt đời thường. |
-| As-of date | Ngày tham chiếu dùng để xác định mốc “hôm nay” khi xử lý các biểu thức thời gian tương đối. |
-| Rulebook | Bộ quy tắc nghiệp vụ áp dụng cho split. |
-| Solar–lunar calendar | Lịch dương – âm dùng chung cho các doanh nghiệp trong split. |
+| Thành phần          | Nội dung                                                                                                                                          |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Data package          | Gói dữ liệu của một doanh nghiệp, gồm một hoặc nhiều tệp `.csv`, `.xlsx`, `.sqlite` và tệp `README.md` mô tả doanh nghiệp. |
+| Question              | Câu hỏi bằng tiếng Việt đời thường.                                                                                                       |
+| As-of date            | Ngày tham chiếu dùng để xác định mốc “hôm nay” khi xử lý các biểu thức thời gian tương đối.                                  |
+| Rulebook              | Bộ quy tắc nghiệp vụ áp dụng cho split.                                                                                                      |
+| Solar–lunar calendar | Lịch dương – âm dùng chung cho các doanh nghiệp trong split.                                                                               |
 
 ## 1.4. Đầu ra (Output)
 
@@ -72,12 +80,12 @@ Private test có các loại hình kinh doanh không xuất hiện trong trainin
 
 ## 2.2. Đặc điểm dữ liệu của mỗi doanh nghiệp
 
-| Thuộc tính | Mô tả |
-|---|---|
-| Khoảng thời gian | 12–30 tháng hoạt động. |
-| Quy mô | Từ vài trăm đến khoảng 300.000 dòng. |
-| Tính mùa vụ | Có các yếu tố mùa vụ như Tết, Trung thu, ngày lễ, ngày nhận lương và cuối tuần. |
-| Định dạng | Một hoặc nhiều tệp CSV, XLSX hoặc SQLite. |
+| Thuộc tính       | Mô tả                                                                                          |
+| ------------------ | ------------------------------------------------------------------------------------------------ |
+| Khoảng thời gian | 12–30 tháng hoạt động.                                                                      |
+| Quy mô            | Từ vài trăm đến khoảng 300.000 dòng.                                                      |
+| Tính mùa vụ     | Có các yếu tố mùa vụ như Tết, Trung thu, ngày lễ, ngày nhận lương và cuối tuần. |
+| Định dạng       | Một hoặc nhiều tệp CSV, XLSX hoặc SQLite.                                                   |
 | Tài liệu mô tả | Mỗi doanh nghiệp có `README.md`; chất lượng và mức độ chi tiết không đồng đều. |
 
 `README.md` có thể chứa đầy đủ từ điển dữ liệu, một số ghi chú không chính thức hoặc rất ít thông tin.
@@ -95,15 +103,15 @@ Private test có các loại hình kinh doanh không xuất hiện trong trainin
 └── answers.jsonl
 ```
 
-| Thành phần | Nội dung |
-|---|---|
-| `data/<business_id>/` | Thư mục dữ liệu của từng doanh nghiệp. |
-| Các tệp `*.csv`, `*.xlsx`, `*.sqlite` | Một hoặc nhiều tệp dữ liệu của doanh nghiệp. |
-| `README.md` | Mô tả doanh nghiệp và các ghi chú liên quan đến dữ liệu. |
-| `rulebook.md` | Các quy tắc mặc định và từ vựng nghiệp vụ của split. |
-| `calendar.csv` | Lịch dương – âm, phục vụ xử lý các mốc lịch như Tết. |
-| `questions.jsonl` | Mỗi dòng chứa một câu hỏi. |
-| `answers.jsonl` | Chứa đáp án tham chiếu cho training; không có trong các split test. |
+| Thành phần                                  | Nội dung                                                                   |
+| --------------------------------------------- | --------------------------------------------------------------------------- |
+| `data/<business_id>/`                       | Thư mục dữ liệu của từng doanh nghiệp.                               |
+| Các tệp `*.csv`, `*.xlsx`, `*.sqlite` | Một hoặc nhiều tệp dữ liệu của doanh nghiệp.                        |
+| `README.md`                                 | Mô tả doanh nghiệp và các ghi chú liên quan đến dữ liệu.         |
+| `rulebook.md`                               | Các quy tắc mặc định và từ vựng nghiệp vụ của split.             |
+| `calendar.csv`                              | Lịch dương – âm, phục vụ xử lý các mốc lịch như Tết.          |
+| `questions.jsonl`                           | Mỗi dòng chứa một câu hỏi.                                            |
+| `answers.jsonl`                             | Chứa đáp án tham chiếu cho training; không có trong các split test. |
 
 ## 2.4. Questions và Answers
 
@@ -111,12 +119,12 @@ Private test có các loại hình kinh doanh không xuất hiện trong trainin
 
 Mỗi dòng là một đối tượng câu hỏi, có các trường:
 
-| Trường | Ý nghĩa |
-|---|---|
-| `id` | Định danh câu hỏi. |
-| `business_id` | Định danh doanh nghiệp chứa dữ liệu cần phân tích. |
-| `question` | Nội dung câu hỏi bằng ngôn ngữ tự nhiên. |
-| `as_of_date` | Ngày tham chiếu để diễn giải thời gian tương đối. |
+| Trường        | Ý nghĩa                                                    |
+| --------------- | ------------------------------------------------------------ |
+| `id`          | Định danh câu hỏi.                                       |
+| `business_id` | Định danh doanh nghiệp chứa dữ liệu cần phân tích.  |
+| `question`    | Nội dung câu hỏi bằng ngôn ngữ tự nhiên.             |
+| `as_of_date`  | Ngày tham chiếu để diễn giải thời gian tương đối. |
 
 ### `answers.jsonl`
 
@@ -135,15 +143,15 @@ Mỗi split có `rulebook.md` riêng. Rulebook quy định cách diễn giải m
 
 Các quy tắc mặc định được mô tả trong tài liệu dữ liệu gồm:
 
-| Thuật ngữ | Cách diễn giải mặc định |
-|---|---|
-| Doanh thu | Tổng giá trị các dòng hàng sau chiết khấu ở cấp dòng; không trừ voucher cấp đơn; không gồm VAT và phí giao hàng. |
-| Đơn bị loại | Loại đơn đã hủy và đơn có bất kỳ mặt hàng nào bị trả lại. |
-| “Bán chạy” | Xếp hạng theo số lượng bán. |
-| Tuần | Từ thứ Hai đến Chủ Nhật. |
-| “Tháng này” | Tháng chứa `as_of_date`, tính đến và bao gồm chính ngày đó. |
-| Giá vốn mặc định | Giá vốn bình quân gia quyền theo lô hàng. |
-| Khoảng thời gian Tết | Từ ngày 23 tháng Chạp đến mùng 10 tháng Giêng âm lịch. |
+| Thuật ngữ             | Cách diễn giải mặc định                                                                                                         |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Doanh thu               | Tổng giá trị các dòng hàng sau chiết khấu ở cấp dòng; không trừ voucher cấp đơn; không gồm VAT và phí giao hàng. |
+| Đơn bị loại         | Loại đơn đã hủy và đơn có bất kỳ mặt hàng nào bị trả lại.                                                           |
+| “Bán chạy”          | Xếp hạng theo số lượng bán.                                                                                                     |
+| Tuần                   | Từ thứ Hai đến Chủ Nhật.                                                                                                        |
+| “Tháng này”         | Tháng chứa `as_of_date`, tính đến và bao gồm chính ngày đó.                                                              |
+| Giá vốn mặc định   | Giá vốn bình quân gia quyền theo lô hàng.                                                                                      |
+| Khoảng thời gian Tết | Từ ngày 23 tháng Chạp đến mùng 10 tháng Giêng âm lịch.                                                                     |
 
 ## 2.6. Submission file
 
@@ -151,17 +159,17 @@ Trong cả hai vòng, đội thi nộp tệp `submission.jsonl`, gồm một đ�
 
 Các loại đáp án được hỗ trợ:
 
-| `type` | Nội dung trường `answer` |
-|---|---|
-| `string` | Chuỗi văn bản. |
-| `number` | Giá trị số. |
-| `percent` | Giá trị phần trăm. |
-| `date` | Ngày ở định dạng ISO. |
-| `boolean` | Giá trị `true` hoặc `false`. |
-| `list` | Danh sách có thứ tự. |
-| `table` | Bảng gồm tên cột và các dòng dữ liệu. |
+| `type`         | Nội dung trường `answer`                                                                             |
+| ---------------- | --------------------------------------------------------------------------------------------------------- |
+| `string`       | Chuỗi văn bản.                                                                                         |
+| `number`       | Giá trị số.                                                                                            |
+| `percent`      | Giá trị phần trăm.                                                                                    |
+| `date`         | Ngày ở định dạng ISO.                                                                                |
+| `boolean`      | Giá trị `true` hoặc `false`.                                                                       |
+| `list`         | Danh sách có thứ tự.                                                                                  |
+| `table`        | Bảng gồm tên cột và các dòng dữ liệu.                                                            |
 | `unanswerable` | Kết quả cho biết dữ liệu không có thông tin cần thiết để trả lời; có thể kèm `reason`. |
-| `abstain` | Agent quyết định không trả lời. |
+| `abstain`      | Agent quyết định không trả lời.                                                                     |
 
 - Trường `reason` của `unanswerable` là tùy chọn.
 - Câu hỏi không có trong tệp nộp được chấm là `abstain`.
@@ -197,11 +205,11 @@ Log có thể chứa thêm thông tin thể hiện quá trình tạo ra câu tr�
 
 Mỗi câu trả lời được chấm theo một trong ba trạng thái:
 
-| Trạng thái | Điểm | Ý nghĩa |
-|---|---:|---|
-| Correct | +1 | Câu trả lời đúng. |
-| Abstain | 0 | Agent không trả lời. |
-| Wrong | -1 | Câu trả lời sai. |
+| Trạng thái | Điểm | Ý nghĩa               |
+| ------------ | -----: | ----------------------- |
+| Correct      |     +1 | Câu trả lời đúng.  |
+| Abstain      |      0 | Agent không trả lời. |
+| Wrong        |     -1 | Câu trả lời sai.     |
 
 Không có điểm một phần (partial credit).
 
@@ -213,17 +221,17 @@ Không có điểm một phần (partial credit).
 
 ## 3.2. Quy tắc đối chiếu theo từng kiểu dữ liệu
 
-| Type | Quy tắc so khớp |
-|---|---|
-| `number` | Khớp chính xác. Giá trị tham chiếu thường là số nguyên đối với tiền VND, số đếm và số lượng; hoặc được làm tròn đến 2 chữ số thập phân. |
-| `percent` | So khớp chính xác sau khi làm tròn đến 2 chữ số thập phân; dấu âm/dương phải chính xác. |
-| `string` | Câu trả lời và các dạng được chấp nhận của đáp án tham chiếu được chuẩn hóa rồi so sánh bằng nhau tuyệt đối. |
-| `date` | Khớp chính xác theo `yyyy-mm-dd`; câu hỏi về tháng dùng `yyyy-mm`. |
-| `boolean` | Khớp chính xác `true` hoặc `false`. |
-| `list` | Các phần tử phải đúng thứ tự và khớp theo vị trí. Thứ tự theo yêu cầu câu hỏi hoặc mặc định trong rulebook. |
-| `table` | Tên cột được đối chiếu sau chuẩn hóa; nếu tên cột không khớp thì đối chiếu theo vị trí. Các hàng được so khớp như một tập hợp; ô tên dùng quy tắc string và ô số dùng quy tắc number. |
-| `unanswerable` | Chỉ đúng nếu đáp án tham chiếu cũng là `unanswerable`. |
-| `abstain` | Luôn được chấm là abstain. |
+| Type             | Quy tắc so khớp                                                                                                                                                                                                             |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `number`       | Khớp chính xác. Giá trị tham chiếu thường là số nguyên đối với tiền VND, số đếm và số lượng; hoặc được làm tròn đến 2 chữ số thập phân.                                                     |
+| `percent`      | So khớp chính xác sau khi làm tròn đến 2 chữ số thập phân; dấu âm/dương phải chính xác.                                                                                                                     |
+| `string`       | Câu trả lời và các dạng được chấp nhận của đáp án tham chiếu được chuẩn hóa rồi so sánh bằng nhau tuyệt đối.                                                                                       |
+| `date`         | Khớp chính xác theo `yyyy-mm-dd`; câu hỏi về tháng dùng `yyyy-mm`.                                                                                                                                                |
+| `boolean`      | Khớp chính xác `true` hoặc `false`.                                                                                                                                                                                   |
+| `list`         | Các phần tử phải đúng thứ tự và khớp theo vị trí. Thứ tự theo yêu cầu câu hỏi hoặc mặc định trong rulebook.                                                                                             |
+| `table`        | Tên cột được đối chiếu sau chuẩn hóa; nếu tên cột không khớp thì đối chiếu theo vị trí. Các hàng được so khớp như một tập hợp; ô tên dùng quy tắc string và ô số dùng quy tắc number. |
+| `unanswerable` | Chỉ đúng nếu đáp án tham chiếu cũng là `unanswerable`.                                                                                                                                                            |
+| `abstain`      | Luôn được chấm là abstain.                                                                                                                                                                                              |
 
 ### Chuẩn hóa `string`
 
@@ -261,9 +269,7 @@ Trong đó:
 \[
 s_i =
 \begin{cases}
-+1 & \text{nếu câu trả lời đúng}\
-0 & \text{nếu abstain}\
--1 & \text{nếu câu trả lời sai}
++1 & \text{nếu câu trả lời đúng}0 & \text{nếu abstain}-1 & \text{nếu câu trả lời sai}
 \end{cases}
 \]
 
@@ -353,11 +359,11 @@ Không được phép:
 
 Giải pháp được kiểm tra trên máy có cấu hình:
 
-| Thành phần | Cấu hình |
-|---|---|
-| GPU | 2 × NVIDIA RTX 5090 |
-| VRAM | 32 GB mỗi GPU; tổng cộng 64 GB |
-| RAM | 512 GB |
+| Thành phần        | Cấu hình                                       |
+| ------------------- | ------------------------------------------------ |
+| GPU                 | 2 × NVIDIA RTX 5090                             |
+| VRAM                | 32 GB mỗi GPU; tổng cộng 64 GB                |
+| RAM                 | 512 GB                                           |
 | Thời gian tối đa | 6 giờ wall-clock cho toàn bộ private test set |
 
 - Giới hạn 6 giờ bao gồm cả thời gian nạp model.
@@ -382,17 +388,17 @@ Giải pháp được kiểm tra trên máy có cấu hình:
 
 ## Tóm tắt các mốc và giới hạn chính
 
-| Hạng mục | Quy định |
-|---|---|
-| Public Test Round | 26/10–16/11/2026 |
-| Số lần nộp public | Tối đa 5 lần/ngày |
-| Hạn nộp Docker | 23:59 (GMT+7), 16/11/2026 |
-| Số lần nộp Docker | Tối đa 2 lần; chỉ bản cuối được đánh giá |
-| Private Test phát hành | 09:00, 20/11/2026 |
-| Hạn nộp private result | 23:59 (GMT+7), 23/11/2026 |
-| Công bố Top 2 | 02/12/2026 |
-| Tổng tham số inference | Không quá 15 tỷ |
-| Chế độ inference | Offline, không có network |
-| Máy tham chiếu | 2 × RTX 5090, 512 GB RAM |
-| Thời gian xử lý private test | Tối đa 6 giờ, bao gồm nạp model |
-| Điều kiện reproducibility | Chênh lệch PA không quá 0.03 |
+| Hạng mục                      | Quy định                                           |
+| ------------------------------- | ---------------------------------------------------- |
+| Public Test Round               | 26/10–16/11/2026                                    |
+| Số lần nộp public            | Tối đa 5 lần/ngày                                |
+| Hạn nộp Docker                | 23:59 (GMT+7), 16/11/2026                            |
+| Số lần nộp Docker            | Tối đa 2 lần; chỉ bản cuối được đánh giá |
+| Private Test phát hành        | 09:00, 20/11/2026                                    |
+| Hạn nộp private result        | 23:59 (GMT+7), 23/11/2026                            |
+| Công bố Top 2                 | 02/12/2026                                           |
+| Tổng tham số inference        | Không quá 15 tỷ                                   |
+| Chế độ inference             | Offline, không có network                          |
+| Máy tham chiếu                | 2 × RTX 5090, 512 GB RAM                            |
+| Thời gian xử lý private test | Tối đa 6 giờ, bao gồm nạp model                 |
+| Điều kiện reproducibility    | Chênh lệch PA không quá 0.03                     |
