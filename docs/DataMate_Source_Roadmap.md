@@ -1,4 +1,3 @@
-
 # DataMate — Lộ trình Source Code theo Phase
 
 > Mục đích: mô tả **cấu trúc source code đích ở cuối mỗi phase** và **những gì thay đổi giữa các phase**, để Long và Phát cùng một bản đồ khi làm song song.
@@ -493,10 +492,3 @@ datamate/
 | Dừng thêm tính năng từ 15/11, chỉ sửa lỗi đóng gói                                                                                                                                              | Chừa thời gian đệm cho Docker và nộp bài                     |
 
 ---
-
-## 10. Việc cần xác nhận trước khi bắt đầu Phase 2
-
-1. Script vòng lặp qua câu hỏi hiện tại (tạo `submission.jsonl` ở Phase 1) đang nằm ở đâu — sẽ trở thành `pipeline.py` hay được thay thế.
-2. Nội dung 4 file test hiện có (để biết các import và đường dẫn cần đổi).
-3. Cách `FINAL_RESULT` đang được tạo từ `def solution(data)` của prompt.
-4. `.gitignore` đã loại `__pycache__/`, `*.egg-info/`, `before.txt`, `after.txt`, `weights/` chưa.
