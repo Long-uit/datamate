@@ -4,11 +4,13 @@ Mục đích: Pipeline suy luận chính thức (Production Inference Pipeline) 
 Hoạt động:
 1. Đọc danh sách câu hỏi từ questions.jsonl của split kiểm thử (public_test hoặc private_test).
 2. Tự động nạp rulebook.md và calendar.csv của split tương ứng.
-3. Nạp dữ liệu các doanh nghiệp (CSV, XLSX, SQLite) kèm cơ chế in-memory caching siêu nhanh.
-4. Xây dựng prompt kỹ thuật và sinh mã phân tích dữ liệu qua mô hình LLM (Qwen2.5-Coder).
-5. Thực thi mã trong môi trường an toàn và chuẩn hóa kết quả về cấu trúc đáp án của Ban Tổ Chức.
-6. Ghi trực tiếp ra file submission.jsonl (flush + fsync) kèm file log chi tiết cho từng câu hỏi.
-7. Tự động thẩm định tính toàn vẹn và hợp lệ 100% của file nộp bài qua validate_submission.
+3. Nạp dữ liệu các doanh nghiệp (CSV, XLSX, SQLite, JSON) kèm cơ chế in-memory caching (bao gồm cả shop_meta).
+4. Kiểm tra tính khả thi qua Module 3 (Feasibility Gate) để bắt sớm các câu hỏi 'unanswerable' (+1 điểm, 0s GPU).
+5. Xây dựng prompt kỹ thuật (kèm README.md của shop) và sinh mã phân tích dữ liệu qua mô hình LLM (Qwen2.5-Coder).
+6. Thực thi mã trong môi trường an toàn; nếu gặp lỗi thực thi (Runtime Error), tự động kích hoạt 1 lượt
+   Self-Correction để mô hình tự sửa lỗi trước khi fallback về 'abstain'.
+7. Chuẩn hóa kết quả đầu ra qua Module 6 (Format Normalizer & Tie-Breaker) về đúng 8 kiểu đáp án của Ban Tổ Chức.
+8. Ghi trực tiếp ra file submission.jsonl (flush + fsync) kèm file log chi tiết cho từng câu hỏi và thẩm định toàn vẹn.
 
 Tương thích:
 - Chạy cục bộ trên máy tính cá nhân (local Windows/Linux/WSL).
@@ -29,6 +31,11 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import numpy as np
 
+# Tự động nạp thư mục src vào sys.path để chạy trực tiếp không cần cài đặt package
+_SRC_DIR = str(Path(__file__).resolve().parent / "src")
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+
 # Đảm bảo hiển thị Unicode tiếng Việt trên console Windows an toàn tuyệt đối
 if sys.platform == "win32":
     try:
@@ -36,6 +43,7 @@ if sys.platform == "win32":
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
+
 
 class DualLogger:
     """Tự động ghi đồng thời ra màn hình console và tệp log UTF-8 không lo lỗi pipe PowerShell."""
@@ -77,9 +85,11 @@ class DualLogger:
         except Exception:
             pass
 
+
 # Nhập các thành phần cốt lõi của package datamate
 from datamate.llm.client import LLMClient
 from datamate.llm.prompt_builder import build_prompt, load_rulebook, resolve_temporal_context
+from datamate.llm.feasibility import check_feasibility, extract_shop_metadata
 from datamate.ingestion.loader import load_business, to_sqlite
 from datamate.output.submission import (
     to_answer,
@@ -87,19 +97,20 @@ from datamate.output.submission import (
     SubmissionWriter,
     validate_submission,
 )
+from datamate.output.normalizer import normalize_output, apply_tie_breaker
 
 
 # ==============================================================================
 # BỘ NHỚ ĐỆM DỮ LIỆU CỬA HÀNG (IN-MEMORY CACHE)
 # ==============================================================================
-_BUSINESS_CACHE: Dict[str, Tuple[Dict[str, pd.DataFrame], Any, str, Any]] = {}
+_BUSINESS_CACHE: Dict[str, Tuple[Dict[str, pd.DataFrame], Any, str, Any, Dict[str, Any]]] = {}
 
 
-def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataFrame], Any, str, Any]:
-    """Nạp dữ liệu sạch của doanh nghiệp và tạo cấu trúc schema summary."""
+def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataFrame], Any, str, Any, Dict[str, Any]]:
+    """Nạp dữ liệu sạch của doanh nghiệp, tạo cấu trúc schema summary và trích xuất sẵn shop_meta."""
     biz_dir = data_root / biz_id
     if not biz_dir.exists():
-        return {}, None, f"Không tìm thấy thư mục dữ liệu shop tại: {biz_dir}", None
+        return {}, None, f"Không tìm thấy thư mục dữ liệu shop tại: {biz_dir}", None, {}
 
     try:
         bd = load_business(biz_dir)
@@ -134,21 +145,22 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
             schema_lines.append(f"- Bảng '{t_name}' ({ti.n_rows} dòng):\n  Cột ({len(ti.columns)}): [{', '.join(cols_preview)}{extra_cols_note}]")
 
         schema_summary = "\n".join(schema_lines)
-        return data_dict, con, schema_summary, bd
+        shop_meta = extract_shop_metadata(business_obj=bd, data_dict=data_dict)
+        return data_dict, con, schema_summary, bd, shop_meta
 
     except Exception as exc:
-        return {}, None, f"Lỗi nạp dữ liệu: {exc}", None
+        return {}, None, f"Lỗi nạp dữ liệu: {exc}", None, {}
 
 
-def get_cached_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataFrame], Any, str, Any, bool]:
-    """Lấy dữ liệu shop từ bộ nhớ đệm RAM nếu đã nạp trước đó."""
+def get_cached_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataFrame], Any, str, Any, Dict[str, Any], bool]:
+    """Lấy dữ liệu shop và shop_meta từ bộ nhớ đệm RAM nếu đã nạp trước đó."""
     if biz_id in _BUSINESS_CACHE:
-        data_dict, con, schema_summary, bd = _BUSINESS_CACHE[biz_id]
-        return data_dict, con, schema_summary, bd, True
+        data_dict, con, schema_summary, bd, shop_meta = _BUSINESS_CACHE[biz_id]
+        return data_dict, con, schema_summary, bd, shop_meta, True
 
-    data_dict, con, schema_summary, bd = load_business_data(biz_id, data_root)
-    _BUSINESS_CACHE[biz_id] = (data_dict, con, schema_summary, bd)
-    return data_dict, con, schema_summary, bd, False
+    data_dict, con, schema_summary, bd, shop_meta = load_business_data(biz_id, data_root)
+    _BUSINESS_CACHE[biz_id] = (data_dict, con, schema_summary, bd, shop_meta)
+    return data_dict, con, schema_summary, bd, shop_meta, False
 
 
 # ==============================================================================
@@ -180,6 +192,7 @@ if 'solution' in globals() and callable(solution):
         "dfs": data_dict,
         "con": con,
         "business": business_obj,
+        "apply_tie_breaker": apply_tie_breaker,
     }
 
     try:
@@ -320,15 +333,8 @@ def main():
             print(f"\n[{idx}/{len(active_questions)}] Câu hỏi ID: {qid} (Shop: {biz_id})")
             print(f"Nội dung: \"{question_text}\" | as_of_date: {as_of_date}")
 
-            if args.dry_run:
-                print("  [DRY-RUN] Bỏ qua suy luận GPU.")
-                sub_ans = make_abstain("Dry Run Mode")
-                writer.write(question_id=qid, answer=sub_ans, code="", raw_result=None, error=None, elapsed_ms=0)
-                written_count += 1
-                continue
-
-            # 1. Nạp dữ liệu doanh nghiệp (In-Memory Cache)
-            data_dict, con, schema_str, bd, is_cache = get_cached_business_data(biz_id, data_root)
+            # 1. Nạp dữ liệu doanh nghiệp + shop_meta (In-Memory Cache)
+            data_dict, con, schema_str, bd, shop_meta, is_cache = get_cached_business_data(biz_id, data_root)
             cache_note = "Cache Hit" if is_cache else "Nạp mới"
             print(f"  -> Dữ liệu: {len(data_dict)} bảng ({cache_note})")
 
@@ -339,33 +345,84 @@ def main():
                 written_count += 1
                 continue
 
-            # 2. Xây dựng prompt ChatML
+            # 2. Module 3 — Deterministic Feasibility Gate (Lá chắn chống phạt)
+            is_feasible, unans_reason = check_feasibility(question_text, as_of_date, shop_meta)
+
+            if not is_feasible:
+                print(f"  🛡️ [Feasibility Gate] Bất khả thi: {unans_reason} -> Trả về 'unanswerable'")
+                sub_ans = {"type": "unanswerable", "answer": None}
+                writer.write(
+                    question_id=qid,
+                    answer=sub_ans,
+                    code="# Feasibility Gate: Unanswerable detected deterministically",
+                    raw_result="unanswerable",
+                    error=None,
+                    elapsed_ms=0,
+                )
+                written_count += 1
+                continue
+
+            if args.dry_run:
+                print("  [DRY-RUN] Bỏ qua suy luận GPU.")
+                sub_ans = make_abstain("Dry Run Mode")
+                writer.write(question_id=qid, answer=sub_ans, code="", raw_result=None, error=None, elapsed_ms=0)
+                written_count += 1
+                continue
+
+            # 3. Xây dựng prompt ChatML (truyền đầy đủ ghi chú README.md của doanh nghiệp)
+            biz_readme = getattr(bd, "readme_text", None) if bd is not None else None
             sys_prompt, user_prompt = build_prompt(
                 schema_str=schema_str,
                 as_of_date=as_of_date,
                 question=question_text,
                 rulebook_content=rulebook_content,
+                business_note=biz_readme,
                 return_messages=True
             )
 
-            # 3. Sinh mã phân tích Python qua LLM
+            # 4. Sinh mã phân tích Python qua LLM (Lượt 1)
             t0 = time.time()
             assert llm is not None
             code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=1024)
             gen_sec = round(time.time() - t0, 2)
 
-            # 4. Thực thi mã nguồn
+            # 5. Thực thi mã nguồn (Lượt 1)
             raw_result, exec_err, exec_ms = execute_solution(code_text, data_dict, con, bd)
 
-            # 5. Chuẩn hóa kết quả đầu ra
+            # 5.1. Cơ chế Runtime Self-Correction (1 lượt tự sửa lỗi nếu gặp ngoại lệ thực thi)
+            if exec_err:
+                print(f"  🔄 [Self-Correction] Lượt 1 lỗi ({exec_err}) -> Yêu cầu LLM tự sửa mã...")
+                retry_user_prompt = (
+                    f"{user_prompt}\n"
+                    f"# Mã nguồn ở lượt trước của bạn bị lỗi thực thi:\n"
+                    f"```python\n{code_text}\n```\n"
+                    f"# Thông báo lỗi: {exec_err}\n"
+                    f"# Hãy kiểm tra lại đúng tên bảng và tên cột trong `data`, sửa lỗi và viết lại duy nhất hàm `def solution(data):` hoàn chỉnh:\n"
+                    f"```python\n"
+                )
+                t_retry = time.time()
+                retry_code = llm.generate_code(prompt=retry_user_prompt, system_prompt=sys_prompt, max_new_tokens=1024)
+                gen_sec = round(gen_sec + (time.time() - t_retry), 2)
+                raw_retry, err_retry, ms_retry = execute_solution(retry_code, data_dict, con, bd)
+                exec_ms += ms_retry
+                if not err_retry:
+                    code_text = retry_code
+                    raw_result = raw_retry
+                    exec_err = None
+                    print("  ✓ [Self-Correction] Khắc phục lỗi thực thi thành công ở lượt 2!")
+                else:
+                    code_text = retry_code
+                    exec_err = err_retry
+
+            # 6. Chuẩn hóa kết quả đầu ra (Module 6: Format Normalizer & Tie-Breaker)
             if exec_err:
                 sub_ans = make_abstain(f"Runtime Error: {exec_err}")
                 print(f"  ⚠️ Lỗi thực thi ({exec_ms}ms) -> Abstain an toàn: {exec_err}")
             else:
-                sub_ans = to_answer(raw_result)
+                sub_ans = normalize_output(raw_result, question=question_text, code_text=code_text)
                 print(f"  ✓ Sinh mã: {gen_sec}s | Chạy: {exec_ms}ms | Kết quả: {sub_ans.get('answer')} (Type: {sub_ans.get('type')})")
 
-            # 6. Ghi ngay ra file submission.jsonl và logs/<qid>.json
+            # 7. Ghi ngay ra file submission.jsonl và logs/<qid>.json
             writer.write(
                 question_id=qid,
                 answer=sub_ans,
@@ -397,7 +454,7 @@ def main():
             sys.stdout = dual_logger.terminal
             dual_logger.close()
         # Đóng toàn bộ SQLite in-memory connections
-        for _, con_c, _, _ in _BUSINESS_CACHE.values():
+        for _, con_c, _, _, _ in _BUSINESS_CACHE.values():
             if con_c:
                 try:
                     con_c.close()

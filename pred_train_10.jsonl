@@ -1,0 +1,7 @@
+{"id": "q_001883280e83", "type": "abstain", "answer": null}
+{"id": "q_00195e1e4049", "type": "unanswerable", "answer": null}
+{"id": "q_002d03ebbded", "type": "number", "answer": 30928200}
+{"id": "q_00558c1410ef", "type": "percent", "answer": 2.26}
+{"id": "q_006c26c65d50", "type": "abstain", "answer": null, "reason": "Runtime Error: TypeError: '>=' not supported between instances of 'str' and 'int'"}
+{"id": "q_0088f7a0afc5", "type": "unanswerable", "answer": null}
+{"id": "q_008f69128180", "type": "unanswerable", "answer": null}

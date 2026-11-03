@@ -9,7 +9,7 @@ Các cải tiến kỹ thuật chính:
 3. Hướng dẫn kiểm tra và chọn bảng theo cấu trúc cột thực tế (cột ngày, cột tiền, cột trạng thái)
    thay vì tìm kiếm cứng nhắc theo tên bảng.
 4. Đảm bảo quy tắc nghiệp vụ theo Rulebook: loại đơn hủy/trả hàng, làm sạch số tiền,
-   loại bỏ khách lẻ và giới hạn dữ liệu không vượt quá as_of_date.
+   loại bỏ khách lẻ, quy tắc đồng hạng (Điều 9) và giới hạn dữ liệu không vượt quá as_of_date.
 Tác giả: Long (AI Architect & Model Lead)
 """
 
@@ -21,7 +21,15 @@ from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any, List
 
-from datamate.grounding.rulebook import load_rulebook
+try:
+    from datamate.grounding.rulebook import load_rulebook
+except ImportError:
+    def load_rulebook(split_dir: Optional[str] = None) -> str:
+        if split_dir:
+            p = Path(split_dir) / "rulebook.md"
+            if p.exists():
+                return p.read_text(encoding="utf-8")
+        return ""
 
 # Cấu hình encoding chuẩn trên Windows console
 if sys.platform == "win32":
@@ -131,7 +139,7 @@ def resolve_temporal_context(
             }
 
     # 2. N ngày gần nhất (kể cả hôm nay, ngày cuối là hôm nay)
-    recent_match = re.search(r"(\d+)\s*ngày\s*gần\s*nhất", q_lower)
+    recent_match = re.search(r"(\d+)\s*ng[aà]y\s*gần\s*nhất", q_lower)
     if recent_match:
         n_days = int(recent_match.group(1))
         start_d = (as_of - timedelta(days=n_days - 1)).isoformat()
@@ -144,24 +152,25 @@ def resolve_temporal_context(
             "code_hint": f"(df[date_col].dt.date >= pd.to_datetime('{start_d}').date()) & (df[date_col].dt.date <= pd.to_datetime('{end_d}').date())"
         }
 
-    # 3. Tháng M/YYYY cụ thể (ví dụ: tháng 9/2025, thang 6/2026)
-    month_match = re.search(r"th[aá]ng\s*(\d{1,2})/(\d{4})", q_lower)
+    # 3. Tháng M/YYYY cụ thể (ví dụ: tháng 9/2025, thang 6/2026, tháng 1 năm 2025)
+    month_match = re.search(r"th(?:áng|ang|angs)\s*(\d{1,2})[\s/\-]+(?:n(?:ăm|am)\s*)?(\d{4})", q_lower)
     if month_match:
         m = int(month_match.group(1))
         y = int(month_match.group(2))
-        last_day = calendar.monthrange(y, m)[1]
-        start_d = f"{y:04d}-{m:02d}-01"
-        end_d = f"{y:04d}-{m:02d}-{last_day:02d}"
-        return {
-            "as_of_date": as_of_date_str,
-            "start_date": start_d,
-            "end_date": end_d,
-            "description": f"Cả tháng {m}/{y}: từ ngày '{start_d}' đến hết ngày '{end_d}'",
-            "code_hint": f"(df[date_col].dt.year == {y}) & (df[date_col].dt.month == {m})"
-        }
+        if 1 <= m <= 12:
+            last_day = calendar.monthrange(y, m)[1]
+            start_d = f"{y:04d}-{m:02d}-01"
+            end_d = f"{y:04d}-{m:02d}-{last_day:02d}"
+            return {
+                "as_of_date": as_of_date_str,
+                "start_date": start_d,
+                "end_date": end_d,
+                "description": f"Cả tháng {m}/{y}: từ ngày '{start_d}' đến hết ngày '{end_d}'",
+                "code_hint": f"(df[date_col].dt.year == {y}) & (df[date_col].dt.month == {m})"
+            }
 
-    # 4. Quý Q/YYYY cụ thể (ví dụ: quý 2/2026)
-    quarter_match = re.search(r"qu[yý]\s*([1-4])/(\d{4})", q_lower)
+    # 4. Quý Q/YYYY cụ thể (ví dụ: quý 2/2026, quý 1 năm 2025)
+    quarter_match = re.search(r"qu[yý]\s*([1-4])[\s/\-]+(?:n(?:ăm|am)\s*)?(\d{4})", q_lower)
     if quarter_match:
         q = int(quarter_match.group(1))
         y = int(quarter_match.group(2))
@@ -282,9 +291,11 @@ def classify_intent(question: str) -> str:
     if any(k in q_lower for k in join_keywords):
         return "multitable_join"
 
-    # 3. Nhóm tỉ lệ / phần trăm
-    rate_keywords = ["tỉ lệ", "tỷ lệ", "phần trăm", "%", "tỉ trọng", "chiếm bao nhiêu phần trăm", "chiếm bn %"]
-    if any(k in q_lower for k in rate_keywords):
+    # 3. Nhóm tỉ lệ / phần trăm (loại trừ nồng độ thuốc có chữ số đứng ngay trước dấu %, vd 'Otrivin 0,1%')
+    if re.search(
+        r"(?<!\d)%|ph[ầa]n\s*tr(?:[ăa]m|awm)|\bt[ỉỷi]\s*l[ệe]\b|\bty\s*le\b|\bt[ỉỷi]\s*tr[ọo]ng\b|\bty\s*trong\b",
+        q_lower,
+    ):
         return "rate_percentage"
 
     # 4. Nhóm so sánh chuỗi thời gian
@@ -392,7 +403,7 @@ def solution(data):
         cols = df.columns.tolist()
         d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'ngaylap'])), None)
         p_c = next((c for c in cols if any(k in str(c).lower() for k in ['tên hàng', 'mặt hàng', 'sản phẩm', 'ten_hang', 'tên thuốc'])), None)
-        q_c = next((c for c in cols if any(k in str(c).lower() for k in ['số lượng', 'soluong', 'sl'])), None)
+        q_c = next((c for c in cols if any(k in str(c).lower() for k in ['số lượng quy đổi', 'slquydoi', 'số lượng', 'soluong', 'sl'])), None)
         if d_c and p_c and q_c:
             df_sales = df.copy()
             date_col = d_c
@@ -404,20 +415,21 @@ def solution(data):
 
     # 2. Lọc thời gian dịp Tết 2026 (từ 2026-02-10 đến 2026-02-26 theo lịch âm)
     df_sales[date_col] = pd.to_datetime(df_sales[date_col], dayfirst=True, errors='coerce')
-    df_sales = df_sales[(df_sales[date_col] >= pd.Timestamp("2026-02-10")) & (df_sales[date_col] <= pd.Timestamp("2026-02-26"))]
+    df_sales = df_sales[(df_sales[date_col].dt.date >= pd.to_datetime("2026-02-10").date()) & (df_sales[date_col].dt.date <= pd.to_datetime("2026-02-26").date())]
 
     # 3. Bỏ đơn huỷ và trả hàng
     status_col = next((c for c in df_sales.columns if any(k in str(c).lower() for k in ['trạng thái', 'status'])), None)
     if status_col:
         df_sales = df_sales[~df_sales[status_col].astype(str).str.lower().str.contains('hủy|huỷ|trả|cancel')]
 
-    # 4. Gom nhóm theo mặt hàng và xếp hạng theo tổng số lượng bán
+    # 4. Gom nhóm và xếp hạng: số lượng giảm dần, nếu bằng nhau thì mã/tên tăng dần (Điều 9 Rulebook)
     df_sales[qty_col] = pd.to_numeric(df_sales[qty_col].astype(str).str.replace(',', '').str.replace(' ', ''), errors='coerce').fillna(0)
-    top_items = df_sales.groupby(prod_col)[qty_col].sum().sort_values(ascending=False)
-    if top_items.empty:
+    grouped = df_sales.groupby(prod_col, as_index=False)[qty_col].sum()
+    grouped = grouped.sort_values(by=[qty_col, prod_col], ascending=[False, True])
+    if grouped.empty:
         return "unanswerable"
 
-    return str(top_items.index[0])
+    return str(grouped.iloc[0][prod_col])
 ```""",
 
     "multitable_join": """--- VÍ DỤ MẪU: TRA CỨU ĐA BẢNG (JOIN) ---
@@ -430,8 +442,8 @@ def solution(data):
     code_med_col = None
     for name, df in data.items():
         cols = df.columns.tolist()
-        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['hoạt chất', 'hoatchat'])), None)
-        c_c = next((c for c in cols if any(k in str(c).lower() for k in ['mã thuốc', 'mã hàng', 'ma_thuoc'])), None)
+        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['hoạt chất', 'hoatchat', 'thanhphanchinh'])), None)
+        c_c = next((c for c in cols if any(k in str(c).lower() for k in ['mã thuốc', 'mã hàng', 'ma_thuoc', 'mã sku', 'mahanghoa'])), None)
         if a_c and c_c:
             df_med = df.copy()
             act_col = a_c
@@ -453,8 +465,8 @@ def solution(data):
     for name, df in data.items():
         cols = df.columns.tolist()
         d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'ngaylap'])), None)
-        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền']) and 'thuế' not in str(c).lower()), None)
-        c_c = next((c for c in cols if any(k in str(c).lower() for k in ['mã thuốc', 'mã hàng', 'ma_thuoc'])), None)
+        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền', 'trigia']) and 'thuế' not in str(c).lower()), None)
+        c_c = next((c for c in cols if any(k in str(c).lower() for k in ['mã thuốc', 'mã hàng', 'ma_thuoc', 'mã sku', 'mahanghoa'])), None)
         if d_c and a_c and c_c:
             df_sales = df.copy()
             d_col = d_c
@@ -538,7 +550,8 @@ NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN:
    - [Doanh thu hợp lệ]: Chỉ tính các đơn KHÔNG huỷ và KHÔNG trả hàng (`trang_thai NOT IN ('huỷ', 'trả hàng', 'hủy', 'tra_hang')`). Đơn đang giao vẫn tính.
    - [Tỉ lệ huỷ đơn (%)]: (Số đơn huỷ / Tổng số đơn trong kỳ) * 100. Làm tròn 2 số thập phân, trả về float (ví dụ 1.06, không kèm chữ '%').
    - [Bán chạy nhất]: Xếp hạng theo TỔNG SỐ LƯỢNG quy đổi về đơn vị cơ bản.
-   - [Khách mua nhiều nhất]: Xếp theo tổng doanh thu của từng khách, loại bỏ khách lẻ ('lẻ', 'khách lẻ', 'kl', 'nan', 'none').
+   - [Khách mua nhiều nhất]: Xếp theo tổng doanh thu (hoặc số đơn nếu câu hỏi nói rõ) của từng khách, loại bỏ khách lẻ ('lẻ', 'khách lẻ', 'kl', 'nan', 'none').
+   - [Quy tắc đồng hạng (Điều 9)]: Hai đối tượng bằng nhau ở tiêu chí câu hỏi thì xếp theo MÃ tăng dần (không có mã thì theo TÊN tăng dần). Luôn dùng `sort_values(by=[cot_tieu_chi, cot_ma_hoac_ten], ascending=[False, True])` hoặc hàm `apply_tie_breaker(records, sort_key, code_key, name_key)` có sẵn.
    - [Giới hạn as_of_date]: Mọi bản ghi có ngày > as_of_date coi như chưa xảy ra (loại bỏ khỏi tính toán).
    - [Không đủ dữ liệu]: Nếu dữ liệu shop không có cột/thông tin cần thiết hoặc kỳ hỏi nằm hoàn toàn ngoài dữ liệu shop -> `return "unanswerable"`.
 

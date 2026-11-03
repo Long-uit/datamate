@@ -140,6 +140,8 @@ flowchart LR
 
 ## 📁 7. Cấu trúc Dự án (Repository Structure)
 
+Đề xuất triển khai mô hình, QueryPlan, từ điển tiếng Việt, benchmark và các điều kiện đóng gói được trình bày tại [docs/DataMate_Competitive_Solution.md](docs/DataMate_Competitive_Solution.md). Tài liệu phân biệt thông số do tác giả mô hình công bố với khuyến nghị và kết quả cần kiểm chứng riêng trên DataMate.
+
 Mã nguồn được tổ chức theo **src-layout**: toàn bộ logic nằm trong package `datamate` (thư mục `src/datamate/`), cài bằng `pip install -e . --no-deps`.
 
 ```text

@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "strategy": "business_group_holdout",
+  "seed": 42,
+  "source": {
+    "questions_file": "competition_data/train/questions.jsonl",
+    "questions_sha256": "b258ebd978a6d51b3b0b431b26926f958e56522beeb7da2984fea8333e21cec1",
+    "answers_file": "competition_data/train/answers.jsonl",
+    "answers_sha256": "0b5fe9d13edf5fae306bda9cafaf699c06b639846c8e1d9e41c39a86d1160b3d"
+  },
+  "counts": {
+    "total": 3000,
+    "train": 2369,
+    "validation": 631
+  },
+  "train_ids_sha256": "274f7428e9f5acb6b75c5154ff645a572baaded998a0819c4f968596a5d617fb",
+  "val_ids_sha256": "39e2a1e74406bf95c1e9131cae7c6f7c23d7942c200eadb06c17a2e882c937f8",
+  "train_business_counts": {
+    "biz_102": 119,
+    "biz_103": 119,
+    "biz_104": 119,
+    "biz_105": 119,
+    "biz_106": 119,
+    "biz_107": 40,
+    "biz_109": 118,
+    "biz_110": 40,
+    "biz_113": 40,
+    "biz_114": 40,
+    "biz_115": 118,
+    "biz_116": 118,
+    "biz_117": 118,
+    "biz_118": 118,
+    "biz_120": 118,
+    "biz_121": 118,
+    "biz_122": 118,
+    "biz_123": 118,
+    "biz_125": 40,
+    "biz_126": 40,
+    "biz_127": 118,
+    "biz_128": 118,
+    "biz_129": 118,
+    "biz_130": 118
+  },
+  "val_business_counts": {
+    "biz_101": 40,
+    "biz_108": 119,
+    "biz_111": 118,
+    "biz_112": 118,
+    "biz_119": 118,
+    "biz_124": 118
+  },
+  "train_answer_type_counts": {
+    "boolean": 18,
+    "date": 117,
+    "list": 159,
+    "number": 1493,
+    "percent": 442,
+    "string": 70,
+    "table": 14,
+    "unanswerable": 56
+  },
+  "val_answer_type_counts": {
+    "boolean": 5,
+    "date": 28,
+    "list": 34,
+    "number": 391,
+    "percent": 136,
+    "string": 18,
+    "table": 5,
+    "unanswerable": 14
+  },
+  "n_folds": 5,
+  "fold_index": 4,
+  "validation_business_ids": [
+    "biz_101",
+    "biz_108",
+    "biz_111",
+    "biz_112",
+    "biz_119",
+    "biz_124"
+  ],
+  "generator_version": "1.0.0"
+}

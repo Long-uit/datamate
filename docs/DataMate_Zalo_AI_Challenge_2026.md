@@ -1,5 +1,7 @@
 # DataMate — Zalo AI Challenge 2026
 
+> Tài liệu tổng hợp thông tin cuộc thi từ các phần **Description, Data, Evaluation và Rules** được cung cấp.
+
 ---
 
 ## Tuyên bố Sứ mệnh (Mission Statement)
@@ -8,22 +10,11 @@
 
 ---
 
-> Tài liệu tổng hợp thông tin cuộc thi từ các phần **Description, Data, Evaluation và Rules** được cung cấp.
-
-## Mục lục
-
-1. [Description — Mô tả bài toán](#1-description--mô-tả-bài-toán)
-2. [Data — Dữ liệu](#2-data--dữ-liệu)
-3. [Evaluation — Đánh giá](#3-evaluation--đánh-giá)
-4. [Rules — Quy định và các vòng thi](#4-rules--quy-định-và-các-vòng-thi)
-
----
-
 # 1. Description — Mô tả bài toán
 
 ## 1.1. Bối cảnh
 
-Bảng tính và các cơ sở dữ liệu đơn giản là những hệ thống lưu trữ dữ liệu được sử dụng rộng rãi. Nhiều cá nhân và tổ chức có dữ liệu nhưng không có khả năng viết truy vấn để khai thác dữ liệu đó.
+Bảng tính và các cơ sở dữ liệu là những hệ thống lưu trữ dữ liệu được sử dụng rộng rãi. Nhiều cá nhân và tổ chức có dữ liệu nhưng không có khả năng viết truy vấn để khai thác dữ liệu đó.
 
 DataMate hướng đến khả năng cho phép người dùng đặt câu hỏi bằng tiếng Việt tự nhiên và nhận được câu trả lời chính xác trực tiếp từ dữ liệu có cấu trúc.
 
@@ -46,7 +37,7 @@ Mỗi yêu cầu gồm các thành phần:
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Data package          | Gói dữ liệu của một doanh nghiệp, gồm một hoặc nhiều tệp `.csv`, `.xlsx`, `.sqlite` và tệp `README.md` mô tả doanh nghiệp. |
 | Question              | Câu hỏi bằng tiếng Việt đời thường.                                                                                                       |
-| As-of date            | Ngày tham chiếu dùng để xác định mốc “hôm nay” khi xử lý các biểu thức thời gian tương đối.                                  |
+| As-of date            | Ngày tham chiếu dùng để xác định mốc thời gian khi xử lý các biểu thức thời gian tương đối.                                    |
 | Rulebook              | Bộ quy tắc nghiệp vụ áp dụng cho split.                                                                                                      |
 | Solar–lunar calendar | Lịch dương – âm dùng chung cho các doanh nghiệp trong split.                                                                               |
 
@@ -260,18 +251,20 @@ Các câu hỏi yêu cầu xếp hạng được xử lý theo các quy tắc:
 
 Chỉ số leaderboard là **Penalized Accuracy (PA)** trên tổng số câu hỏi `N` của test set:
 
-\[
+$$
 PA = \frac{1}{N}\sum_{i=1}^{N}s_i
-\]
+$$
 
 Trong đó:
 
-\[
+$$
 s_i =
 \begin{cases}
-+1 & \text{nếu câu trả lời đúng}0 & \text{nếu abstain}-1 & \text{nếu câu trả lời sai}
++1 & \text{nếu câu trả lời đúng} \\
+0 & \text{nếu abstain} \\
+-1 & \text{nếu câu trả lời sai}
 \end{cases}
-\]
+$$
 
 - Mọi câu hỏi có trọng số bằng nhau.
 - Bất kỳ câu trả lời nào cho câu hỏi có đáp án tham chiếu `unanswerable` đều bị tính sai, trừ khi Agent cũng trả về `unanswerable`.
@@ -376,9 +369,9 @@ Giải pháp được kiểm tra trên máy có cấu hình:
 - Tệp `submission.jsonl` đội thi upload trong giai đoạn private test chỉ quyết định leaderboard tạm thời và đội nào được chạy lại.
 - Giải pháp được xem là có tính tái lập nếu:
 
-\[
-\left|PA_{uploaded}-PA_{rerun}\right| \leq 0.03
-\]
+$$
+\left|PA_{\text{uploaded}} - PA_{\text{rerun}}\right| \le 0.03
+$$
 
 - Nếu độ chênh lệch vượt quá `0.03`, ban tổ chức sẽ kiểm tra logs do Docker image ghi ra; có thể chạy image thêm một lần và có thể yêu cầu đội thi cung cấp thêm thông tin.
 - Nếu không giải thích được chênh lệch, đội thi có thể bị loại.
@@ -399,6 +392,6 @@ Giải pháp được kiểm tra trên máy có cấu hình:
 | Công bố Top 2                 | 02/12/2026                                           |
 | Tổng tham số inference        | Không quá 15 tỷ                                   |
 | Chế độ inference             | Offline, không có network                          |
-| Máy tham chiếu                | 2 × RTX 5090, 512 GB RAM                            |
+| Máy kiểm tra của BTC            | 2 × RTX 5090, 512 GB RAM                            |
 | Thời gian xử lý private test | Tối đa 6 giờ, bao gồm nạp model                 |
 | Điều kiện reproducibility    | Chênh lệch PA không quá 0.03                     |
