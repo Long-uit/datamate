@@ -72,3 +72,4 @@ class TestEntityLinker:
         cand_values = [c.value for c in cands]
         assert "Cà phê đen" in cand_values
         assert "Bạc xỉu" in cand_values
+

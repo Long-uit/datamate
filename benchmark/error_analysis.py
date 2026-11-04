@@ -198,3 +198,4 @@ def generate_markdown_report(summary: AnalysisSummary) -> str:
             lines.append(f"| `{p.question_id}` | {q_snippet} | `{p.pred_answer}` ({p.pred_type}) | `{p.truth_answer}` ({p.truth_type}) | {p.error_category} |")
 
     return "\n".join(lines)
+

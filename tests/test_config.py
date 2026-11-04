@@ -41,3 +41,4 @@ class TestConfig:
         cfg1 = get_config()
         cfg2 = get_config()
         assert cfg1 is cfg2
+

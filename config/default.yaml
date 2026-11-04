@@ -22,3 +22,4 @@ paths:
   data_dir: "competition_data/public_test/data"
   output_file: "submission.jsonl"
   logs_dir: "submission_logs"
+

@@ -64,3 +64,4 @@ class TestErrorAnalysis:
         report = generate_markdown_report(summary)
         assert "# 📊 BÁO CÁO PHÂN TÍCH LỖI VÀ ĐỘ TIN CẬY" in report
         assert "Penalized Accuracy (PA)" in report
+

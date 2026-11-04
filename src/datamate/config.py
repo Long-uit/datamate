@@ -137,3 +137,4 @@ def reset_config() -> None:
     """Dọn dẹp singleton (hữu ích cho unit test)."""
     global _GLOBAL_CONFIG
     _GLOBAL_CONFIG = None
+

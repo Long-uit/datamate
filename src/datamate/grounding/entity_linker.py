@@ -230,3 +230,4 @@ def link_entities(
             unique_matches.append(m)
 
     return unique_matches
+

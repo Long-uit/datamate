@@ -91,3 +91,4 @@ def paraphrase_question(question: str, num_variants: int = 3) -> list[str]:
     # Lọc bỏ câu trùng với câu gốc và giới hạn số lượng
     result = [v for v in variants if v.strip().lower() != question.strip().lower()]
     return result[:num_variants]
+
