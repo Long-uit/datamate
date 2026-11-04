@@ -1,0 +1,15 @@
+{
+  "question_id": "q_00bb4edee433",
+  "answer": {
+    "id": "q_00bb4edee433",
+    "type": "unanswerable",
+    "answer": null
+  },
+  "elapsed_ms": 59531,
+  "code": "import pandas as pd\n\ndef solution(data):\n    # 1. Tìm bảng danh mục thuốc chứa thuốc kê đơn\n    df_med = None\n    act_col = None\n    code_med_col = None\n    for name, df in data.items():\n        cols = df.columns.tolist()\n        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['hoạt chất', 'hoatchat'])), None)\n        c_c = next((c for c in cols if any(k in str(c).lower() for k in ['mã thuốc', 'mã hàng', 'ma_thuoc'])), None)\n        if a_c and c_c:\n            df_med = df.copy()\n            act_col = a_c\n            code_med_col = c_c\n            break\n    if df_med is None:\n        return \"unanswerable\"\n\n    matched_meds = df_med[df_med[act_col].astype(str).str.lower().str.contains('kê đơn')]\n    if matched_meds.empty:\n        return \"unanswerable\"\n    target_codes = set(matched_meds[code_med_col].astype(str))\n\n    # 2. Tìm bảng bán hàng chi tiết\n    df_sales = None\n    d_col = None\n    amt_col = None\n    sales_code_col = None\n    for name, df in data.items():\n        cols = df.columns.tolist()\n        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'ngaylap'])), None)\n        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền']) and 'thuế' not in str(c).lower()), None)\n        c_c = next((c for c in cols if any(k in str(c).lower() for k in ['mã thuốc', 'mã hàng', 'ma_thuoc'])), None)\n        if d_c and a_c and c_c:\n            df_sales = df.copy()\n            d_col = d_c\n            amt_col = a_c\n            sales_code_col = c_c\n            break\n    if df_sales is None:\n        return \"unanswerable\"\n\n    # Lọc thời gian và mã thuốc\n    df_sales[d_col] = pd.to_datetime(df_sales[d_col], dayfirst=True, errors='coerce')\n    df_sales = df_sales[(df_sales[d_col] >= pd.Timestamp(\"2025-07-01\")) & (df_sales[d_col] <= pd.Timestamp(\"2025-07-31\"))]\n    df_sales = df_sales[df_sales[sales_code_col].astype(str).isin(target_codes)]\n\n    total = pd.to_numeric(df_sales[amt_col].astype(str).str.replace(',', '').str.replace(' ', ''), errors='coerce').fillna(0).sum()\n    return round(total / 1000000, 2)  # Convert to millions",
+  "raw_result": {
+    "type": "unanswerable",
+    "answer": null
+  },
+  "error": null
+}

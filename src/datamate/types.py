@@ -43,3 +43,22 @@ class GateDecision:
     reason: Optional[str] = None
     confidence: float = 1.0
 
+
+@dataclass
+class EntityMatch:
+    """Kết quả đối sánh thực thể (Entity Linking)."""
+    query_term: str          # Chuỗi tìm kiếm trong câu hỏi (ví dụ: "cf sữa")
+    matched_value: str       # Chuỗi thực tế trong DB (ví dụ: "Cà phê sữa đá 330ml")
+    entity_type: str         # "sku", "product", "customer", "category"
+    score: float             # Điểm tương đồng 0.0 -> 1.0
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class Candidate:
+    """Ứng viên thực thể phục vụ xếp hạng và lọc."""
+    value: str
+    norm_value: str
+    entity_type: str
+    source_table: str
+    source_col: str

@@ -1,0 +1,13 @@
+{
+  "question_id": "q_7fe322c8fff9",
+  "answer": {
+    "id": "q_7fe322c8fff9",
+    "type": "abstain",
+    "answer": null,
+    "reason": "Default Abstain (Not evaluated in batch)"
+  },
+  "elapsed_ms": 0,
+  "code": "",
+  "raw_result": null,
+  "error": null
+}

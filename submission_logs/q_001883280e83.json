@@ -1,0 +1,15 @@
+{
+  "question_id": "q_001883280e83",
+  "answer": {
+    "id": "q_001883280e83",
+    "type": "abstain",
+    "answer": null
+  },
+  "elapsed_ms": 204290,
+  "code": "def solution(data):\n    # Fallback an toàn khi mã sinh ra không đạt chuẩn cú pháp\n    return None\n",
+  "raw_result": {
+    "type": "abstain",
+    "answer": null
+  },
+  "error": null
+}

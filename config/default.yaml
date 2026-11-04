@@ -1,0 +1,25 @@
+# Cấu hình mặc định cho DataMate Engine (Zalo AI Challenge 2026)
+
+model:
+  model_id: "Qwen/Qwen2.5-Coder-3B-Instruct"
+  backend: "transformers"      # "transformers" hoặc "vllm"
+  max_new_tokens: 512
+  temperature: 0.0             # Greedy decoding T=0
+  device: "auto"
+
+execution:
+  timeout_seconds: 15
+  memory_limit_mb: 4096
+  use_sqlite_cache: true
+
+grounding:
+  entity_linking_threshold: 0.6
+  max_entity_candidates: 10
+
+paths:
+  calendar_csv: "competition_data/public_test/calendar.csv"
+  rulebook_md: "competition_data/public_test/rulebook.md"
+  data_dir: "competition_data/public_test/data"
+  output_file: "submission.jsonl"
+  logs_dir: "submission_logs"
+
