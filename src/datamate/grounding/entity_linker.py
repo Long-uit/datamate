@@ -17,11 +17,17 @@ from __future__ import annotations
 import difflib
 import re
 import unicodedata
-from typing import Optional
+from typing import Optional, TYPE_CHECKING, Any
 
-import pandas as pd
+try:
+    import pandas as pd
+except ImportError:
+    pd = None
 
-from datamate.ingestion.loader import BusinessData
+if TYPE_CHECKING:
+    from datamate.ingestion.loader import BusinessData
+else:
+    BusinessData = Any
 from datamate.types import Candidate, EntityMatch
 
 # Từ điển viết tắt / teencode tiếng Việt phổ biến trong bán lẻ

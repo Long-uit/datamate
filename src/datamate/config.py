@@ -11,12 +11,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-import yaml
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 
 @dataclass
 class ModelConfig:
-    model_id: str = "Qwen/Qwen2.5-Coder-3B-Instruct"
+    model_id: str = "Qwen/Qwen2.5-Coder-7B-Instruct"
     backend: str = "transformers"  # "transformers" hoặc "vllm"
     max_new_tokens: int = 512
     temperature: float = 0.0
@@ -75,8 +78,9 @@ def load_config(config_path: Optional[str | Path] = None) -> AppConfig:
     raw_dict = {}
 
     if path.exists() and path.is_file():
-        with open(path, "r", encoding="utf-8") as f:
-            raw_dict = yaml.safe_load(f) or {}
+        if yaml is not None:
+            with open(path, "r", encoding="utf-8") as f:
+                raw_dict = yaml.safe_load(f) or {}
 
     # Khởi tạo các sub-config từ dictionary
     m_data = raw_dict.get("model", {})
@@ -86,7 +90,7 @@ def load_config(config_path: Optional[str | Path] = None) -> AppConfig:
 
     cfg = AppConfig(
         model=ModelConfig(
-            model_id=m_data.get("model_id", "Qwen/Qwen2.5-Coder-3B-Instruct"),
+            model_id=m_data.get("model_id", "Qwen/Qwen2.5-Coder-7B-Instruct"),
             backend=m_data.get("backend", "transformers"),
             max_new_tokens=m_data.get("max_new_tokens", 512),
             temperature=float(m_data.get("temperature", 0.0)),

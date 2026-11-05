@@ -91,29 +91,35 @@ from datamate.llm.client import LLMClient
 from datamate.llm.prompt_builder import build_prompt, load_rulebook, resolve_temporal_context
 from datamate.llm.feasibility import check_feasibility, extract_shop_metadata
 from datamate.ingestion.loader import load_business, to_sqlite
+from datamate.ingestion.cleaner import clean_business
+from datamate.grounding.entity_linker import extract_candidates_from_business, link_entities, expand_abbreviations
+from datamate.execution.sandbox import run_code, RunResult
 from datamate.output.submission import (
     to_answer,
     make_abstain,
     SubmissionWriter,
     validate_submission,
 )
-from datamate.output.normalizer import normalize_output, apply_tie_breaker
+from datamate.output.normalizer import normalize_output, apply_tie_breaker, check_result_sanity
+from datamate.output.abstention import compute_confidence_score, apply_abstention_gate
 
 
 # ==============================================================================
 # BỘ NHỚ ĐỆM DỮ LIỆU CỬA HÀNG (IN-MEMORY CACHE)
 # ==============================================================================
-_BUSINESS_CACHE: Dict[str, Tuple[Dict[str, pd.DataFrame], Any, str, Any, Dict[str, Any]]] = {}
+_BUSINESS_CACHE: Dict[str, Tuple[Dict[str, pd.DataFrame], Any, str, Any, Dict[str, Any], List[Any]]] = {}
 
 
-def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataFrame], Any, str, Any, Dict[str, Any]]:
-    """Nạp dữ liệu sạch của doanh nghiệp, tạo cấu trúc schema summary và trích xuất sẵn shop_meta."""
+def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataFrame], Any, str, Any, Dict[str, Any], List[Any]]:
+    """Nạp dữ liệu sạch của doanh nghiệp (áp dụng Rule 8), tạo schema summary, trích xuất shop_meta và candidates."""
     biz_dir = data_root / biz_id
     if not biz_dir.exists():
-        return {}, None, f"Không tìm thấy thư mục dữ liệu shop tại: {biz_dir}", None, {}
+        return {}, None, f"Không tìm thấy thư mục dữ liệu shop tại: {biz_dir}", None, {}, []
 
     try:
-        bd = load_business(biz_dir)
+        raw_bd = load_business(biz_dir)
+        # Kích hoạt làm sạch Rule 8 (Group Forward-Fill & Deduplication)
+        bd = clean_business(raw_bd)
         con = to_sqlite(bd)
         data_dict: Dict[str, pd.DataFrame] = {}
         schema_lines: List[str] = []
@@ -146,34 +152,43 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
 
         schema_summary = "\n".join(schema_lines)
         shop_meta = extract_shop_metadata(business_obj=bd, data_dict=data_dict)
-        return data_dict, con, schema_summary, bd, shop_meta
+        candidates = extract_candidates_from_business(bd)
+        return data_dict, con, schema_summary, bd, shop_meta, candidates
 
     except Exception as exc:
-        return {}, None, f"Lỗi nạp dữ liệu: {exc}", None, {}
+        return {}, None, f"Lỗi nạp dữ liệu: {exc}", None, {}, []
 
 
-def get_cached_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataFrame], Any, str, Any, Dict[str, Any], bool]:
-    """Lấy dữ liệu shop và shop_meta từ bộ nhớ đệm RAM nếu đã nạp trước đó."""
+def get_cached_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataFrame], Any, str, Any, Dict[str, Any], List[Any], bool]:
+    """Lấy dữ liệu shop, shop_meta và candidates từ bộ nhớ đệm RAM nếu đã nạp trước đó."""
     if biz_id in _BUSINESS_CACHE:
-        data_dict, con, schema_summary, bd, shop_meta = _BUSINESS_CACHE[biz_id]
-        return data_dict, con, schema_summary, bd, shop_meta, True
+        data_dict, con, schema_summary, bd, shop_meta, candidates = _BUSINESS_CACHE[biz_id]
+        return data_dict, con, schema_summary, bd, shop_meta, candidates, True
 
-    data_dict, con, schema_summary, bd, shop_meta = load_business_data(biz_id, data_root)
-    _BUSINESS_CACHE[biz_id] = (data_dict, con, schema_summary, bd, shop_meta)
-    return data_dict, con, schema_summary, bd, shop_meta, False
+    data_dict, con, schema_summary, bd, shop_meta, candidates = load_business_data(biz_id, data_root)
+    _BUSINESS_CACHE[biz_id] = (data_dict, con, schema_summary, bd, shop_meta, candidates)
+    return data_dict, con, schema_summary, bd, shop_meta, candidates, False
 
 
 # ==============================================================================
-# HÀM THỰC THI MÃ NGUỒN AN TOÀN
+# HÀM THỰC THI MÃ NGUỒN AN TOÀN (SANDBOX / SUBPROCESS)
 # ==============================================================================
 
-def execute_solution(code_text: str, data_dict: Dict[str, pd.DataFrame], con: Any, business_obj: Any) -> Tuple[Any, Optional[str], int]:
-    """Thực thi hàm solution(data) của mô hình và thu thập kết quả."""
-    t_start = time.perf_counter()
-
-    # Bọc adapter để gán kết quả vào FINAL_RESULT
+def execute_solution(
+    code_text: str,
+    biz_dir: Path,
+    data_dict: Dict[str, pd.DataFrame],
+    con: Any,
+    business_obj: Any,
+    timeout_s: int = 30,
+    use_sandbox: bool = True,
+) -> Tuple[Any, Optional[str], int]:
+    """
+    Thực thi hàm solution(data) qua sandbox subprocess độc lập (cô lập hoàn toàn, có hard timeout),
+    hoặc chế độ in-process an toàn (sao chép độc lập để bảo vệ cache).
+    """
     adapter = """
-if 'solution' in globals() and callable(solution):
+if 'FINAL_RESULT' not in globals() and 'solution' in globals() and callable(solution):
     _raw_sol = solution(data)
     if _raw_sol == "unanswerable" or (isinstance(_raw_sol, str) and _raw_sol.strip().lower() in ("unanswerable", "không thể trả lời")):
         FINAL_RESULT = {"type": "unanswerable", "answer": None}
@@ -182,14 +197,24 @@ if 'solution' in globals() and callable(solution):
     else:
         FINAL_RESULT = _raw_sol
 """
-    executable_code = code_text + "\n" + adapter
+    executable_code = code_text.strip() + "\n" + adapter
 
+    if use_sandbox:
+        res = run_code(executable_code, business_dir=biz_dir, timeout_s=timeout_s)
+        if res.ok:
+            return res.final_result, None, res.elapsed_ms
+        else:
+            return None, res.error or "Lỗi không xác định trong sandbox", res.elapsed_ms
+
+    # Fallback chạy in-process: tạo bản sao tham chiếu để không làm bẩn DataFrame gốc trong cache
+    t_start = time.perf_counter()
+    isolated_data = {k: v.copy(deep=False) for k, v in data_dict.items()}
     exec_globals = {
         "__builtins__": __builtins__,
         "pd": pd,
         "np": np,
-        "data": data_dict,
-        "dfs": data_dict,
+        "data": isolated_data,
+        "dfs": isolated_data,
         "con": con,
         "business": business_obj,
         "apply_tie_breaker": apply_tie_breaker,
@@ -202,7 +227,7 @@ if 'solution' in globals() and callable(solution):
         if "FINAL_RESULT" in exec_globals:
             return exec_globals["FINAL_RESULT"], None, elapsed_ms
         elif "solution" in exec_globals and callable(exec_globals["solution"]):
-            return exec_globals["solution"](data_dict), None, elapsed_ms
+            return exec_globals["solution"](isolated_data), None, elapsed_ms
         else:
             return None, "NO_RESULT: Không tìm thấy kết quả từ hàm solution", elapsed_ms
 
@@ -228,12 +253,16 @@ def main():
     parser.add_argument("--output_file", type=str, default=default_output_file, help=f"Đường dẫn file xuất kết quả (mặc định: {default_output_file})")
     parser.add_argument("--log_dir", type=str, default=default_log_dir, help=f"Thư mục lưu log chi tiết từng câu hỏi (mặc định: {default_log_dir})")
     parser.add_argument("--log_file", type=str, default=None, help="Đường dẫn tệp để tự động ghi toàn bộ nhật ký console UTF-8 (thay thế cho Tee-Object)")
+    parser.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Coder-7B-Instruct", help="Tên hoặc đường dẫn mô hình (mặc định: Qwen/Qwen2.5-Coder-7B-Instruct)")
     parser.add_argument("--limit", type=int, default=None, help="Giới hạn số lượng câu hỏi cần chạy suy luận bằng LLM (mặc định: toàn bộ)")
     parser.add_argument("--biz", type=str, default=None, help="Chỉ chạy câu hỏi thuộc doanh nghiệp cụ thể (ví dụ: biz_201)")
     parser.add_argument("--id", type=str, default=None, help="Chỉ chạy câu hỏi theo ID cụ thể")
     parser.add_argument("--dry_run", action="store_true", help="Chế độ chạy thử: chỉ nạp prompt/schema, không nạp LLM vào GPU")
     parser.add_argument("--no_fill_abstain", action="store_true", help="Không tự động điền 'abstain' cho các câu hỏi còn lại khi dùng --limit")
     parser.add_argument("--resume", action="store_true", help="Tiếp tục chạy từ câu hỏi chưa hoàn thành (bỏ qua các câu đã có trong file submission)")
+    parser.add_argument("--tau_star", type=float, default=0.50, help="Ngưỡng độ tin cậy tối ưu tau* để từ chối trả lời (mặc định: 0.50)")
+    parser.add_argument("--timeout", type=int, default=30, help="Thời gian chờ tối đa khi chạy code trong sandbox (giây, mặc định: 30)")
+    parser.add_argument("--in_process", action="store_true", help="Chạy code trực tiếp trong tiến trình (bảo vệ cache bằng bản sao RAM) thay vì sandbox subprocess")
     args = parser.parse_args()
 
     # Kích hoạt bộ ghi log song song nội bộ nếu người dùng truyền --log_file
@@ -312,8 +341,8 @@ def main():
     # Khởi tạo mô hình LLM (trừ khi chạy dry-run)
     llm: Optional[LLMClient] = None
     if not args.dry_run:
-        print("[Khởi tạo] Đang nạp mô hình Qwen2.5-Coder vào GPU...")
-        llm = LLMClient()
+        print(f"[Khởi tạo] Đang nạp mô hình {args.model_id} vào GPU...")
+        llm = LLMClient(model_id=args.model_id)
         stats_vram = llm.get_gpu_memory_stats()
         print(f"[VRAM] Bộ nhớ GPU đã sử dụng: {stats_vram.get('allocated_gb', 0):.2f} GB")
 
@@ -333,15 +362,15 @@ def main():
             print(f"\n[{idx}/{len(active_questions)}] Câu hỏi ID: {qid} (Shop: {biz_id})")
             print(f"Nội dung: \"{question_text}\" | as_of_date: {as_of_date}")
 
-            # 1. Nạp dữ liệu doanh nghiệp + shop_meta (In-Memory Cache)
-            data_dict, con, schema_str, bd, shop_meta, is_cache = get_cached_business_data(biz_id, data_root)
+            # 1. Nạp dữ liệu doanh nghiệp + shop_meta + candidates (In-Memory Cache)
+            data_dict, con, schema_str, bd, shop_meta, candidates, is_cache = get_cached_business_data(biz_id, data_root)
             cache_note = "Cache Hit" if is_cache else "Nạp mới"
-            print(f"  -> Dữ liệu: {len(data_dict)} bảng ({cache_note})")
+            print(f"  -> Dữ liệu: {len(data_dict)} bảng ({cache_note}) | Rule 8: Bật")
 
             if not data_dict:
                 print(f"  ⚠️ Cảnh báo: Không nạp được dữ liệu shop {biz_id}. Tự động Abstain.")
                 sub_ans = make_abstain(f"Data Not Found: {schema_str}")
-                writer.write(question_id=qid, answer=sub_ans, code="", raw_result=None, error=schema_str, elapsed_ms=0)
+                writer.write(question_id=qid, answer=sub_ans, code="", raw_result=None, error=schema_str, elapsed_ms=0, confidence=0.0)
                 written_count += 1
                 continue
 
@@ -358,6 +387,7 @@ def main():
                     raw_result="unanswerable",
                     error=None,
                     elapsed_ms=0,
+                    confidence=1.0,
                 )
                 written_count += 1
                 continue
@@ -365,11 +395,17 @@ def main():
             if args.dry_run:
                 print("  [DRY-RUN] Bỏ qua suy luận GPU.")
                 sub_ans = make_abstain("Dry Run Mode")
-                writer.write(question_id=qid, answer=sub_ans, code="", raw_result=None, error=None, elapsed_ms=0)
+                writer.write(question_id=qid, answer=sub_ans, code="", raw_result=None, error=None, elapsed_ms=0, confidence=0.0)
                 written_count += 1
                 continue
 
-            # 3. Xây dựng prompt ChatML (truyền đầy đủ ghi chú README.md của doanh nghiệp)
+            # 3. Entity Linking & Prompt Building (Module 2)
+            biz_dir = data_root / biz_id
+            entity_matches = link_entities(question_text, candidates=candidates, threshold=0.55) if candidates else []
+            if entity_matches:
+                matched_names = [getattr(m, 'matched_value', str(m)) for m in entity_matches[:3]]
+                print(f"  🔍 [Entity Linking] Khớp {len(entity_matches)} thực thể trong CSDL: {matched_names}")
+
             biz_readme = getattr(bd, "readme_text", None) if bd is not None else None
             sys_prompt, user_prompt = build_prompt(
                 schema_str=schema_str,
@@ -377,6 +413,8 @@ def main():
                 question=question_text,
                 rulebook_content=rulebook_content,
                 business_note=biz_readme,
+                candidates=candidates,
+                entity_matches=entity_matches,
                 return_messages=True
             )
 
@@ -386,41 +424,95 @@ def main():
             code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=1024)
             gen_sec = round(time.time() - t0, 2)
 
-            # 5. Thực thi mã nguồn (Lượt 1)
-            raw_result, exec_err, exec_ms = execute_solution(code_text, data_dict, con, bd)
+            # 5. Thực thi mã nguồn (Lượt 1) qua Sandbox / Subprocess
+            retry_count = 0
+            raw_result, exec_err, exec_ms = execute_solution(
+                code_text=code_text,
+                biz_dir=biz_dir,
+                data_dict=data_dict,
+                con=con,
+                business_obj=bd,
+                timeout_s=args.timeout,
+                use_sandbox=not args.in_process,
+            )
 
-            # 5.1. Cơ chế Runtime Self-Correction (1 lượt tự sửa lỗi nếu gặp ngoại lệ thực thi)
-            if exec_err:
-                print(f"  🔄 [Self-Correction] Lượt 1 lỗi ({exec_err}) -> Yêu cầu LLM tự sửa mã...")
+            # 5.1. Kiểm tra tính hợp lý hậu thực thi (Sanity Check Lượt 1)
+            sanity_err = None
+            if not exec_err:
+                sub_ans_cand = normalize_output(raw_result, question=question_text, code_text=code_text)
+                is_sane, sanity_reason = check_result_sanity(sub_ans_cand, question=question_text, code_text=code_text)
+                if not is_sane:
+                    sanity_err = sanity_reason
+                    print(f"  ⚠️ [Sanity Check] Lượt 1 vi phạm ({sanity_reason}) -> Kích hoạt Self-Correction...")
+
+            # 5.2. Cơ chế Runtime Self-Correction (1 lượt tự sửa lỗi nếu gặp ngoại lệ hoặc vi phạm Sanity Check)
+            if exec_err or sanity_err:
+                retry_count = 1
+                err_feedback = exec_err if exec_err else f"Kết quả tính toán không hợp lý: {sanity_err}"
+                print(f"  🔄 [Self-Correction] Yêu cầu LLM tự sửa mã ({err_feedback})...")
                 retry_user_prompt = (
                     f"{user_prompt}\n"
-                    f"# Mã nguồn ở lượt trước của bạn bị lỗi thực thi:\n"
+                    f"# Mã nguồn ở lượt trước của bạn bị lỗi / kết quả không hợp lý:\n"
                     f"```python\n{code_text}\n```\n"
-                    f"# Thông báo lỗi: {exec_err}\n"
-                    f"# Hãy kiểm tra lại đúng tên bảng và tên cột trong `data`, sửa lỗi và viết lại duy nhất hàm `def solution(data):` hoàn chỉnh:\n"
+                    f"# Thông báo lỗi: {err_feedback}\n"
+                    f"# Hãy kiểm tra lại đúng tên bảng, tên cột và công thức trong `data`, sửa lỗi và viết lại duy nhất hàm `def solution(data):` hoàn chỉnh:\n"
                     f"```python\n"
                 )
                 t_retry = time.time()
                 retry_code = llm.generate_code(prompt=retry_user_prompt, system_prompt=sys_prompt, max_new_tokens=1024)
                 gen_sec = round(gen_sec + (time.time() - t_retry), 2)
-                raw_retry, err_retry, ms_retry = execute_solution(retry_code, data_dict, con, bd)
+                raw_retry, err_retry, ms_retry = execute_solution(
+                    code_text=retry_code,
+                    biz_dir=biz_dir,
+                    data_dict=data_dict,
+                    con=con,
+                    business_obj=bd,
+                    timeout_s=args.timeout,
+                    use_sandbox=not args.in_process,
+                )
                 exec_ms += ms_retry
                 if not err_retry:
                     code_text = retry_code
                     raw_result = raw_retry
                     exec_err = None
-                    print("  ✓ [Self-Correction] Khắc phục lỗi thực thi thành công ở lượt 2!")
+                    sanity_err = None
+                    # Kiểm tra lại Sanity Check ở Lượt 2
+                    sub_ans_cand2 = normalize_output(raw_result, question=question_text, code_text=code_text)
+                    is_sane2, sanity_reason2 = check_result_sanity(sub_ans_cand2, question=question_text, code_text=code_text)
+                    if is_sane2:
+                        print("  ✓ [Self-Correction] Khắc phục lỗi và thỏa mãn Sanity Check ở lượt 2!")
+                    else:
+                        sanity_err = sanity_reason2
+                        print(f"  🛡️ [Sanity Check] Lượt 2 vẫn vi phạm ({sanity_reason2}) -> Ép về 'abstain' an toàn (0 điểm)")
                 else:
                     code_text = retry_code
                     exec_err = err_retry
 
-            # 6. Chuẩn hóa kết quả đầu ra (Module 6: Format Normalizer & Tie-Breaker)
+            # 6. Chuẩn hóa kết quả đầu ra & Đánh giá Calibrated Abstention Gate (Module 6)
+            confidence = 0.0
             if exec_err:
                 sub_ans = make_abstain(f"Runtime Error: {exec_err}")
                 print(f"  ⚠️ Lỗi thực thi ({exec_ms}ms) -> Abstain an toàn: {exec_err}")
+            elif sanity_err:
+                sub_ans = make_abstain(f"Sanity Check: {sanity_err}")
+                print(f"  🛡️ Kết quả vô lý ({sanity_err}) -> Abstain an toàn (0 điểm)")
             else:
                 sub_ans = normalize_output(raw_result, question=question_text, code_text=code_text)
-                print(f"  ✓ Sinh mã: {gen_sec}s | Chạy: {exec_ms}ms | Kết quả: {sub_ans.get('answer')} (Type: {sub_ans.get('type')})")
+                confidence = compute_confidence_score(
+                    sub_ans=sub_ans,
+                    exec_error=exec_err,
+                    exec_ms=exec_ms,
+                    retry_count=retry_count,
+                    sanity_passed=(sanity_err is None),
+                    sanity_error=sanity_err,
+                    code_text=code_text,
+                    has_feasibility_pass=True,
+                )
+                sub_ans, is_abstained = apply_abstention_gate(sub_ans, confidence=confidence, threshold=args.tau_star)
+                if is_abstained:
+                    print(f"  🛡️ [Abstention Gate] Độ tin cậy thấp C={confidence:.2f} < tau*={args.tau_star:.2f} -> Chủ động Abstain (0 điểm)")
+                else:
+                    print(f"  ✓ Sinh mã: {gen_sec}s | Chạy: {exec_ms}ms | Tin cậy C={confidence:.2f} | Kết quả: {sub_ans.get('answer')} (Type: {sub_ans.get('type')})")
 
             # 7. Ghi ngay ra file submission.jsonl và logs/<qid>.json
             writer.write(
@@ -428,8 +520,9 @@ def main():
                 answer=sub_ans,
                 code=code_text,
                 raw_result=raw_result,
-                error=exec_err,
+                error=exec_err or sanity_err,
                 elapsed_ms=int(gen_sec * 1000 + exec_ms),
+                confidence=confidence,
             )
             written_count += 1
 
@@ -445,6 +538,7 @@ def main():
                         raw_result=None,
                         error=None,
                         elapsed_ms=0,
+                        confidence=0.0,
                     )
                     written_count += 1
 
@@ -454,7 +548,8 @@ def main():
             sys.stdout = dual_logger.terminal
             dual_logger.close()
         # Đóng toàn bộ SQLite in-memory connections
-        for _, con_c, _, _, _ in _BUSINESS_CACHE.values():
+        for item in _BUSINESS_CACHE.values():
+            con_c = item[1]
             if con_c:
                 try:
                     con_c.close()

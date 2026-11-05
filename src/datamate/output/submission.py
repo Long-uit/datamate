@@ -248,6 +248,7 @@ class SubmissionWriter:
         raw_result: Any = None,
         error: str | None = None,
         elapsed_ms: int = 0,
+        confidence: float | None = None,
     ) -> None:
         """
         Ghi 1 dòng vào submission.jsonl (flush + fsync ngay) và xuất file log chi tiết.
@@ -295,6 +296,7 @@ class SubmissionWriter:
             "question_id": str(question_id),
             "answer": record,
             "elapsed_ms": int(elapsed_ms),
+            "confidence": confidence,
             "code": str(code),
             "raw_result": _clean_for_json(raw_result),
             "error": str(error) if error is not None else None,

@@ -25,7 +25,10 @@ import re
 import unicodedata
 from typing import Optional
 
-import pandas as pd
+try:
+    import pandas as pd
+except ImportError:
+    pd = None
 
 from datamate.grounding.lunar_calendar import LunarCalendar, get_calendar
 from datamate.types import TimeWindow
@@ -179,7 +182,7 @@ def resolve_temporal(
     # 9. Tháng M (có hoặc không ghi năm)
     # Ví dụ: "tháng 3", "tháng 12/2024", "tháng 10 năm 2025"
     m_month = re.search(r"\bth[aá]ng\s*(\d{1,2})(?:\s*(?:/|n[aă]m)\s*(\d{4}))?\b", q)
-    if m_month and not re.search(r"\bth[aá]ng\s*(n[aà]y|tr[uư][oớ]c|r[oồ]i)\b", m_month.group(0)):
+    if m_month and not re.search(r"\bth[aá]ng\s*(n[aà]y|tr[uư][oớ]c|r[oồ]i)\b", m_month.group(0)) and not re.search(r"n[uử]a\s*(đ[aầ]u|cu[oố]i)|10\s*ng[aà]y\s*(đ[aầ]u|gi[uữ]a|cu[oố]i)|\b(r[aăằ]m|ram|m[uù]ng\s*1)\b", q):
         m_val = int(m_month.group(1))
         if 1 <= m_val <= 12:
             if m_month.group(2):
@@ -199,6 +202,103 @@ def resolve_temporal(
                 end_date=m_end.isoformat(),
                 label=f"month_{y_val}_{m_val:02d}",
                 description=f"Tháng {m_val}/{y_val}",
+            ))
+
+    # 9.1. Nửa đầu tháng / Nửa cuối tháng
+    m_half = re.search(r"n[uử]a\s*(đ[aầ]u|cu[oố]i)\s*th[aá]ng(?:\s*(\d{1,2})(?:\s*(?:/|n[aă]m)\s*(\d{4}))?|\s*n[aà]y)?", q)
+    if m_half:
+        which_half = "first" if "đầu" in m_half.group(1).lower() or "dau" in _normalize_text(m_half.group(1)) else "second"
+        if m_half.group(2):
+            hm_month = int(m_half.group(2))
+            hm_year = int(m_half.group(3)) if m_half.group(3) else (d.year if date(d.year, hm_month, 1) <= d else d.year - 1)
+        else:
+            hm_month = d.month
+            hm_year = d.year
+
+        hm_end_full = get_month_end(hm_year, hm_month)
+        if which_half == "first":
+            h_start = date(hm_year, hm_month, 1)
+            h_end = date(hm_year, hm_month, 15)
+            h_desc = f"Nửa đầu tháng {hm_month}/{hm_year} (từ 01 đến 15)"
+        else:
+            h_start = date(hm_year, hm_month, 16)
+            h_end = hm_end_full
+            if hm_year == d.year and hm_month == d.month and d < hm_end_full:
+                h_end = max(h_start, d)
+            h_desc = f"Nửa cuối tháng {hm_month}/{hm_year} (từ 16 đến {h_end.day:02d})"
+
+        windows.append(TimeWindow(
+            start_date=h_start.isoformat(),
+            end_date=h_end.isoformat(),
+            label=f"half_{which_half}_{hm_year}_{hm_month:02d}",
+            description=h_desc,
+        ))
+
+    # 9.2. 10 ngày đầu tháng / giữa tháng / cuối tháng
+    m_tendays = re.search(r"10\s*ng[aà]y\s*(đ[aầ]u|gi[uữ]a|cu[oố]i)\s*th[aá]ng(?:\s*(\d{1,2})(?:\s*(?:/|n[aă]m)\s*(\d{4}))?|\s*n[aà]y)?", q)
+    if m_tendays:
+        pos = m_tendays.group(1).lower()
+        which_ten = "first" if "đầu" in pos else ("middle" if "giữa" in pos else "last")
+        if m_tendays.group(2):
+            tm_month = int(m_tendays.group(2))
+            tm_year = int(m_tendays.group(3)) if m_tendays.group(3) else (d.year if date(d.year, tm_month, 1) <= d else d.year - 1)
+        else:
+            tm_month = d.month
+            tm_year = d.year
+
+        tm_end_full = get_month_end(tm_year, tm_month)
+        if which_ten == "first":
+            t_start = date(tm_year, tm_month, 1)
+            t_end = date(tm_year, tm_month, 10)
+            t_desc = f"10 ngày đầu tháng {tm_month}/{tm_year} (01 đến 10)"
+        elif which_ten == "middle":
+            t_start = date(tm_year, tm_month, 11)
+            t_end = date(tm_year, tm_month, 20)
+            t_desc = f"10 ngày giữa tháng {tm_month}/{tm_year} (11 đến 20)"
+        else:
+            t_start = date(tm_year, tm_month, 21)
+            t_end = tm_end_full
+            t_desc = f"10 ngày cuối tháng {tm_month}/{tm_year} (21 đến {tm_end_full.day:02d})"
+
+        windows.append(TimeWindow(
+            start_date=t_start.isoformat(),
+            end_date=t_end.isoformat(),
+            label=f"tendays_{which_ten}_{tm_year}_{tm_month:02d}",
+            description=t_desc,
+        ))
+
+    # 9.3. Rằm (15 âm lịch) và Mùng 1 âm lịch
+    m_lunar_day = re.search(r"\b(r[aăằ]m|ram|r[aà]m|m[uù]ng\s*1)\b(?:\s*(?:th[aá]ng|thg)?\s*(\d{1,2}|gi[eê]ng|ch[aạ]p|b[aả]y|t[aá]m|ch[ií]n|m[uư][oờ]i))?", q)
+    if m_lunar_day and calendar is not None:
+        target_ld = 15 if any(k in _normalize_text(m_lunar_day.group(1)) for k in ["răm", "rằm", "ram", "ràm"]) else 1
+        l_month_raw = m_lunar_day.group(2)
+        if l_month_raw:
+            lm_raw_norm = _normalize_text(l_month_raw)
+            month_map = {"gieng": 1, "chap": 12, "bay": 7, "tam": 8, "chin": 9, "muoi": 10}
+            if lm_raw_norm.isdigit():
+                target_lm = int(lm_raw_norm)
+            else:
+                target_lm = month_map.get(lm_raw_norm, 1)
+        else:
+            target_lm = d.month
+
+        solar_date_found = None
+        for test_year in (d.year, d.year - 1, d.year + 1):
+            s_d = calendar.get_solar_date(test_year, target_lm, target_ld)
+            if s_d:
+                if parse_date(s_d) <= d:
+                    solar_date_found = s_d
+                    break
+                elif solar_date_found is None:
+                    solar_date_found = s_d
+
+        if solar_date_found:
+            day_label = "Rằm (15 âm)" if target_ld == 15 else "Mùng 1 âm"
+            windows.append(TimeWindow(
+                start_date=solar_date_found,
+                end_date=solar_date_found,
+                label=f"lunar_{target_ld}_{target_lm}",
+                description=f"{day_label} tháng {target_lm} âm lịch (ngày dương {solar_date_found})",
             ))
 
     # 10. Quý Q (có hoặc không ghi năm)

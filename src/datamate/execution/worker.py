@@ -4,9 +4,11 @@ worker.py — Subprocess worker thực thi mã Python/SQL độc lập trong san
 Được sandbox.py gọi qua subprocess.
 Nạp sẵn:
 - con: sqlite3.Connection (đã nạp bảng sạch theo Rule 8 và tự động đánh index)
-- dfs: dict[table_id, pd.DataFrame] (đã làm sạch theo Rule 8)
+- dfs / data: dict[str, pd.DataFrame] (đã làm sạch theo Rule 8, hỗ trợ đầy đủ alias)
 - business: BusinessData
 - pd: pandas module
+- np: numpy module
+- apply_tie_breaker: hàm chuẩn hóa thứ tự hòa theo Rule 9
 """
 
 from __future__ import annotations
@@ -79,9 +81,11 @@ def main():
         sys.path.insert(0, str(root_src))
 
     import pandas as pd
+    import numpy as np
     from datamate.ingestion.loader import load_business
     from datamate.ingestion.cleaner import clean_business
     from datamate.ingestion.sqlite_mirror import get_sqlite_mirror
+    from datamate.output.normalizer import apply_tie_breaker
 
     # Đọc mã nguồn cần thực thi
     code_str = code_file.read_text(encoding="utf-8")
@@ -92,14 +96,26 @@ def main():
 
     # Nạp SQLite mirror có index tự động
     con = get_sqlite_mirror(business, clean=False, use_cache=True)
-    dfs = {ti.table_id: ti.df for ti in business.tables}
+    data_dict = {}
+    for ti in business.tables:
+        t_base = Path(ti.fixed_file_name).stem
+        t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
+        data_dict[t_name] = ti.df
+        if t_base not in data_dict:
+            data_dict[t_base] = ti.df
+        if ti.table_id:
+            data_dict[ti.table_id] = ti.df
 
-    # Chuẩn bị namespace
+    # Chuẩn bị namespace đầy đủ alias và tiện ích chuẩn cho code mô hình
     namespace = {
+        "__builtins__": __builtins__,
         "con": con,
-        "dfs": dfs,
+        "dfs": data_dict,
+        "data": data_dict,
         "business": business,
         "pd": pd,
+        "np": np,
+        "apply_tie_breaker": apply_tie_breaker,
     }
 
     # Bắt stdout của code
@@ -119,9 +135,19 @@ def main():
         exec(compiled, namespace)
 
         if "FINAL_RESULT" not in namespace:
-            res_payload["ok"] = False
-            res_payload["error"] = "NO_FINAL_RESULT"
-        else:
+            if "solution" in namespace and callable(namespace["solution"]):
+                _raw = namespace["solution"](data_dict)
+                if _raw == "unanswerable" or (isinstance(_raw, str) and _raw.strip().lower() in ("unanswerable", "không thể trả lời")):
+                    namespace["FINAL_RESULT"] = {"type": "unanswerable", "answer": None}
+                elif _raw is None:
+                    namespace["FINAL_RESULT"] = {"type": "abstain", "answer": None}
+                else:
+                    namespace["FINAL_RESULT"] = _raw
+            else:
+                res_payload["ok"] = False
+                res_payload["error"] = "NO_FINAL_RESULT"
+
+        if "FINAL_RESULT" in namespace:
             raw_res = namespace["FINAL_RESULT"]
             try:
                 clean_res = _to_json_serializable(raw_res)

@@ -1,8 +1,8 @@
 """
-runner.py — Execution Runner tối giản cho DataMate (Phase 1).
+sandbox.py — Execution Runner cho DataMate (Phase 1).
 
 Chạy mã Python/SQL trong một subprocess riêng độc lập, cô lập với runner,
-nạp sẵn dữ liệu business qua ingest.py (con, dfs, business, pd),
+nạp sẵn dữ liệu business qua loader và cleaner (con, dfs, data, business, pd, np),
 và trả về RunResult an toàn (bắt lỗi, timeout, serialize JSON).
 """
 
@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# Đoạn mã bootstrap chạy bên trong subprocess
+# Đoạn mã bootstrap chạy bên trong subprocess (đồng bộ hoàn toàn với worker.py)
 _SUBPROCESS_WORKER_SCRIPT = """
 import sys
 import os
@@ -31,10 +31,8 @@ import math
 def _to_json_serializable(val):
     if val is None or val is Ellipsis:
         return None
-    # Xử lý boolean trước int vì bool là subclass của int trong Python
     if isinstance(val, bool):
         return val
-    # Số nguyên / float chuẩn hoặc numpy
     if isinstance(val, (int,)):
         return int(val)
     if isinstance(val, float):
@@ -42,7 +40,6 @@ def _to_json_serializable(val):
             return None
         return float(val)
 
-    # Thử check numpy/pandas types mà không bắt buộc cài numpy nếu môi trường tối giản
     type_str = type(val).__name__
     module_str = type(val).__module__
 
@@ -58,26 +55,21 @@ def _to_json_serializable(val):
         if type_str in ("NAType", "NaTType"):
             return None
 
-    # Timestamp / datetime
     if hasattr(val, "isoformat"):
         return val.isoformat()
 
-    # List, tuple, set
     if isinstance(val, (list, tuple, set)):
         return [_to_json_serializable(x) for x in val]
 
-    # Dict
     if isinstance(val, dict):
         return {str(k): _to_json_serializable(v) for k, v in val.items()}
 
-    # Pandas DataFrame / Series
     if hasattr(val, "to_dict"):
         try:
             return _to_json_serializable(val.to_dict())
         except Exception:
             pass
 
-    # Chuỗi hoặc các đối tượng chuyển string
     return str(val)
 
 def main():
@@ -93,22 +85,41 @@ def main():
         sys.path.insert(0, str(root_src))
 
     import pandas as pd
-    from datamate.ingestion.loader import load_business, to_sqlite
+    import numpy as np
+    from datamate.ingestion.loader import load_business
+    from datamate.ingestion.cleaner import clean_business
+    from datamate.ingestion.sqlite_mirror import get_sqlite_mirror
+    from datamate.output.normalizer import apply_tie_breaker
 
     # Đọc mã nguồn cần thực thi
     code_str = code_file.read_text(encoding="utf-8")
 
-    # Nạp dữ liệu business
-    business = load_business(biz_dir)
-    con = to_sqlite(business)
-    dfs = {ti.table_id: ti.df for ti in business.tables}
+    # Nạp dữ liệu business và áp dụng Rule 8 Cleaner
+    raw_business = load_business(biz_dir)
+    business = clean_business(raw_business)
+
+    # Nạp SQLite mirror có index tự động
+    con = get_sqlite_mirror(business, clean=False, use_cache=True)
+    data_dict = {}
+    for ti in business.tables:
+        t_base = Path(ti.fixed_file_name).stem
+        t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
+        data_dict[t_name] = ti.df
+        if t_base not in data_dict:
+            data_dict[t_base] = ti.df
+        if ti.table_id:
+            data_dict[ti.table_id] = ti.df
 
     # Chuẩn bị namespace
     namespace = {
+        "__builtins__": __builtins__,
         "con": con,
-        "dfs": dfs,
+        "dfs": data_dict,
+        "data": data_dict,
         "business": business,
         "pd": pd,
+        "np": np,
+        "apply_tie_breaker": apply_tie_breaker,
     }
 
     # Bắt stdout của code người dùng
@@ -128,13 +139,22 @@ def main():
         exec(compiled, namespace)
 
         if "FINAL_RESULT" not in namespace:
-            res_payload["ok"] = False
-            res_payload["error"] = "NO_FINAL_RESULT"
-        else:
+            if "solution" in namespace and callable(namespace["solution"]):
+                _raw = namespace["solution"](data_dict)
+                if _raw == "unanswerable" or (isinstance(_raw, str) and _raw.strip().lower() in ("unanswerable", "không thể trả lời")):
+                    namespace["FINAL_RESULT"] = {"type": "unanswerable", "answer": None}
+                elif _raw is None:
+                    namespace["FINAL_RESULT"] = {"type": "abstain", "answer": None}
+                else:
+                    namespace["FINAL_RESULT"] = _raw
+            else:
+                res_payload["ok"] = False
+                res_payload["error"] = "NO_FINAL_RESULT"
+
+        if "FINAL_RESULT" in namespace:
             raw_res = namespace["FINAL_RESULT"]
             try:
                 clean_res = _to_json_serializable(raw_res)
-                # Kiểm tra serialize JSON thực sự
                 json.dumps(clean_res, ensure_ascii=False)
                 res_payload["ok"] = True
                 res_payload["final_result"] = clean_res
@@ -152,13 +172,11 @@ def main():
         except Exception:
             pass
 
-    # Lấy stdout tối đa 10_000 ký tự
     stdout_val = captured_stdout.getvalue()
     if len(stdout_val) > 10_000:
         stdout_val = stdout_val[:10_000]
     res_payload["stdout"] = stdout_val
 
-    # Ghi kết quả sang result_file
     result_file.write_text(json.dumps(res_payload, ensure_ascii=False), encoding="utf-8")
 
 if __name__ == "__main__":
@@ -181,7 +199,7 @@ def run_code(code: str, business_dir: Path, timeout_s: int = 60) -> RunResult:
     Chạy mã Python/SQL của câu hỏi trong subprocess độc lập.
 
     Tham số:
-        code: Chuỗi mã Python do LLM hoặc người dùng sinh ra (cần gán biến FINAL_RESULT).
+        code: Chuỗi mã Python do LLM hoặc người dùng sinh ra (cần gán biến FINAL_RESULT hoặc hàm solution).
         business_dir: Đường dẫn thư mục business (chế độ chỉ đọc).
         timeout_s: Thời gian chờ tối đa (giây). Hết giờ sẽ kill process và báo TIMEOUT.
 
@@ -295,4 +313,3 @@ def run_code(code: str, business_dir: Path, timeout_s: int = 60) -> RunResult:
                 error=f"RUNNER_EXCEPTION: {exc}",
                 elapsed_ms=elapsed_ms,
             )
-

@@ -51,6 +51,7 @@ from datamate.output.normalizer import (
     normalize_list,
     normalize_table,
     apply_tie_breaker,
+    check_result_sanity,
 )
 
 
@@ -187,6 +188,42 @@ class TestFormatNormalizer(unittest.TestCase):
             ]
             sorted_records = apply_tie_breaker(records, sort_key="doanh_thu", code_key="ma_sp", descending=True)
             self.assertEqual([r["ma_sp"] for r in sorted_records], ["SP003", "SP001", "SP002"])
+            print(f"  • {criterion} -> [ĐẠT]")
+        except Exception as exc:
+            print(f"  • {criterion} -> [KHÔNG ĐẠT: {exc}]")
+            raise
+
+
+    def test_check_result_sanity(self):
+        """Kiểm tra bộ lọc tính hợp lý hậu thực thi (Sanity Check)."""
+        criterion = "Chỉ tiêu 8.1: Bắt chính xác số âm bất thường và kết quả 0 vô lý cho câu hỏi xếp hạng"
+        try:
+            # 1. Số âm bất thường cho câu hỏi doanh thu
+            ans_neg_rev = {"type": "number", "answer": -500000}
+            is_sane, err = check_result_sanity(ans_neg_rev, question="Tổng doanh thu tháng này là bao nhiêu?")
+            self.assertFalse(is_sane)
+            self.assertIn("Số âm bất thường", err)
+
+            # 2. Số âm được phép cho câu hỏi biến động / tăng giảm / lãi lỗ
+            is_sane_change, _ = check_result_sanity(ans_neg_rev, question="Doanh thu tăng hay giảm bao nhiêu tiền so với tháng trước?")
+            self.assertTrue(is_sane_change)
+
+            # 3. Kết quả 0 vô lý cho câu hỏi xếp hạng mặt hàng bán chạy nhất
+            ans_zero = {"type": "number", "answer": 0}
+            is_sane_rank, err_rank = check_result_sanity(ans_zero, question="Dịp Tết 2026, mặt hàng nào bán chạy nhất?")
+            self.assertFalse(is_sane_rank)
+            self.assertIn("vô lý", err_rank)
+
+            # 4. Danh sách rỗng
+            ans_empty_list = {"type": "list", "answer": []}
+            is_sane_list, err_list = check_result_sanity(ans_empty_list, question="Top 3 mặt hàng bán chạy nhất")
+            self.assertFalse(is_sane_list)
+
+            # 5. Kết quả hợp lệ
+            ans_valid = {"type": "number", "answer": 12500000}
+            is_sane_valid, _ = check_result_sanity(ans_valid, question="Tổng doanh thu tháng này là bao nhiêu?")
+            self.assertTrue(is_sane_valid)
+
             print(f"  • {criterion} -> [ĐẠT]")
         except Exception as exc:
             print(f"  • {criterion} -> [KHÔNG ĐẠT: {exc}]")

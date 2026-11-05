@@ -284,6 +284,69 @@ class TestPromptBuilder(unittest.TestCase):
             raise
 
 
+    def test_classify_intent_inventory_unit_conversion(self):
+        """Kiểm tra nhận diện câu hỏi quy đổi đơn vị và tồn kho (hộp chẵn, viên lẻ)."""
+        criterion = "Chỉ tiêu 1.7: Nhận diện chính xác intent 'inventory_unit_conversion' (tồn kho, hộp chẵn, viên lẻ)"
+        try:
+            q1 = "Hiện tại thuốc Hapacol 650 còn tồn bao nhiêu hộp và viên lẻ?"
+            q2 = "Cho biết số lượng tồn kho theo hộp và viên"
+            self.assertEqual(classify_intent(q1), "inventory_unit_conversion")
+            self.assertEqual(classify_intent(q2), "inventory_unit_conversion")
+            few_shot = select_few_shots("inventory_unit_conversion")
+            self.assertIn("TỒN KHO & QUY ĐỔI ĐƠN VỊ", few_shot)
+            self.assertIn("divmod", few_shot)
+            print(f"  • {criterion} -> [ĐẠT]")
+        except Exception as exc:
+            print(f"  • {criterion} -> [KHÔNG ĐẠT: {exc}]")
+            raise
+
+    def test_few_shot_time_series(self):
+        """Kiểm tra ví dụ mẫu cho intent time_series."""
+        criterion = "Chỉ tiêu 2.2: Chọn đúng ví dụ mẫu chuỗi thời gian time_series (không bị fallback)"
+        try:
+            few_shot = select_few_shots("time_series")
+            self.assertIn("PHÂN TÍCH CHUỖI THỜI GIAN", few_shot)
+            self.assertIn("pct_change", few_shot)
+            print(f"  • {criterion} -> [ĐẠT]")
+        except Exception as exc:
+            print(f"  • {criterion} -> [KHÔNG ĐẠT: {exc}]")
+            raise
+
+    def test_temporal_comparison_period(self):
+        """Kiểm tra giải mã kỳ chính và kỳ đối chiếu khi câu hỏi yêu cầu so sánh với tháng trước."""
+        criterion = "Chỉ tiêu 3.7: Giải mã cả kỳ chính và kỳ đối chiếu (so sánh tháng trước)"
+        try:
+            q = "Doanh thu tháng này tăng bao nhiêu so với tháng trước?"
+            res = resolve_temporal_context(q, as_of_date_str="2026-05-15")
+            self.assertEqual(res["start_date"], "2026-05-01")
+            self.assertEqual(res["end_date"], "2026-05-15")
+            self.assertEqual(res["comparison_start"], "2026-04-01")
+            self.assertEqual(res["comparison_end"], "2026-04-15")
+            self.assertIn("Kỳ đối chiếu", res["description"])
+            print(f"  • {criterion} -> [ĐẠT]")
+        except Exception as exc:
+            print(f"  • {criterion} -> [KHÔNG ĐẠT: {exc}]")
+            raise
+
+    def test_temporal_half_month(self):
+        """Kiểm tra giải mã nửa đầu / nửa cuối tháng."""
+        criterion = "Chỉ tiêu 3.8: Giải mã chính xác nửa đầu tháng và nửa cuối tháng"
+        try:
+            q1 = "Nửa đầu tháng 5/2026 doanh thu là bao nhiêu?"
+            res1 = resolve_temporal_context(q1, as_of_date_str="2026-05-25")
+            self.assertEqual(res1["start_date"], "2026-05-01")
+            self.assertEqual(res1["end_date"], "2026-05-15")
+
+            q2 = "Nửa cuối tháng 5/2026 có bao nhiêu đơn hàng?"
+            res2 = resolve_temporal_context(q2, as_of_date_str="2026-06-01")
+            self.assertEqual(res2["start_date"], "2026-05-16")
+            self.assertEqual(res2["end_date"], "2026-05-31")
+            print(f"  • {criterion} -> [ĐẠT]")
+        except Exception as exc:
+            print(f"  • {criterion} -> [KHÔNG ĐẠT: {exc}]")
+            raise
+
+
 if __name__ == "__main__":
     print("=" * 80)
     print("BẮT ĐẦU KIỂM THỬ: tests/test_prompt_builder.py")

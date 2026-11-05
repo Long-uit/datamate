@@ -31,6 +31,26 @@ except ImportError:
                 return p.read_text(encoding="utf-8")
         return ""
 
+try:
+    from datamate.grounding.temporal import resolve_temporal, parse_date
+    from datamate.grounding.lunar_calendar import get_calendar
+except ImportError:
+    resolve_temporal = None
+    get_calendar = None
+
+try:
+    from datamate.grounding.entity_linker import (
+        link_entities,
+        expand_abbreviations,
+        Candidate,
+        EntityMatch,
+    )
+except ImportError:
+    link_entities = None
+    expand_abbreviations = None
+    Candidate = None
+    EntityMatch = None
+
 # Cấu hình encoding chuẩn trên Windows console
 if sys.platform == "win32":
     try:
@@ -95,6 +115,57 @@ def resolve_temporal_context(
     as_of_date_str: str,
     calendar_path: Optional[str] = None
 ) -> Dict[str, Any]:
+    """
+    Phân tích câu hỏi và as_of_date để xác định khoảng thời gian cụ thể (ngày dương ISO).
+    Tích hợp trực tiếp module grounding.temporal và lunar_calendar của Phát,
+    hỗ trợ kỳ chính, kỳ đối chiếu (so sánh tháng trước/trước Tết), nửa đầu/cuối tháng,
+    10 ngày đầu/giữa/cuối tháng và rằm/mùng 1 âm lịch.
+    """
+    q_lower = question.lower()
+    
+    # 1. Gọi module grounding.temporal nếu có
+    if resolve_temporal is not None:
+        try:
+            cal = get_calendar(calendar_path) if get_calendar is not None else None
+            wins = resolve_temporal(question, as_of_date=as_of_date_str, calendar=cal)
+            if wins:
+                comp_win = next((w for w in wins if any(k in w.label for k in ["compared", "pre_tet", "last_month_compared"])), None)
+                primary_win = next((w for w in wins if w != comp_win), wins[0])
+
+                if comp_win is not None and primary_win is not None:
+                    desc = f"Kỳ chính: {primary_win.description} | Kỳ đối chiếu: {comp_win.description}"
+                    code_hint = (
+                        f"# Kỳ chính: (df[date_col].dt.date >= pd.to_datetime('{primary_win.start_date}').date()) & (df[date_col].dt.date <= pd.to_datetime('{primary_win.end_date}').date())\n"
+                        f"# Kỳ so sánh: (df[date_col].dt.date >= pd.to_datetime('{comp_win.start_date}').date()) & (df[date_col].dt.date <= pd.to_datetime('{comp_win.end_date}').date())"
+                    )
+                    return {
+                        "as_of_date": as_of_date_str,
+                        "start_date": primary_win.start_date,
+                        "end_date": primary_win.end_date,
+                        "comparison_start": comp_win.start_date,
+                        "comparison_end": comp_win.end_date,
+                        "comparison_desc": comp_win.description,
+                        "description": desc,
+                        "code_hint": code_hint,
+                    }
+                elif primary_win is not None:
+                    # Gợi ý pandas theo loại kỳ
+                    if primary_win.start_date == primary_win.end_date:
+                        code_hint = f"df[date_col].dt.date == pd.to_datetime('{primary_win.start_date}').date()"
+                    else:
+                        code_hint = f"(df[date_col].dt.date >= pd.to_datetime('{primary_win.start_date}').date()) & (df[date_col].dt.date <= pd.to_datetime('{primary_win.end_date}').date())"
+                    return {
+                        "as_of_date": as_of_date_str,
+                        "start_date": primary_win.start_date,
+                        "end_date": primary_win.end_date,
+                        "comparison_start": None,
+                        "comparison_end": None,
+                        "comparison_desc": None,
+                        "description": primary_win.description,
+                        "code_hint": code_hint,
+                    }
+        except Exception:
+            pass
     """
     Phân tích câu hỏi và as_of_date để xác định khoảng thời gian cụ thể (ngày dương ISO).
     
@@ -286,7 +357,15 @@ def classify_intent(question: str) -> str:
     if any(k in q_lower for k in unanswerable_keywords):
         return "unanswerable_suspect"
 
-    # 2. Nhóm đa bảng / tra cứu hoạt chất, thuốc kê đơn, quy đổi đơn vị (ưu tiên cao vì cần kỹ thuật JOIN)
+    # 2. Nhóm tồn kho và quy đổi đơn vị (hộp chẵn, viên lẻ, divmod)
+    inv_keywords = [
+        "tồn kho", "còn tồn", "tồn cuối", "hộp chẵn", "viên lẻ", "bao nhiêu hộp",
+        "hộp và viên", "thùng và chai", "bao và kg", "thẻ kho"
+    ]
+    if any(k in q_lower for k in inv_keywords):
+        return "inventory_unit_conversion"
+
+    # 3. Nhóm đa bảng / tra cứu hoạt chất, thuốc kê đơn, quy đổi đơn vị (ưu tiên cao vì cần kỹ thuật JOIN)
     join_keywords = ["hoạt chất", "kê đơn", "quy đổi", "đơn vị lớn", "hoatchat"]
     if any(k in q_lower for k in join_keywords):
         return "multitable_join"
@@ -485,6 +564,119 @@ def solution(data):
     return int(round(total))
 ```""",
 
+    "inventory_unit_conversion": r"""--- VÍ DỤ MẪU: TỒN KHO & QUY ĐỔI ĐƠN VỊ (HỘP CHẴN, VIÊN LẺ) ---
+Câu hỏi: "Hiện tại thuốc Hapacol 650 còn tồn bao nhiêu hộp và viên lẻ?" (as_of_date = "2026-05-25")
+```python
+def solution(data):
+    # 1. Tìm bảng tồn kho / thẻ kho hoặc bảng chi tiết nhập/bán/trả
+    # Theo Điều 5 Rulebook: Tồn kho = Tổng nhập - Tổng bán + Tổng trả (hoặc cột tồn cuối kỳ)
+    df_stock = None
+    prod_col = None
+    remain_col = None
+    unit_col = None
+
+    for name, df in data.items():
+        cols = df.columns.tolist()
+        p_c = next((c for c in cols if any(k in str(c).lower() for k in ['tên hàng', 'mặt hàng', 'sản phẩm', 'tên thuốc', 'ten_hang'])), None)
+        r_c = next((c for c in cols if any(k in str(c).lower() for k in ['tồn cuối', 'số lượng tồn', 'tồn kho', 'soluongton', 'sl_ton'])), None)
+        if p_c and r_c:
+            df_stock = df.copy()
+            prod_col = p_c
+            remain_col = r_c
+            unit_col = next((c for c in cols if any(k in str(c).lower() for k in ['quy cách', 'quycach', 'hệ số', 'don_vi_quy_doi'])), None)
+            break
+
+    # Nếu không có bảng tồn, tính từ các bảng giao dịch nhập và bán
+    if df_stock is None:
+        tot_qty = 0
+        found = False
+        for name, df in data.items():
+            cols = df.columns.tolist()
+            p_c = next((c for c in cols if any(k in str(c).lower() for k in ['tên hàng', 'mặt hàng', 'sản phẩm', 'tên thuốc'])), None)
+            q_c = next((c for c in cols if any(k in str(c).lower() for k in ['số lượng quy đổi', 'slquydoi', 'số lượng', 'sl'])), None)
+            if p_c and q_c:
+                sub = df[df[p_c].astype(str).str.lower().str.contains('hapacol 650', na=False)]
+                if not sub.empty:
+                    found = True
+                    q_vals = pd.to_numeric(sub[q_c].astype(str).str.replace(',', '').str.replace(' ', ''), errors='coerce').fillna(0).sum()
+                    if 'nhap' in name.lower():
+                        tot_qty += q_vals
+                    else:
+                        tot_qty -= q_vals
+        if not found:
+            return "unanswerable"
+        total_units = max(0, int(tot_qty))
+        packing_size = 100
+        boxes, pills = divmod(total_units, packing_size)
+        return [int(boxes), int(pills)]
+
+    # 2. Lọc đúng mặt hàng được hỏi
+    matched = df_stock[df_stock[prod_col].astype(str).str.lower().str.contains('hapacol 650', na=False)]
+    if matched.empty:
+        return "unanswerable"
+
+    total_units = int(pd.to_numeric(matched[remain_col].astype(str).str.replace(',', '').str.replace(' ', ''), errors='coerce').fillna(0).iloc[0])
+    packing_size = 100
+    if unit_col and not matched[unit_col].isna().all():
+        val = matched[unit_col].iloc[0]
+        m = re.search(r'\d+', str(val))
+        if m:
+            packing_size = int(m.group(0))
+
+    # 3. Dùng divmod để trả về [số hộp chẵn, số viên lẻ] chuẩn kiểu list
+    boxes, pills = divmod(total_units, packing_size)
+    return [int(boxes), int(pills)]
+```""",
+
+    "time_series": """--- VÍ DỤ MẪU: PHÂN TÍCH CHUỖI THỜI GIAN & SO SÁNH KỲ LIỀN TRƯỚC ---
+Câu hỏi: "Doanh thu tháng này tăng hay giảm bao nhiêu phần trăm so với tháng trước?" (as_of_date = "2026-05-25")
+```python
+def solution(data):
+    # 1. Tìm bảng bán hàng chi tiết
+    df_sales = None
+    date_col = None
+    amt_col = None
+    status_col = None
+
+    for name, df in data.items():
+        if any(k in name.lower() for k in ['nhap', 'chiphi', 'tonkho', 'ncc']):
+            continue
+        cols = df.columns.tolist()
+        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'ngaylap', 'thời gian'])), None)
+        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu']) and 'thuế' not in str(c).lower()), None)
+        if d_c and a_c:
+            df_sales = df.copy()
+            date_col = d_c
+            amt_col = a_c
+            status_col = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status'])), None)
+            break
+
+    if df_sales is None:
+        return "unanswerable"
+
+    # 2. Chuyển đổi ngày và loại bỏ đơn huỷ / trả
+    df_sales[date_col] = pd.to_datetime(df_sales[date_col], dayfirst=True, errors='coerce')
+    if status_col:
+        df_sales = df_sales[~df_sales[status_col].astype(str).str.lower().str.contains('hủy|huỷ|trả|cancel')]
+
+    df_sales['clean_amount'] = pd.to_numeric(df_sales[amt_col].astype(str).str.replace(',', '').str.replace(' ', ''), errors='coerce').fillna(0)
+
+    # 3. Lọc doanh thu kỳ chính (Tháng này: 2026-05-01 đến 2026-05-25)
+    # và kỳ đối chiếu (Tháng trước cùng số ngày: 2026-04-01 đến 2026-04-25 theo Điều 2 Rulebook)
+    mask_curr = (df_sales[date_col].dt.date >= pd.to_datetime("2026-05-01").date()) & (df_sales[date_col].dt.date <= pd.to_datetime("2026-05-25").date())
+    mask_prev = (df_sales[date_col].dt.date >= pd.to_datetime("2026-04-01").date()) & (df_sales[date_col].dt.date <= pd.to_datetime("2026-04-25").date())
+
+    rev_curr = df_sales[mask_curr]['clean_amount'].sum()
+    rev_prev = df_sales[mask_prev]['clean_amount'].sum()
+
+    if rev_prev == 0:
+        return 0.0
+
+    # 4. Tính tỉ lệ phần trăm thay đổi: ((Hiện tại - Trước) / Trước) * 100
+    pct_change = ((rev_curr - rev_prev) / rev_prev) * 100.0
+    return round(float(pct_change), 2)
+```""",
+
     "unanswerable_suspect": """--- VÍ DỤ MẪU: CÂU HỎI THIẾU DỮ LIỆU (UNANSWERABLE) ---
 Câu hỏi: "Nhân viên nào có tay nghề cao nhất tiệm?" (as_of_date = "2026-07-31")
 ```python
@@ -580,6 +772,8 @@ def build_prompt(
     question: str,
     rulebook_content: Optional[str] = None,
     business_note: Optional[str] = None,
+    candidates: Optional[List[Any]] = None,
+    entity_matches: Optional[List[Any]] = None,
     return_messages: bool = False
 ) -> Any:
     """
@@ -591,6 +785,8 @@ def build_prompt(
         question (str): Câu hỏi tự nhiên bằng tiếng Việt từ questions.jsonl.
         rulebook_content (str, optional): Nội dung file rulebook.md của split.
         business_note (str, optional): Ghi chú từ README.md của shop.
+        candidates (list, optional): Danh sách thực thể tiềm năng từ shop để đối soát.
+        entity_matches (list, optional): Kết quả liên kết thực thể đã tìm sẵn từ trước.
         return_messages (bool): Nếu True, trả về tuple (system_prompt, user_prompt) cho ChatML.
         
     Returns:
@@ -602,11 +798,42 @@ def build_prompt(
 
     # 2. Giải mã thời gian tự động
     temporal_info = resolve_temporal_context(question, as_of_date)
-    temporal_text = (
-        f"MỐC THỜI GIAN THAM CHIẾU (as_of_date / hôm nay): {temporal_info['as_of_date']}\n"
-        f"KHOẢNG THỜI GIAN ĐÃ ĐƯỢC GIẢI MÃ: {temporal_info['description']}\n"
-        f"GỢI Ý LỌC PANDAS: {temporal_info['code_hint']}"
-    )
+    temporal_lines = [f"MỐC THỜI GIAN THAM CHIẾU (as_of_date / hôm nay): {temporal_info['as_of_date']}"]
+    if temporal_info.get("comparison_start") and temporal_info.get("comparison_end"):
+        temporal_lines.append(f"KHOẢNG THỜI GIAN KỲ CHÍNH: từ '{temporal_info.get('start_date')}' đến '{temporal_info.get('end_date')}'")
+        temporal_lines.append(f"KHOẢNG THỜI GIAN KỲ ĐỐI CHIẾU (SO SÁNH): từ '{temporal_info.get('comparison_start')}' đến '{temporal_info.get('comparison_end')}' ({temporal_info.get('comparison_desc', '')})")
+    else:
+        temporal_lines.append(f"KHOẢNG THỜI GIAN ĐÃ ĐƯỢC GIẢI MÃ: {temporal_info['description']}")
+    temporal_lines.append(f"GỢI Ý LỌC PANDAS: {temporal_info['code_hint']}")
+    temporal_text = "\n".join(temporal_lines)
+
+    # 2b. Đối soát thực thể (Entity Linking)
+    entity_block = ""
+    matches = entity_matches
+    if matches is None and candidates and link_entities is not None:
+        try:
+            matches = link_entities(question, candidates=candidates, threshold=0.55)
+        except Exception:
+            matches = None
+
+    if matches:
+        entity_lines = []
+        for m in matches[:5]:
+            val = getattr(m, "matched_value", str(m))
+            term = getattr(m, "query_term", "")
+            meta = getattr(m, "metadata", {}) or {}
+            src_tbl = meta.get("source_table", "")
+            src_col = meta.get("source_col", "")
+            loc = f" (ở bảng '{src_tbl}', cột '{src_col}')" if src_tbl and src_col else ""
+            term_note = f" (gợi ý từ '{term}')" if term and term.lower() != val.lower() else ""
+            entity_lines.append(f"- '{val}'{loc}{term_note}")
+        if entity_lines:
+            entity_block = (
+                "\nTHỰC THỂ ĐỐI SOÁT TRONG CƠ SỞ DỮ LIỆU (ENTITY LINKING):\n"
+                "Các giá trị thực tế trong dữ liệu khớp với câu hỏi của người dùng:\n"
+                + "\n".join(entity_lines)
+                + "\n-> LƯU Ý: Hãy sử dụng chính xác các giá trị chuỗi này khi lọc điều kiện trong code.\n"
+            )
 
     # 3. Khối Rulebook tóm tắt (nếu có)
     rulebook_block = ""
@@ -629,10 +856,9 @@ def build_prompt(
 DANH SÁCH BẢNG VÀ CỘT DỮ LIỆU TRONG `data`:
 {schema_str}
 {biz_context}
-
 CHỈ DẪN MỐC THỜI GIAN:
 {temporal_text}
-
+{entity_block}
 CÂU HỎI CỦA NGƯỜI DÙNG:
 "{question}"
 

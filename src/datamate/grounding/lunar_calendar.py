@@ -10,12 +10,16 @@ Quy tắc 2 (Rulebook):
 
 from __future__ import annotations
 
+import csv
 import logging
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
-import pandas as pd
+try:
+    import pandas as pd
+except ImportError:
+    pd = None
 
 log = logging.getLogger(__name__)
 
@@ -26,27 +30,39 @@ _CALENDAR_CACHE: dict[str, LunarCalendar] = {}
 class LunarCalendar:
     """Quản lý tra cứu lịch âm và tính toán các mốc Tết."""
 
-    def __init__(self, df: pd.DataFrame, source_path: Optional[Path] = None):
-        self.df = df.copy()
+    def __init__(self, data: Any, source_path: Optional[Path] = None):
         self.source_path = source_path
-
-        # Đảm bảo các kiểu dữ liệu
-        self.df["date"] = self.df["date"].astype(str)
-        self.df["lunar_day"] = pd.to_numeric(self.df["lunar_day"], errors="coerce").fillna(0).astype(int)
-        self.df["lunar_month"] = pd.to_numeric(self.df["lunar_month"], errors="coerce").fillna(0).astype(int)
-        self.df["lunar_year"] = pd.to_numeric(self.df["lunar_year"], errors="coerce").fillna(0).astype(int)
-
-        # Tạo index nhanh để tra cứu O(1)
-        # 1. Tra cứu theo date dương lịch (YYYY-MM-DD)
-        self._date_map = self.df.set_index("date").to_dict(orient="index")
-
-        # 2. Tra cứu ngày dương từ (lunar_year, lunar_month, lunar_day, lunar_leap)
-        # Giữ ngày đầu tiên nếu có nhiều bản ghi
+        self._date_map: dict[str, dict] = {}
         self._lunar_map: dict[tuple[int, int, int], str] = {}
-        for _, row in self.df.iterrows():
-            key = (row["lunar_year"], row["lunar_month"], row["lunar_day"])
-            if key not in self._lunar_map:
-                self._lunar_map[key] = row["date"]
+
+        if pd is not None and isinstance(data, pd.DataFrame):
+            self.df = data.copy()
+            self.df["date"] = self.df["date"].astype(str)
+            self.df["lunar_day"] = pd.to_numeric(self.df["lunar_day"], errors="coerce").fillna(0).astype(int)
+            self.df["lunar_month"] = pd.to_numeric(self.df["lunar_month"], errors="coerce").fillna(0).astype(int)
+            self.df["lunar_year"] = pd.to_numeric(self.df["lunar_year"], errors="coerce").fillna(0).astype(int)
+
+            self._date_map = self.df.set_index("date").to_dict(orient="index")
+            for _, row in self.df.iterrows():
+                key = (int(row["lunar_year"]), int(row["lunar_month"]), int(row["lunar_day"]))
+                if key not in self._lunar_map:
+                    self._lunar_map[key] = str(row["date"])
+        elif isinstance(data, list):
+            self.df = None
+            for row in data:
+                d_str = str(row.get("date", "")).strip()
+                try:
+                    ly = int(row.get("lunar_year", 0))
+                    lm = int(row.get("lunar_month", 0))
+                    ld = int(row.get("lunar_day", 0))
+                except (ValueError, TypeError):
+                    continue
+                self._date_map[d_str] = row
+                key = (ly, lm, ld)
+                if key not in self._lunar_map and d_str:
+                    self._lunar_map[key] = d_str
+        else:
+            self.df = None
 
     @classmethod
     def from_csv(cls, path: str | Path) -> LunarCalendar:
@@ -54,8 +70,21 @@ class LunarCalendar:
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"Không tìm thấy file calendar: {path}")
-        df = pd.read_csv(path)
-        return cls(df, source_path=path)
+
+        if pd is not None:
+            try:
+                df = pd.read_csv(path)
+                return cls(df, source_path=path)
+            except Exception:
+                pass
+
+        # Fallback dùng csv stdlib nếu không có pandas
+        rows = []
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            reader = csv.DictReader(f)
+            for r in reader:
+                rows.append(r)
+        return cls(rows, source_path=path)
 
     def get_solar_date(self, lunar_year: int, lunar_month: int, lunar_day: int) -> Optional[str]:
         """Tra ngày dương lịch (YYYY-MM-DD) từ ngày âm lịch."""
@@ -90,7 +119,6 @@ class LunarCalendar:
         tet_start = datetime.strptime(tet_start_str, "%Y-%m-%d").date()
         tet_end = datetime.strptime(tet_end_str, "%Y-%m-%d").date()
 
-        # Số ngày dịp Tết (bao gồm cả start và end)
         n_days = (tet_end - tet_start).days + 1
 
         pre_end = tet_start - timedelta(days=1)
@@ -99,28 +127,20 @@ class LunarCalendar:
         return pre_start.isoformat(), pre_end.isoformat()
 
 
-def find_calendar_file(hint_dir: Optional[Path | str] = None) -> Optional[Path]:
-    """Tự động tìm kiếm file calendar.csv trong các thư mục khả dĩ."""
+def find_calendar_file(base_dir: Optional[Path | str] = None) -> Optional[Path]:
+    """Tìm calendar.csv theo thứ tự ưu tiên."""
     candidates = []
-    if hint_dir:
-        hint_path = Path(hint_dir)
-        candidates.extend([
-            hint_path / "calendar.csv",
-            hint_path.parent / "calendar.csv",
-            hint_path.parent.parent / "calendar.csv",
-        ])
-
-    root = Path.cwd()
+    if base_dir:
+        b = Path(base_dir)
+        candidates.append(b / "calendar.csv" if b.is_dir() else b)
     candidates.extend([
-        root / "competition_data" / "public_test" / "calendar.csv",
-        root / "competition_data" / "train" / "calendar.csv",
-        root / "calendar.csv",
+        Path("competition_data/public_test/calendar.csv"),
+        Path("competition_data/train/calendar.csv"),
+        Path("/data/calendar.csv"),
     ])
-
     for c in candidates:
-        if c.exists() and c.is_file():
-            return c.resolve()
-
+        if c.exists():
+            return c
     return None
 
 
@@ -137,4 +157,3 @@ def get_calendar(hint_path: Optional[Path | str] = None) -> Optional[LunarCalend
         _CALENDAR_CACHE[key] = LunarCalendar.from_csv(cal_file)
 
     return _CALENDAR_CACHE[key]
-

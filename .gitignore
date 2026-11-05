@@ -33,3 +33,5 @@ count_answer_types.ipynb
 submission_logs/
 run_full_public_test.log
 submission.jsonl
+
+results/

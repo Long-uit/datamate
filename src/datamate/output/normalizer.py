@@ -661,3 +661,66 @@ def normalize_output(
         return {"type": "unanswerable", "answer": None}
 
     return {"type": "abstain", "answer": None}
+
+
+def check_result_sanity(
+    sub_ans: Dict[str, Any],
+    question: str = "",
+    code_text: str = "",
+) -> Tuple[bool, Optional[str]]:
+    """
+    Bộ kiểm tra tính hợp lý hậu thực thi (Post-execution Sanity Check).
+    Phát hiện các kết quả vô lý (số âm bất thường, số 0 vô lý cho câu hỏi xếp hạng,
+    danh sách rỗng) để kích hoạt tự sửa lỗi hoặc ép về 'abstain' tránh bị phạt -1 điểm.
+    
+    Returns:
+        Tuple[bool, Optional[str]]: (is_sane, error_reason_if_not_sane)
+    """
+    if not isinstance(sub_ans, dict):
+        return False, "sub_ans không phải dict hợp lệ"
+
+    ans_type = sub_ans.get("type")
+    ans_val = sub_ans.get("answer")
+
+    # Bỏ qua kiểm tra nếu đã là unanswerable hoặc abstain
+    if ans_type in ("unanswerable", "abstain"):
+        return True, None
+
+    # 1. Kiểm tra None / NaN
+    if is_nan_or_null(ans_val):
+        return False, "Kết quả trả về là None, NaN hoặc Inf"
+
+    q_low = _nfc(question).lower() if question else ""
+
+    # 2. Kiểm tra số âm bất thường cho các câu hỏi về doanh thu / số lượng / tiền
+    # (Ngoại trừ câu hỏi rõ ràng về biến động, chênh lệch, tăng giảm, lãi ròng, lợi nhuận)
+    if ans_type == "number" and isinstance(ans_val, (int, float, Decimal)):
+        num_val = float(ans_val)
+        is_change_or_profit = bool(re.search(r"t[aă]ng|gi[aả]m|ch[eê]nh\s*l[eệ]ch|thay\s*đ[oổ]i|l[aã]i|l[oỗ]|l[oợ]i\s*nhu[aậ]n|bi[eế]n\s*đ[oộ]ng", q_low))
+        is_revenue_or_qty = bool(re.search(r"doanh\s*thu|doanh\s*s[oố]|t[oổ]ng\s*ti[eề]n|ti[eề]n\s*b[aá]n|s[oố]\s*lu[oợ]ng|bao\s*nhi[eê]u\s*(đ[oơ]n|ly|chai|h[oộ]p|g[oó]i|s[aả]n\s*ph[aẩ]m|kh[aá]ch|ti[eề]n|h[oó]a\s*đ[oơ]n)", q_low))
+
+        if not is_change_or_profit and is_revenue_or_qty and num_val < 0:
+            return False, f"Số âm bất thường ({ans_val}) cho câu hỏi về doanh thu / số lượng không cho phép âm"
+
+    # 3. Kiểm tra kết quả 0 hoặc rỗng cho câu hỏi xếp hạng / bán chạy nhất / ai mua nhiều nhất
+    is_ranking = bool(re.search(r"b[aá]n\s*ch[aạ]y\s*nh[aấ]t|nhi[eê]u\s*nh[aấ]t|cao\s*nh[aấ]t|th[aấ]p\s*nh[aấ]t|[ií]t\s*nh[aấ]t|top\s*\d+|mua\s*nhi[eê]u\s*nh[aấ]t|ai\s*b[aá]n|ai\s*mua|m[aặ]t\s*h[aà]ng\s*n[aà]o|s[aả]n\s*ph[aẩ]m\s*n[aà]o|kh[aá]ch\s*h[aà]ng\s*n[aà]o", q_low))
+    if is_ranking:
+        # Nếu hỏi đối tượng nào mà trả về số 0 hoặc chuỗi rỗng
+        if ans_val in (0, 0.0, "0", ""):
+            return False, f"Kết quả '{ans_val}' vô lý cho câu hỏi tìm đối tượng xếp hạng / bán chạy nhất"
+        if ans_type == "list" and isinstance(ans_val, (list, tuple)) and len(ans_val) == 0:
+            return False, "Danh sách xếp hạng rỗng [] cho câu hỏi tìm đối tượng"
+
+    # 4. Kiểm tra danh sách rỗng
+    if ans_type == "list" and isinstance(ans_val, (list, tuple)) and len(ans_val) == 0:
+        return False, "Danh sách kết quả rỗng []"
+
+    # 5. Kiểm tra bảng rỗng
+    if ans_type == "table":
+        if not isinstance(ans_val, dict):
+            return False, "Định dạng bảng không phải dict"
+        rows = ans_val.get("rows", [])
+        if not rows or len(rows) == 0:
+            return False, "Bảng kết quả không có dòng dữ liệu nào (empty rows)"
+
+    return True, None
