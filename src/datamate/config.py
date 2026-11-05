@@ -1,7 +1,8 @@
 """
-config.py — Quản lý cấu hình tập trung cho toàn bộ hệ thống DataMate.
+config.py — Quản lý cấu hình tập trung cho toàn bộ hệ thống DataMate (Phase 4).
 
 Hỗ trợ đọc từ YAML và ghi đè linh hoạt qua biến môi trường (Environment Variables).
+Bổ sung các tham số Phase 4: Calibrated Abstention (tau_star), Reproducibility (seed), Docker Offline.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ class ModelConfig:
     max_new_tokens: int = 512
     temperature: float = 0.0
     device: str = "auto"
+    seed: int = 42
 
 
 @dataclass
@@ -31,12 +33,25 @@ class ExecutionConfig:
     timeout_seconds: int = 15
     memory_limit_mb: int = 4096
     use_sqlite_cache: bool = True
+    in_process: bool = False
 
 
 @dataclass
 class GroundingConfig:
     entity_linking_threshold: float = 0.6
     max_entity_candidates: int = 10
+
+
+@dataclass
+class AbstentionConfig:
+    tau_star: float = 0.50
+    enabled: bool = True
+
+
+@dataclass
+class SubmissionConfig:
+    offline_mode: bool = True
+    validate_schema: bool = True
 
 
 @dataclass
@@ -53,6 +68,8 @@ class AppConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     grounding: GroundingConfig = field(default_factory=GroundingConfig)
+    abstention: AbstentionConfig = field(default_factory=AbstentionConfig)
+    submission: SubmissionConfig = field(default_factory=SubmissionConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
 
 
@@ -86,24 +103,36 @@ def load_config(config_path: Optional[str | Path] = None) -> AppConfig:
     m_data = raw_dict.get("model", {})
     e_data = raw_dict.get("execution", {})
     g_data = raw_dict.get("grounding", {})
+    a_data = raw_dict.get("abstention", {})
+    s_data = raw_dict.get("submission", {})
     p_data = raw_dict.get("paths", {})
 
     cfg = AppConfig(
         model=ModelConfig(
             model_id=m_data.get("model_id", "Qwen/Qwen2.5-Coder-7B-Instruct"),
             backend=m_data.get("backend", "transformers"),
-            max_new_tokens=m_data.get("max_new_tokens", 512),
+            max_new_tokens=int(m_data.get("max_new_tokens", 512)),
             temperature=float(m_data.get("temperature", 0.0)),
             device=m_data.get("device", "auto"),
+            seed=int(m_data.get("seed", 42)),
         ),
         execution=ExecutionConfig(
             timeout_seconds=int(e_data.get("timeout_seconds", 15)),
             memory_limit_mb=int(e_data.get("memory_limit_mb", 4096)),
             use_sqlite_cache=bool(e_data.get("use_sqlite_cache", True)),
+            in_process=bool(e_data.get("in_process", False)),
         ),
         grounding=GroundingConfig(
             entity_linking_threshold=float(g_data.get("entity_linking_threshold", 0.6)),
             max_entity_candidates=int(g_data.get("max_entity_candidates", 10)),
+        ),
+        abstention=AbstentionConfig(
+            tau_star=float(a_data.get("tau_star", 0.50)),
+            enabled=bool(a_data.get("enabled", True)),
+        ),
+        submission=SubmissionConfig(
+            offline_mode=bool(s_data.get("offline_mode", True)),
+            validate_schema=bool(s_data.get("validate_schema", True)),
         ),
         paths=PathsConfig(
             calendar_csv=p_data.get("calendar_csv", "competition_data/public_test/calendar.csv"),
@@ -125,6 +154,12 @@ def load_config(config_path: Optional[str | Path] = None) -> AppConfig:
         cfg.paths.data_dir = os.environ["DATAMATE_DATA_DIR"]
     if "DATAMATE_OUTPUT_FILE" in os.environ:
         cfg.paths.output_file = os.environ["DATAMATE_OUTPUT_FILE"]
+    if "DATAMATE_TAU_STAR" in os.environ:
+        cfg.abstention.tau_star = float(os.environ["DATAMATE_TAU_STAR"])
+    if "DATAMATE_SEED" in os.environ:
+        cfg.model.seed = int(os.environ["DATAMATE_SEED"])
+    if "DATAMATE_OFFLINE_MODE" in os.environ:
+        cfg.submission.offline_mode = os.environ["DATAMATE_OFFLINE_MODE"].lower() in ("1", "true", "yes")
 
     return cfg
 
@@ -141,4 +176,3 @@ def reset_config() -> None:
     """Dọn dẹp singleton (hữu ích cho unit test)."""
     global _GLOBAL_CONFIG
     _GLOBAL_CONFIG = None
-

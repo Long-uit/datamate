@@ -1,4 +1,4 @@
-# Cấu hình mặc định cho DataMate Engine (Zalo AI Challenge 2026)
+# Cấu hình mặc định cho DataMate Engine (Zalo AI Challenge 2026 - Phase 4)
 
 model:
   model_id: "Qwen/Qwen2.5-Coder-7B-Instruct"
@@ -6,15 +6,25 @@ model:
   max_new_tokens: 512
   temperature: 0.0             # Greedy decoding T=0
   device: "auto"
+  seed: 42                     # Cố định seed cho tính tái lập
 
 execution:
   timeout_seconds: 15
   memory_limit_mb: 4096
   use_sqlite_cache: true
+  in_process: false
 
 grounding:
   entity_linking_threshold: 0.6
   max_entity_candidates: 10
+
+abstention:
+  tau_star: 0.50               # Ngưỡng tin cậy hiệu chuẩn tối ưu
+  enabled: true
+
+submission:
+  offline_mode: true
+  validate_schema: true
 
 paths:
   calendar_csv: "competition_data/public_test/calendar.csv"
