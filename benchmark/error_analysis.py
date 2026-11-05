@@ -5,6 +5,7 @@ Dựa trên nghiên cứu BIRD (Evaluating Language Models on Enterprise Text-to
 và thước đo độ tin cậy TrustSQL:
 - Tự động nhóm các câu bị phạt điểm (-1) theo nguyên nhân gốc rễ (Root Cause Analysis).
 - Phân tích chuyên sâu nhóm unanswerable bị đoán mò hoặc dự đoán sai.
+- Chuẩn hóa dung sai so khớp số học và phần trăm bám sát Điều 9 Rulebook (percent làm tròn 2 chữ số).
 - Xuất báo cáo định dạng Markdown chi tiết hỗ trợ đội ngũ cải tiến hàng ngày.
 """
 
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -44,6 +46,7 @@ class AnalysisSummary:
 def classify_error(pred_item: dict[str, Any], truth_item: dict[str, Any]) -> tuple[int, str, str]:
     """
     Xác định điểm số (+1, -1, 0) và phân loại lỗi giữa kết quả dự đoán và đáp án chuẩn.
+    Tuân thủ tuyệt đối quy định so khớp tại Điều 9 Rulebook.
     """
     p_type = str(pred_item.get("type", "")).strip().lower()
     t_type = str(truth_item.get("type", "")).strip().lower()
@@ -69,9 +72,9 @@ def classify_error(pred_item: dict[str, Any], truth_item: dict[str, Any]) -> tup
     if p_type != t_type:
         return -1, "TYPE_MISMATCH", f"Lệch kiểu: Dự đoán {p_type} nhưng đáp án là {t_type} (-1 điểm)"
 
-    # So sánh giá trị
-    # Số hoặc phần trăm
-    if p_type in ("number", "percent"):
+    # So sánh giá trị theo từng kiểu
+    # 1. Số (number: tiền nguyên, số đếm, sai số float < 1e-4)
+    if p_type == "number":
         try:
             val_p = float(p_ans)
             val_t = float(t_ans)
@@ -82,7 +85,19 @@ def classify_error(pred_item: dict[str, Any], truth_item: dict[str, Any]) -> tup
         except (ValueError, TypeError):
             return -1, "PARSE_ERROR", f"Không parse được số từ {p_ans} hoặc {t_ans} (-1 điểm)"
 
-    # Chuỗi hoặc ngày
+    # 2. Phần trăm (percent: làm tròn 2 chữ số thập phân theo Rulebook / evaluate.py)
+    if p_type == "percent":
+        try:
+            val_p = float(p_ans)
+            val_t = float(t_ans)
+            if round(val_p, 2) == round(val_t, 2) or abs(val_p - val_t) <= 0.01:
+                return 1, "CORRECT_NUMERIC", f"Khớp phần trăm ({round(val_p, 2)}% ~ {round(val_t, 2)}%) (+1 điểm)"
+            else:
+                return -1, "NUMERIC_MISMATCH", f"Sai phần trăm: Dự đoán {val_p}% != Đáp án {val_t}% (-1 điểm)"
+        except (ValueError, TypeError):
+            return -1, "PARSE_ERROR", f"Không parse được số từ {p_ans} hoặc {t_ans} (-1 điểm)"
+
+    # 3. Chuỗi hoặc ngày
     if p_type in ("string", "date"):
         str_p = str(p_ans).strip().lower()
         str_t = str(t_ans).strip().lower()
@@ -90,7 +105,7 @@ def classify_error(pred_item: dict[str, Any], truth_item: dict[str, Any]) -> tup
             return 1, "CORRECT_TEXT", "Khớp chuỗi chính xác (+1 điểm)"
         return -1, "TEXT_MISMATCH", f"Lệch chuỗi: '{p_ans}' != '{t_ans}' (-1 điểm)"
 
-    # Boolean
+    # 4. Boolean
     if p_type == "boolean":
         bool_p = bool(p_ans)
         bool_t = bool(t_ans)
@@ -98,7 +113,7 @@ def classify_error(pred_item: dict[str, Any], truth_item: dict[str, Any]) -> tup
             return 1, "CORRECT_BOOLEAN", "Khớp boolean đúng (+1 điểm)"
         return -1, "BOOLEAN_MISMATCH", f"Sai boolean: {bool_p} != {bool_t} (-1 điểm)"
 
-    # List hoặc Table
+    # 5. List hoặc Table
     if json.dumps(p_ans, sort_keys=True) == json.dumps(t_ans, sort_keys=True):
         return 1, "CORRECT_COMPLEX", "Khớp danh sách/bảng chính xác (+1 điểm)"
 
@@ -199,3 +214,38 @@ def generate_markdown_report(summary: AnalysisSummary) -> str:
 
     return "\n".join(lines)
 
+
+def main() -> None:
+    """CLI runner để chạy Error Analysis từ dòng lệnh."""
+    parser = argparse.ArgumentParser(description="Chạy Error Analysis so sánh kết quả dự đoán với ground truth.")
+    parser.add_argument("--pred", type=str, required=True, help="Đường dẫn file submission.jsonl")
+    parser.add_argument("--truth", type=str, required=True, help="Đường dẫn file answers.jsonl chuẩn")
+    parser.add_argument("--output", type=str, default="benchmark/error_report.md", help="Đường dẫn file markdown report xuất ra")
+    args = parser.parse_args()
+
+    pred_path = Path(args.pred)
+    truth_path = Path(args.truth)
+    if not pred_path.exists():
+        print(f"[Lỗi] Không tìm thấy file predictions tại: {pred_path}")
+        sys.exit(1)
+    if not truth_path.exists():
+        print(f"[Lỗi] Không tìm thấy file ground truth tại: {truth_path}")
+        sys.exit(1)
+
+    with open(pred_path, "r", encoding="utf-8") as f:
+        preds = [json.loads(line) for line in f if line.strip()]
+    with open(truth_path, "r", encoding="utf-8") as f:
+        truths = [json.loads(line) for line in f if line.strip()]
+
+    summary = run_error_analysis(preds, truths)
+    report = generate_markdown_report(summary)
+
+    out_p = Path(args.output)
+    out_p.parent.mkdir(parents=True, exist_ok=True)
+    out_p.write_text(report, encoding="utf-8")
+    print(f"✓ Đã xuất báo cáo phân tích lỗi vào {out_p.resolve()}")
+    print(f"• PA: {summary.penalized_accuracy} | Đúng: {summary.correct} | Sai: {summary.wrong} | Abstain: {summary.abstain}")
+
+
+if __name__ == "__main__":
+    main()

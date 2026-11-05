@@ -12,6 +12,7 @@ from datamate.grounding.entity_linker import (
     link_entities,
     normalize_entity_text,
     remove_accents,
+    best_phrase_similarity,
 )
 from datamate.ingestion.loader import BusinessData, TableInfo
 from datamate.types import Candidate
@@ -51,6 +52,33 @@ class TestEntityLinker:
         assert len(m2) > 0
         assert m2[0].matched_value == "Nước ngọt Sting dâu chai 330ml"
 
+    def test_diluted_similarity_long_query(self):
+        """Kiểm tra chống hiện tượng pha loãng điểm số (Diluted Similarity) với câu hỏi dài."""
+        candidates = [
+            "Cà phê sữa đá",
+            "Trà đào cam sả",
+            "Bạc xỉu nóng",
+        ]
+        # Câu hỏi dài 65 ký tự, trước đây bị ratio thấp kéo tụt điểm < 0.6
+        long_query = "Cho mình hỏi giá 1 ly cf sữa ở quán là bao nhiêu tiền vậy shop"
+        m = link_entities(long_query, candidates, threshold=0.6)
+        assert len(m) > 0
+        assert m[0].matched_value == "Cà phê sữa đá"
+        assert m[0].score >= 0.7
+
+    def test_word_boundary_avoids_substring_false_positive(self):
+        """Kiểm tra ranh giới từ: không khớp nhầm 'Ao' trong 'báo giá'."""
+        candidates = ["Ao", "Quan"]
+
+        # Không được khớp 'Ao' khi gặp từ 'báo'
+        m_neg = link_entities("Shop báo giá cho tôi sản phẩm mới", candidates, threshold=0.5)
+        assert len(m_neg) == 0
+
+        # Phải khớp 'Ao' khi người dùng thực sự viết từ 'áo'
+        m_pos = link_entities("Shop có bán áo thun không", candidates, threshold=0.5)
+        assert len(m_pos) > 0
+        assert m_pos[0].matched_value == "Ao"
+
     def test_extract_candidates_from_business(self):
         df_prod = pd.DataFrame({
             "Mã SKU": ["SKU01", "SKU02"],
@@ -72,4 +100,3 @@ class TestEntityLinker:
         cand_values = [c.value for c in cands]
         assert "Cà phê đen" in cand_values
         assert "Bạc xỉu" in cand_values
-

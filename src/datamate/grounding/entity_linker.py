@@ -8,7 +8,8 @@ entity_linker.py — Bộ liên kết thực thể tiếng Việt (Entity & Alia
 Khả năng chính:
 - Chuẩn hóa tiếng Việt có/không dấu, teencode, viết tắt ("cf" -> "cà phê", "sp" -> "sản phẩm").
 - Bóc tách thuộc tính kích thước, quy cách: (M), (L), size M, 330ml, chai, lon, thùng.
-- Thuật toán kết hợp Exact Substring + N-gram Token Overlap + Jaro-Winkler Similarity.
+- Thuật toán kết hợp Exact Match có ranh giới từ (Word Boundary) + N-gram Token Overlap + Sliding Window Phrase Similarity.
+- Khắc phục hiện tượng pha loãng điểm số (Diluted Similarity) khi so sánh với câu hỏi dài và loại bỏ hoàn toàn việc khớp nhầm chuỗi con.
 - Giúp Feasibility Gate phát hiện câu hỏi về thực thể không tồn tại trong shop.
 """
 
@@ -95,6 +96,35 @@ def jaro_winkler_similarity(s1: str, s2: str) -> float:
     return difflib.SequenceMatcher(None, s1, s2).ratio()
 
 
+def best_phrase_similarity(target: str, text: str) -> float:
+    """
+    Tính độ tương đồng chuỗi tối ưu theo cửa sổ trượt (Sliding Window N-gram).
+    Khắc phục triệt để hiện tượng pha loãng điểm số (Diluted Similarity) khi so sánh
+    tên thực thể ngắn với toàn bộ câu hỏi dài của người dùng.
+    """
+    t_words = target.split()
+    q_words = text.split()
+    k = len(t_words)
+    m = len(q_words)
+    if not t_words or not q_words:
+        return 0.0
+    if m <= k:
+        return difflib.SequenceMatcher(None, target, text).ratio()
+
+    best_sim = 0.0
+    min_window = max(1, k - 1)
+    max_window = min(m + 1, k + 3)
+    for l in range(min_window, max_window):
+        for i in range(m - l + 1):
+            window = " ".join(q_words[i : i + l])
+            s = difflib.SequenceMatcher(None, target, window).ratio()
+            if s > best_sim:
+                best_sim = s
+                if best_sim >= 0.98:
+                    return best_sim
+    return best_sim
+
+
 def token_overlap_score(query: str, target: str) -> float:
     """Tính tỷ lệ bao phủ token của query trong target."""
     q_tokens = set(query.split())
@@ -159,7 +189,7 @@ def link_entities(
     """
     Tìm kiếm và ánh xạ các thực thể xuất hiện trong câu hỏi tới danh mục candidates.
     - Hỗ trợ truyền danh sách Candidate hoặc danh sách chuỗi thô.
-    - Kết hợp Exact Match, Token Overlap và Fuzzy Similarity.
+    - Kết hợp Exact Word Boundary Match, Token Overlap và Sliding Window Phrase Similarity.
     """
     norm_q = normalize_entity_text(question)
     expanded_q = expand_abbreviations(norm_q)
@@ -188,22 +218,24 @@ def link_entities(
         score = 0.0
         matched_term = ""
 
-        # 1. Exact Substring Match (Ưu tiên cao nhất)
-        if target_norm in expanded_q:
+        # 1. Exact Word-Boundary Match (Ưu tiên cao nhất: ngăn chặn triệt để false positive chuỗi con)
+        pattern_norm = r"(?<!\w)" + re.escape(target_norm) + r"(?!\w)"
+        pattern_unacc = r"(?<!\w)" + re.escape(target_unaccented) + r"(?!\w)"
+
+        if re.search(pattern_norm, expanded_q):
             score = 1.0
             matched_term = target_norm
-        elif target_unaccented in unaccented_q and len(target_unaccented) > 3:
+        elif len(target_unaccented) > 2 and re.search(pattern_unacc, unaccented_q):
             score = 0.95
             matched_term = target_unaccented
         else:
-            # 2. Token Overlap & Fuzzy N-gram
+            # 2. Token Overlap & Sliding Window Phrase Similarity (Chống pha loãng câu dài)
             overlap = token_overlap_score(target_norm, expanded_q)
             overlap_unaccented = token_overlap_score(target_unaccented, unaccented_q)
             best_overlap = max(overlap, overlap_unaccented)
 
             if best_overlap >= 0.5:
-                # Tính bổ trợ bằng Jaro-Winkler
-                sim = jaro_winkler_similarity(target_unaccented, unaccented_q)
+                sim = best_phrase_similarity(target_unaccented, unaccented_q)
                 score = 0.6 * best_overlap + 0.4 * sim
                 matched_term = cand.value
 
@@ -230,4 +262,3 @@ def link_entities(
             unique_matches.append(m)
 
     return unique_matches
-

@@ -36,11 +36,13 @@ class TestDataSynth:
             assert s["type"] == "unanswerable"
             assert s["answer"] is None
             assert "reason" in s
+            assert "synthetic_code" in s
 
     def test_tet_variants_generation(self):
         samples = generate_tet_questions(business_id="shop_01", as_of_date="2024-05-01", year=2024)
         assert len(samples) >= 2
         assert any("Tết" in s["question"] for s in samples)
+        assert all("synthetic_code" in s for s in samples)
 
     def test_code_validation_and_safety(self):
         valid_code = "def solution(data):\n    return 100\nFINAL_RESULT = solution(None)"
@@ -75,3 +77,19 @@ class TestDataSynth:
         assert exported == len(augmented)
         assert out_file.exists()
 
+    def test_dataset_deduplication(self):
+        """Kiểm tra triệt tiêu hoàn toàn trùng lặp trong bộ sinh dữ liệu mở rộng."""
+        seeds = [
+            {
+                "id": f"q_{i}",
+                "business_id": "shop_01",
+                "as_of_date": "2024-05-15",
+                "question": f"Doanh thu ngày {i} là bao nhiêu?",
+                "type": "number",
+                "answer": 100000 * i,
+            }
+            for i in range(5)
+        ]
+        augmented = augment_seed_questions(seeds, target_count=30)
+        questions = [item["question"].strip().lower() for item in augmented]
+        assert len(questions) == len(set(questions)), "Phát hiện câu hỏi bị trùng lặp trong dataset tổng hợp!"
