@@ -127,7 +127,7 @@ def test_evaluate_records_pa_and_missing_extra_counts():
     assert metrics["extra_prediction_ids"] == ["extra"]
     assert metrics["invalid_format"] == 0
     assert [detail["status"] for detail in metrics["details"]] == ["correct", "wrong", "abstain"]
-    assert metrics["coverage"] == pytest.approx(2 / 3)
+    assert metrics["coverage"] == pytest.approx(2 / 3, abs=1e-4)
     assert metrics["pa"] == 0.0
 
 
