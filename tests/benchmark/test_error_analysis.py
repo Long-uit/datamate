@@ -19,6 +19,22 @@ class TestErrorAnalysis:
         assert score == 1
         assert "CORRECT" in cat
 
+    def test_classify_percent_tolerance(self):
+        """Kiểm tra dung sai làm tròn 2 chữ số cho kiểu percent (chuẩn Rulebook Điều 9)."""
+        # Dự đoán 12.35% trong khi đáp án 12.348% -> Phải chấp nhận đúng (+1)
+        pred = {"id": "q_pct", "type": "percent", "answer": 12.35}
+        truth = {"id": "q_pct", "type": "percent", "answer": 12.348}
+        score, cat, _ = classify_error(pred, truth)
+        assert score == 1
+        assert "CORRECT" in cat
+
+        # Dự đoán lệch lớn: 15.0% vs 18.0% -> Phạt -1
+        pred_wrong = {"id": "q_pct", "type": "percent", "answer": 15.0}
+        truth_wrong = {"id": "q_pct", "type": "percent", "answer": 18.0}
+        score_w, cat_w, _ = classify_error(pred_wrong, truth_wrong)
+        assert score_w == -1
+        assert "NUMERIC_MISMATCH" in cat_w
+
     def test_classify_unanswerable_cases(self):
         # 1. Unanswerable đúng -> +1
         p1 = {"type": "unanswerable", "answer": None}
@@ -64,4 +80,3 @@ class TestErrorAnalysis:
         report = generate_markdown_report(summary)
         assert "# 📊 BÁO CÁO PHÂN TÍCH LỖI VÀ ĐỘ TIN CẬY" in report
         assert "Penalized Accuracy (PA)" in report
-

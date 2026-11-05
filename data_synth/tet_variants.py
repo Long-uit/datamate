@@ -66,14 +66,32 @@ FINAL_RESULT = solution(dfs)
 
     # Mẫu 2: So với trước Tết
     q2 = f"Số lượng đơn hàng bán trong dịp Tết năm {year} so với trước Tết tăng hay giảm bao nhiêu đơn?"
+    code2 = f"""
+# Tết năm {year}: {t_start} đến {t_end} vs Trước Tết: {pre_start} đến {pre_end}
+def solution(dfs):
+    df_orders = None
+    for name, df in dfs.items():
+        if any('mã đơn' in c.lower() for c in df.columns):
+            df_orders = df
+            break
+    if df_orders is None:
+        return 0
+    df_valid = df_orders.copy()
+    if 'Trạng thái' in df_valid.columns:
+        df_valid = df_valid[~df_valid['Trạng thái'].str.lower().isin(['huỷ', 'hủy', 'trả hàng'])]
+    cnt_tet = len(df_valid[(df_valid['Ngày'] >= '{t_start}') & (df_valid['Ngày'] <= '{t_end}')])
+    cnt_pre = len(df_valid[(df_valid['Ngày'] >= '{pre_start}') & (df_valid['Ngày'] <= '{pre_end}')])
+    return int(cnt_tet - cnt_pre)
+FINAL_RESULT = solution(dfs)
+"""
     results.append({
         "business_id": business_id,
         "as_of_date": as_of_date,
         "question": q2,
         "window_tet": {"start": t_start, "end": t_end},
         "window_pre_tet": {"start": pre_start, "end": pre_end},
+        "synthetic_code": code2.strip(),
         "type": "number",
     })
 
     return results
-
