@@ -14,6 +14,7 @@ import logging
 import re
 import sqlite3
 import unicodedata
+from pathlib import Path
 from typing import Optional
 
 from datamate.ingestion.loader import BusinessData

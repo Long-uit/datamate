@@ -823,9 +823,13 @@ def build_prompt(
     # 3. Khối Rulebook tóm tắt (nếu có)
     rulebook_block = ""
     if rulebook_content and rulebook_content.strip():
+        rb_text = rulebook_content.strip()
+        # Giới hạn dung lượng rulebook đưa vào prompt để tránh tràn context và giảm thời gian prefill token
+        if len(rb_text) > 2500:
+            rb_text = rb_text[:2500] + "\n... [Các quy tắc cốt lõi đã được hướng dẫn chi tiết ở mục SYSTEM INSTRUCTION]"
         rulebook_block = f"""
-==================== QUY TẮC NGHIỆP VỤ BẮT BUỘC (THEO RULEBOOK CỦA SPLIT NÀY) ====================
-{rulebook_content.strip()}
+==================== QUY TẮC NGHIỆP VỤ BỔ SUNG (RULEBOOK) ====================
+{rb_text}
 """
 
     # 4. Khối ghi chú doanh nghiệp (nếu có)

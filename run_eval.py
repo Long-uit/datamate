@@ -529,6 +529,10 @@ def main():
     if not args.dry_run:
         print(f"[Khởi tạo] Đang nạp mô hình {args.model_id} (4-bit NF4)...")
         llm = LLMClient(model_id=args.model_id)
+        if not llm.is_loaded:
+            print("\n❌ [LỖI NGHIÊM TRỌNG] Không thể nạp trọng số mô hình LLM!")
+            print("Quá trình dừng lại để tránh sinh kết quả rỗng. Vui lòng kiểm tra VRAM GPU hoặc thông báo lỗi ở trên.")
+            sys.exit(1)
 
     writer = SubmissionWriter(output_file=args.output_file, log_dir=args.log_dir, mode=write_mode).open()
     written_records: Dict[str, dict] = {}
@@ -547,6 +551,7 @@ def main():
 
             data_dict, con, schema_str, bd, shop_meta, candidates, is_cache = get_cached_business_data(biz_id, data_root)
             if not data_dict:
+                print(f"  ❌ [Lỗi nạp dữ liệu shop {biz_id}] {schema_str}")
                 sub_ans = make_abstain(f"Data Not Found: {schema_str}")
                 writer.write(question_id=qid, answer=sub_ans, code="", raw_result=None, error=schema_str, elapsed_ms=0, confidence=0.0)
                 written_records[qid] = {"id": qid, **sub_ans}
@@ -588,7 +593,7 @@ def main():
             # Sinh mã qua LLM (Lượt 1)
             t0 = time.time()
             assert llm is not None
-            code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=1024)
+            code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=400)
             gen_sec = round(time.time() - t0, 2)
 
             # Chạy code qua Sandbox
@@ -617,7 +622,7 @@ def main():
                 err_feedback = exec_err if exec_err else f"Kết quả tính toán không hợp lý: {sanity_err}"
                 retry_prompt = f"{user_prompt}\n# Mã nguồn bị lỗi: {err_feedback}\n# Sửa lỗi và viết lại duy nhất hàm def solution(data):\n```python\n"
                 t_retry = time.time()
-                retry_code = llm.generate_code(prompt=retry_prompt, system_prompt=sys_prompt, max_new_tokens=1024)
+                retry_code = llm.generate_code(prompt=retry_prompt, system_prompt=sys_prompt, max_new_tokens=400)
                 gen_sec = round(gen_sec + (time.time() - t_retry), 2)
                 raw_retry, err_retry, ms_retry = execute_solution(
                     code_text=retry_code,
@@ -643,8 +648,10 @@ def main():
             confidence = 0.0
             if exec_err:
                 sub_ans = make_abstain(f"Runtime Error: {exec_err}")
+                print(f"  ⚠️ [Lỗi thực thi Sandbox] {exec_err} -> Chủ động Abstain (0 điểm)")
             elif sanity_err:
                 sub_ans = make_abstain(f"Sanity Check: {sanity_err}")
+                print(f"  ⚠️ [Sanity Check không hợp lý] {sanity_err} -> Chủ động Abstain (0 điểm)")
             else:
                 sub_ans = normalize_output(raw_result, question=question_text, code_text=code_text)
                 confidence = compute_confidence_score(
