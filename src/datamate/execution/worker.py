@@ -86,6 +86,8 @@ def main():
     from datamate.ingestion.cleaner import clean_business
     from datamate.ingestion.sqlite_mirror import get_sqlite_mirror
     from datamate.output.normalizer import apply_tie_breaker
+    from datamate.grounding.temporal import filter_future_data
+    from datamate.execution.helpers import clean_num, clean_date
 
     # Đọc mã nguồn cần thực thi
     code_str = code_file.read_text(encoding="utf-8")
@@ -105,6 +107,8 @@ def main():
             data_dict[t_base] = ti.df
         if ti.table_id:
             data_dict[ti.table_id] = ti.df
+        if ti.sheet_name and ti.sheet_name not in data_dict:
+            data_dict[ti.sheet_name] = ti.df
 
     # Chuẩn bị namespace đầy đủ alias và tiện ích chuẩn cho code mô hình
     namespace = {
@@ -116,6 +120,9 @@ def main():
         "pd": pd,
         "np": np,
         "apply_tie_breaker": apply_tie_breaker,
+        "filter_future_data": filter_future_data,
+        "clean_num": clean_num,
+        "clean_date": clean_date,
     }
 
     # Bắt stdout của code

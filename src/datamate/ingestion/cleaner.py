@@ -142,7 +142,13 @@ def apply_group_forward_fill(df: pd.DataFrame, order_id_col: Optional[str] = Non
         order_id_col = detected
 
     # Chuẩn hóa các ô rỗng về None để hàm ffill hoạt động chính xác
-    mask_empty = df_clean.map(is_empty_value)
+    # Chuẩn hóa các ô rỗng về None để hàm ffill hoạt động chính xác (tương thích cả pandas cũ và mới)
+    if hasattr(df_clean, "map"):
+        mask_empty = df_clean.map(is_empty_value)
+    elif hasattr(df_clean, "applymap"):
+        mask_empty = df_clean.applymap(is_empty_value)
+    else:
+        mask_empty = df_clean.apply(lambda col: col.map(is_empty_value))
     for col in df_clean.columns:
         if mask_empty[col].any():
             df_clean.loc[mask_empty[col], col] = None
@@ -196,18 +202,65 @@ def deduplicate_order_rows(df: pd.DataFrame, order_id_col: Optional[str] = None)
     return df_dedup
 
 
+SUMMARY_ROW_PATTERNS = [
+    r"^t[oổ]ng(?:\s*c[oộ]ng)?$",
+    r"^t[oổ]ng\s*ti[eề]n$",
+    r"^t[oổ]ng\s*s[oố]$",
+    r"^t[oổ]ng\s*k[eế]t$",
+    r"^c[oộ]ng$",
+    r"^total$",
+    r"^grand\s*total$",
+    r"^sum$",
+]
+
+
+def strip_summary_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Tự động phát hiện và loại bỏ các dòng 'Tổng cộng / Total' ở cuối bảng.
+    Giúp tránh việc lệnh .sum() trong code tính toán bị nhân đôi kết quả.
+    """
+    if df.empty or len(df) <= 1:
+        return df
+
+    check_n = min(3, len(df))
+    drop_indices = []
+
+    for idx in range(len(df) - 1, len(df) - 1 - check_n, -1):
+        row = df.iloc[idx]
+        is_summary = False
+        for col in df.columns[:5]:
+            val = row[col]
+            if val is not None and not pd.isna(val):
+                s = _normalize_str(str(val))
+                if any(re.match(pat, s) for pat in SUMMARY_ROW_PATTERNS):
+                    is_summary = True
+                    break
+        if is_summary:
+            drop_indices.append(idx)
+        else:
+            break
+
+    if drop_indices:
+        df = df.drop(df.index[drop_indices]).reset_index(drop=True)
+
+    return df
+
+
 def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """Pipeline làm sạch đầy đủ Quy tắc 8 cho một DataFrame."""
+    """Pipeline làm sạch đầy đủ cho một DataFrame (Cắt dòng tổng + Quy tắc 8)."""
     if df.empty:
         return df.copy()
 
-    order_col = find_order_id_col(list(df.columns))
+    # 0. Loại bỏ dòng tổng kết ở đáy bảng (nếu có)
+    df_no_summary = strip_summary_rows(df)
+
+    order_col = find_order_id_col(list(df_no_summary.columns))
     if order_col is None:
         # Không có cấu trúc đơn -> không can thiệp Rule 8
-        return df.copy()
+        return df_no_summary.copy()
 
     # 1. Forward-fill các cột cấp đơn
-    df_ffilled = apply_group_forward_fill(df, order_id_col=order_col)
+    df_ffilled = apply_group_forward_fill(df_no_summary, order_id_col=order_col)
     # 2. Khử trùng lặp dòng lỗi xuất file POS
     df_cleaned = deduplicate_order_rows(df_ffilled, order_id_col=order_col)
     return df_cleaned

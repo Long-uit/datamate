@@ -10,6 +10,7 @@ import os
 import re
 import ast
 import time
+from pathlib import Path
 from typing import Tuple, Optional, Dict, Any, List
 
 # Nhập torch và transformers có xử lý ngoại lệ an toàn
@@ -222,7 +223,8 @@ class LLMClient:
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
             bnb_4bit_use_double_quant=True,
-            bnb_4bit_compute_dtype=compute_dtype
+            bnb_4bit_compute_dtype=compute_dtype,
+            llm_int8_enable_fp32_cpu_offload=True,
         )
 
         # 2. Nạp Tokenizer
@@ -237,7 +239,8 @@ class LLMClient:
         if has_cuda:
             self.device = "cuda"
             load_kwargs = {
-                "device_map": "auto",
+                "device_map": {"": 0},
+                "low_cpu_mem_usage": True,
                 "quantization_config": quant_config,
                 "trust_remote_code": True,
             }
@@ -257,10 +260,40 @@ class LLMClient:
             )
             self.model.eval()
             self.is_loaded = True
+
+            # Tự động nạp QLoRA Adapter nếu đã fine-tune
+            adapter_path = Path("models/qwen2.5_coder_qlora_adapter")
+            if adapter_path.exists() and (adapter_path / "adapter_config.json").exists():
+                try:
+                    from peft import PeftModel
+                    print(f"[LLMClient] Phát hiện QLoRA adapter tại {adapter_path}. Đang nạp adapter...")
+                    self.model = PeftModel.from_pretrained(self.model, str(adapter_path))
+                    self.model.eval()
+                    print("[LLMClient] Nạp QLoRA adapter thành công!")
+                except Exception as e_lora:
+                    print(f"[LLMClient] Cảnh báo không nạp được LoRA adapter: {e_lora}")
+
             print(f"[LLMClient] Nạp mô hình thành công trên thiết bị: {self.device}")
             self.print_gpu_stats()
         except Exception as e:
-            print(f"[Lỗi] Nạp mô hình thất bại: {e}")
+            if has_cuda and ("out of memory" in str(e).lower() or "cuda" in str(e).lower()):
+                print(f"[LLMClient] Cảnh báo VRAM ({e}), thử fallback sang auto offload...")
+                try:
+                    load_kwargs["device_map"] = "auto"
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        self.model_id,
+                        **load_kwargs
+                    )
+                    self.model.eval()
+                    self.is_loaded = True
+                    print(f"[LLMClient] Nạp mô hình thành công (fallback auto offload): {self.device}")
+                    self.print_gpu_stats()
+                    return
+                except Exception as e2:
+                    print(f"[Lỗi] Nạp mô hình thất bại: {e2}")
+                    self.is_loaded = False
+            else:
+                print(f"[Lỗi] Nạp mô hình thất bại: {e}")
             self.is_loaded = False
 
     def get_gpu_memory_stats(self) -> Dict[str, float]:

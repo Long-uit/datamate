@@ -19,7 +19,7 @@ except ImportError:
 
 @dataclass
 class ModelConfig:
-    model_id: str = "Qwen/Qwen2.5-Coder-7B-Instruct"
+    model_id: str = "Qwen/Qwen2.5-Coder-3B-Instruct"
     backend: str = "transformers"  # "transformers" hoặc "vllm"
     max_new_tokens: int = 512
     temperature: float = 0.0
@@ -49,11 +49,18 @@ class PathsConfig:
 
 
 @dataclass
+class OutputConfig:
+    tau_star: float = 0.50
+    default_timeout: int = 30
+
+
+@dataclass
 class AppConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     grounding: GroundingConfig = field(default_factory=GroundingConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
+    output: OutputConfig = field(default_factory=OutputConfig)
 
 
 _GLOBAL_CONFIG: Optional[AppConfig] = None
@@ -87,6 +94,7 @@ def load_config(config_path: Optional[str | Path] = None) -> AppConfig:
     e_data = raw_dict.get("execution", {})
     g_data = raw_dict.get("grounding", {})
     p_data = raw_dict.get("paths", {})
+    o_data = raw_dict.get("output", {})
 
     cfg = AppConfig(
         model=ModelConfig(
@@ -112,6 +120,10 @@ def load_config(config_path: Optional[str | Path] = None) -> AppConfig:
             output_file=p_data.get("output_file", "submission.jsonl"),
             logs_dir=p_data.get("logs_dir", "submission_logs"),
         ),
+        output=OutputConfig(
+            tau_star=float(o_data.get("tau_star", 0.50)),
+            default_timeout=int(o_data.get("default_timeout", 30)),
+        ),
     )
 
     # Ghi đè từ biến môi trường nếu có
@@ -125,6 +137,8 @@ def load_config(config_path: Optional[str | Path] = None) -> AppConfig:
         cfg.paths.data_dir = os.environ["DATAMATE_DATA_DIR"]
     if "DATAMATE_OUTPUT_FILE" in os.environ:
         cfg.paths.output_file = os.environ["DATAMATE_OUTPUT_FILE"]
+    if "DATAMATE_TAU_STAR" in os.environ:
+        cfg.output.tau_star = float(os.environ["DATAMATE_TAU_STAR"])
 
     return cfg
 

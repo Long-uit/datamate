@@ -62,3 +62,4 @@ class Candidate:
     entity_type: str
     source_table: str
     source_col: str
+    row_context: dict[str, Any] = field(default_factory=dict)

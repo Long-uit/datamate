@@ -87,10 +87,13 @@ class DualLogger:
 
 
 # Nhập các thành phần cốt lõi của package datamate
+from datamate.grounding.temporal import filter_future_data
+from datamate.execution.helpers import clean_num, clean_date
 from datamate.llm.client import LLMClient
 from datamate.llm.prompt_builder import build_prompt, load_rulebook, resolve_temporal_context
 from datamate.llm.feasibility import check_feasibility, extract_shop_metadata
 from datamate.ingestion.loader import load_business, to_sqlite
+from datamate.ingestion.schema_profiler import profile_business_schema
 from datamate.ingestion.cleaner import clean_business
 from datamate.grounding.entity_linker import extract_candidates_from_business, link_entities, expand_abbreviations
 from datamate.execution.sandbox import run_code, RunResult
@@ -122,35 +125,20 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
         bd = clean_business(raw_bd)
         con = to_sqlite(bd)
         data_dict: Dict[str, pd.DataFrame] = {}
-        schema_lines: List[str] = []
-
         for ti in bd.tables:
             t_base = Path(ti.fixed_file_name).stem
             t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
 
-            # Đăng ký nhiều alias để code của LLM dễ dàng truy cập
             data_dict[t_name] = ti.df
             if t_base not in data_dict:
                 data_dict[t_base] = ti.df
             if ti.table_id:
                 data_dict[ti.table_id] = ti.df
+            if ti.sheet_name and ti.sheet_name not in data_dict:
+                data_dict[ti.sheet_name] = ti.df
 
-            # Trích xuất tối đa 25 cột kèm giá trị mẫu đại diện
-            cols_preview = []
-            for c in ti.columns[:25]:
-                sample_str = ""
-                non_null = ti.df[c].dropna()
-                if not non_null.empty:
-                    val = str(non_null.iloc[0]).strip().replace("\n", " ")
-                    if len(val) > 20:
-                        val = val[:17] + "..."
-                    sample_str = f" (vd: '{val}')"
-                cols_preview.append(f"{c}{sample_str}")
-
-            extra_cols_note = f", ... và {len(ti.columns) - 25} cột khác" if len(ti.columns) > 25 else ""
-            schema_lines.append(f"- Bảng '{t_name}' ({ti.n_rows} dòng):\n  Cột ({len(ti.columns)}): [{', '.join(cols_preview)}{extra_cols_note}]")
-
-        schema_summary = "\n".join(schema_lines)
+        # Sử dụng Rich Schema Profiler hiển thị kiểu dữ liệu, min-max date và giá trị mẫu
+        schema_summary = profile_business_schema(bd, max_cols=25)
         shop_meta = extract_shop_metadata(business_obj=bd, data_dict=data_dict)
         candidates = extract_candidates_from_business(bd)
         return data_dict, con, schema_summary, bd, shop_meta, candidates
@@ -218,6 +206,9 @@ if 'FINAL_RESULT' not in globals() and 'solution' in globals() and callable(solu
         "con": con,
         "business": business_obj,
         "apply_tie_breaker": apply_tie_breaker,
+        "filter_future_data": filter_future_data,
+        "clean_num": clean_num,
+        "clean_date": clean_date,
     }
 
     try:
@@ -343,6 +334,9 @@ def main():
     if not args.dry_run:
         print(f"[Khởi tạo] Đang nạp mô hình {args.model_id} vào GPU...")
         llm = LLMClient(model_id=args.model_id)
+        if not llm.is_loaded:
+            print("[Lỗi nghiêm trọng] Không thể nạp mô hình vào GPU. Vui lòng kiểm tra lại VRAM hoặc cấu hình.")
+            sys.exit(1)
         stats_vram = llm.get_gpu_memory_stats()
         print(f"[VRAM] Bộ nhớ GPU đã sử dụng: {stats_vram.get('allocated_gb', 0):.2f} GB")
 
@@ -436,12 +430,15 @@ def main():
                 use_sandbox=not args.in_process,
             )
 
-            # 5.1. Kiểm tra tính hợp lý hậu thực thi (Sanity Check Lượt 1)
+            # 5.1. Kiểm tra tính hợp lý hậu thực thi (Sanity Check Lượt 1) & Feasibility Authority
             sanity_err = None
             if not exec_err:
                 sub_ans_cand = normalize_output(raw_result, question=question_text, code_text=code_text)
                 is_sane, sanity_reason = check_result_sanity(sub_ans_cand, question=question_text, code_text=code_text)
-                if not is_sane:
+                if raw_result == "unanswerable" or sub_ans_cand.get("type") == "unanswerable":
+                    sanity_err = "Cơ sở dữ liệu của cửa hàng CÓ ĐẦY ĐỦ số liệu để trả lời câu hỏi này (KHÔNG ĐƯỢC trả về 'unanswerable'!). Hãy kiểm tra lại danh sách bảng và cột để tính toán và trả về kết quả số/danh sách cụ thể."
+                    print("  ⚠️ [Feasibility Authority] Phát hiện code trả về unanswerable trên câu hỏi khả thi -> Kích hoạt Self-Correction...")
+                elif not is_sane:
                     sanity_err = sanity_reason
                     print(f"  ⚠️ [Sanity Check] Lượt 1 vi phạm ({sanity_reason}) -> Kích hoạt Self-Correction...")
 
@@ -479,7 +476,10 @@ def main():
                     # Kiểm tra lại Sanity Check ở Lượt 2
                     sub_ans_cand2 = normalize_output(raw_result, question=question_text, code_text=code_text)
                     is_sane2, sanity_reason2 = check_result_sanity(sub_ans_cand2, question=question_text, code_text=code_text)
-                    if is_sane2:
+                    if raw_result == "unanswerable" or sub_ans_cand2.get("type") == "unanswerable":
+                        sanity_err = "Sau khi thử lại, mô hình vẫn trả về 'unanswerable' trên câu hỏi khả thi."
+                        print("  🛡️ [Feasibility Authority] Lượt 2 vẫn trả về unanswerable -> Ép về 'abstain' an toàn (0 điểm)")
+                    elif is_sane2:
                         print("  ✓ [Self-Correction] Khắc phục lỗi và thỏa mãn Sanity Check ở lượt 2!")
                     else:
                         sanity_err = sanity_reason2
@@ -498,21 +498,25 @@ def main():
                 print(f"  🛡️ Kết quả vô lý ({sanity_err}) -> Abstain an toàn (0 điểm)")
             else:
                 sub_ans = normalize_output(raw_result, question=question_text, code_text=code_text)
-                confidence = compute_confidence_score(
-                    sub_ans=sub_ans,
-                    exec_error=exec_err,
-                    exec_ms=exec_ms,
-                    retry_count=retry_count,
-                    sanity_passed=(sanity_err is None),
-                    sanity_error=sanity_err,
-                    code_text=code_text,
-                    has_feasibility_pass=True,
-                )
-                sub_ans, is_abstained = apply_abstention_gate(sub_ans, confidence=confidence, threshold=args.tau_star)
-                if is_abstained:
-                    print(f"  🛡️ [Abstention Gate] Độ tin cậy thấp C={confidence:.2f} < tau*={args.tau_star:.2f} -> Chủ động Abstain (0 điểm)")
+                if sub_ans.get("type") == "unanswerable":
+                    print(f"  🛡️ [Feasibility Authority Guard] Chặn false unanswerable -> Ép về 'abstain' để tránh bị phạt -1 điểm!")
+                    sub_ans = make_abstain("False unanswerable override: Feasibility passed")
                 else:
-                    print(f"  ✓ Sinh mã: {gen_sec}s | Chạy: {exec_ms}ms | Tin cậy C={confidence:.2f} | Kết quả: {sub_ans.get('answer')} (Type: {sub_ans.get('type')})")
+                    confidence = compute_confidence_score(
+                        sub_ans=sub_ans,
+                        exec_error=exec_err,
+                        exec_ms=exec_ms,
+                        retry_count=retry_count,
+                        sanity_passed=(sanity_err is None),
+                        sanity_error=sanity_err,
+                        code_text=code_text,
+                        has_feasibility_pass=True,
+                    )
+                    sub_ans, is_abstained = apply_abstention_gate(sub_ans, confidence=confidence, threshold=args.tau_star)
+                    if is_abstained:
+                        print(f"  🛡️ [Abstention Gate] Độ tin cậy thấp C={confidence:.2f} < tau*={args.tau_star:.2f} -> Chủ động Abstain (0 điểm)")
+                    else:
+                        print(f"  ✓ Sinh mã: {gen_sec}s | Chạy: {exec_ms}ms | Tin cậy C={confidence:.2f} | Kết quả: {sub_ans.get('answer')} (Type: {sub_ans.get('type')})")
 
             # 7. Ghi ngay ra file submission.jsonl và logs/<qid>.json
             writer.write(

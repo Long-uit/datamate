@@ -16,6 +16,7 @@ Tác giả: Long (AI Architect & Model Lead)
 import os
 import sys
 import re
+from datamate.llm.few_shot_retriever import retrieve_dynamic_few_shot
 import calendar
 from datetime import datetime, date, timedelta
 from pathlib import Path
@@ -166,22 +167,7 @@ def resolve_temporal_context(
                     }
         except Exception:
             pass
-    """
-    Phân tích câu hỏi và as_of_date để xác định khoảng thời gian cụ thể (ngày dương ISO).
     
-    Args:
-        question (str): Câu hỏi của người dùng.
-        as_of_date_str (str): Ngày tham chiếu mốc (YYYY-MM-DD).
-        calendar_path (str, optional): Đường dẫn tệp calendar.csv nếu có.
-        
-    Returns:
-        Dict[str, Any]: Chứa các trường:
-            - as_of_date: ngày tham chiếu (str)
-            - start_date: ngày bắt đầu (str hoặc None)
-            - end_date: ngày kết thúc (str hoặc None)
-            - description: mô tả diễn giải ngắn cho prompt
-            - code_hint: gợi ý câu lệnh lọc dữ liệu trong pandas
-    """
     q_lower = question.lower()
     try:
         as_of = datetime.strptime(as_of_date_str, "%Y-%m-%d").date()
@@ -390,7 +376,16 @@ def classify_intent(question: str) -> str:
     if any(k in q_lower for k in ranking_keywords):
         return "ranking_topk"
 
-    # 6. Mặc định là tính tổng / đếm (aggregation)
+    # 6. Nhóm nhập hàng / phiếu nhập / chi phí mua hàng từ nhà cung cấp
+    import_keywords = [
+        "nhập hàng", "phiếu nhập", "tiền nhập", "nhap hang", "phieu nhap",
+        "phiếu nhập hàng", "phieu nhap hang", "tiền mua hàng", "tien mua hang",
+        "giá trị các phiếu nhập", "tong tien hang nhap"
+    ]
+    if any(k in q_lower for k in import_keywords):
+        return "purchase_import"
+
+    # 7. Mặc định là tính tổng / đếm (aggregation)
     return "aggregation"
 
 
@@ -399,6 +394,39 @@ def classify_intent(question: str) -> str:
 # ==============================================================================
 
 FEW_SHOT_LIBRARY: Dict[str, str] = {
+    "purchase_import": """--- VÍ DỤ MẪU: TÍNH TỔNG TIỀN / GIÁ TRỊ PHIẾU NHẬP HÀNG ---
+Câu hỏi: "tháng này tổng giá trị các phiếu nhập hàng là bao nhiu" (as_of_date = "2026-09-07")
+```python
+def solution(data):
+    # 1. Tìm bảng nhập hàng (ưu tiên bảng tổng hợp phiếu nhập, tránh bảng chi tiết)
+    df_nhap = None
+    for name, df in data.items():
+        if 'nhap' in name.lower() and not any(k in name.lower() for k in ['chitiet', 'chi_tiet', 'detail', 'lohang']):
+            df_nhap = df.copy()
+            break
+    if df_nhap is None:
+        df_nhap = next((df.copy() for name, df in data.items() if 'nhap' in name.lower()), None)
+    if df_nhap is None:
+        return "unanswerable"
+
+    # 2. Tìm cột ngày và cột tiền
+    d_c = next((c for c in df_nhap.columns if any(k in str(c).lower() for k in ['thời gian', 'ngày', 'date', 'ngaylap'])), None)
+    a_c = next((c for c in df_nhap.columns if any(k in str(c).lower() for k in ['cần trả ncc', 'tổng tiền', 'tong tien', 'thành tiền', 'giá trị']) and 'trả hàng' not in str(c).lower()), None)
+    if not d_c or not a_c:
+        return "unanswerable"
+
+    # 3. Lọc đúng kỳ tháng này: năm 2026, tháng 9, từ ngày 1 đến hết as_of_date
+    df_nhap['clean_date'] = clean_date(df_nhap[d_c])
+    df_nhap = df_nhap[(df_nhap['clean_date'].dt.year == 2026) & (df_nhap['clean_date'].dt.month == 9) & (df_nhap['clean_date'].dt.date <= pd.to_datetime("2026-09-07").date())]
+
+    # 4. Loại bỏ phiếu hủy nếu có trạng thái
+    st_c = next((c for c in df_nhap.columns if any(k in str(c).lower() for k in ['trạng thái', 'status'])), None)
+    if st_c:
+        df_nhap = df_nhap[~df_nhap[st_c].astype(str).str.lower().str.contains('hủy|huỷ|cancel')]
+
+    return int(round(clean_num(df_nhap[a_c]).sum()))
+```""",
+
     "aggregation": """--- VÍ DỤ MẪU: TÍNH TỔNG DOANH THU / SỐ TIỀN ---
 Câu hỏi: "Tổng doanh thu trong tháng này là bao nhiêu?" (as_of_date = "2026-05-25")
 ```python
@@ -511,57 +539,46 @@ def solution(data):
     return str(grouped.iloc[0][prod_col])
 ```""",
 
-    "multitable_join": """--- VÍ DỤ MẪU: TRA CỨU ĐA BẢNG (JOIN) ---
-Câu hỏi: "Thuốc có hoạt chất Paracetamol tháng này bán được bao nhiêu tiền?" (as_of_date = "2026-05-25")
+    "multitable_join": """--- VÍ DỤ MẪU: LIÊN KẾT ĐA BẢNG (JOIN SẢN PHẨM / HOẠT CHẤT / ĐƠN HÀNG) ---
+Câu hỏi: "Thuốc có hoạt chất Natri clorid tháng này bán được bao nhiêu tiền?" (as_of_date = "2026-05-25")
 ```python
 def solution(data):
     # 1. Tìm bảng danh mục thuốc chứa hoạt chất
-    df_med = None
-    act_col = None
-    code_med_col = None
-    for name, df in data.items():
-        cols = df.columns.tolist()
-        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['hoạt chất', 'hoatchat', 'thanhphanchinh'])), None)
-        c_c = next((c for c in cols if any(k in str(c).lower() for k in ['mã thuốc', 'mã hàng', 'ma_thuoc', 'mã sku', 'mahanghoa'])), None)
-        if a_c and c_c:
-            df_med = df.copy()
-            act_col = a_c
-            code_med_col = c_c
-            break
-    if df_med is None:
-        return "unanswerable"
+    df_prod = next((df.copy() for name, df in data.items() if any('hoạt chất' in str(c).lower() for c in df.columns)), None)
+    if df_prod is None: return "unanswerable"
+    act_c = next((c for c in df_prod.columns if 'hoạt chất' in str(c).lower()), None)
+    code_c = next((c for c in df_prod.columns if any(k in str(c).lower() for k in ['mã hàng', 'ma hang', 'mã hh', 'ma hh', 'mã thuốc', 'mã sp', 'sku'])), None)
+    if not act_c or not code_c: return "unanswerable"
+    matched = df_prod[df_prod[act_c].astype(str).str.lower().str.contains('natri clorid', na=False)]
+    if matched.empty: return 0
+    target_codes = set(matched[code_c].dropna().astype(str))
 
-    matched_meds = df_med[df_med[act_col].astype(str).str.lower().str.contains('paracetamol')]
-    if matched_meds.empty:
-        return "unanswerable"
-    target_codes = set(matched_meds[code_med_col].astype(str))
+    # 2. Tìm bảng đơn hàng lọc ngày tháng 5/2026 và bỏ đơn hủy
+    df_ord = next((df.copy() for name, df in data.items() if any(k in str(c).lower() for c in df.columns for k in ['thời gian', 'ngày', 'ngay ban']) and not any(k in name.lower() for k in ['nhap', 'chitiet'])), None)
+    valid_orders = None
+    if df_ord is not None:
+        d_c = next((c for c in df_ord.columns if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian', 'ngay ban'])), None)
+        if d_c:
+            df_ord['clean_date'] = clean_date(df_ord[d_c])
+            df_ord = df_ord[(df_ord['clean_date'].dt.year == 2026) & (df_ord['clean_date'].dt.month == 5) & (df_ord['clean_date'].dt.date <= pd.to_datetime("2026-05-25").date())]
+            st_c = next((c for c in df_ord.columns if any(k in str(c).lower() for k in ['trạng thái', 'status'])), None)
+            if st_c: df_ord = df_ord[~df_ord[st_c].astype(str).str.lower().str.contains('hủy|huỷ|trả')]
+            oid_c = next((c for c in df_ord.columns if any(k in str(c).lower() for k in ['mã giao dịch', 'mã đơn', 'order id'])), None)
+            if oid_c: valid_orders = set(df_ord[oid_c].dropna().astype(str))
 
-    # 2. Tìm bảng bán hàng chi tiết
-    df_sales = None
-    d_col = None
-    amt_col = None
-    sales_code_col = None
-    for name, df in data.items():
-        cols = df.columns.tolist()
-        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'ngaylap'])), None)
-        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền', 'trigia']) and 'thuế' not in str(c).lower()), None)
-        c_c = next((c for c in cols if any(k in str(c).lower() for k in ['mã thuốc', 'mã hàng', 'ma_thuoc', 'mã sku', 'mahanghoa'])), None)
-        if d_c and a_c and c_c:
-            df_sales = df.copy()
-            d_col = d_c
-            amt_col = a_c
-            sales_code_col = c_c
-            break
-    if df_sales is None:
-        return "unanswerable"
-
-    # Lọc thời gian và mã thuốc
-    df_sales[d_col] = pd.to_datetime(df_sales[d_col], dayfirst=True, errors='coerce')
-    df_sales = df_sales[(df_sales[d_col] >= pd.Timestamp("2026-05-01")) & (df_sales[d_col] <= pd.Timestamp("2026-05-25"))]
-    df_sales = df_sales[df_sales[sales_code_col].astype(str).isin(target_codes)]
-
-    total = pd.to_numeric(df_sales[amt_col].astype(str).str.replace(',', '').str.replace(' ', ''), errors='coerce').fillna(0).sum()
-    return int(round(total))
+    # 3. Tìm bảng chi tiết bán hàng tính tổng tiền cho target_codes (tìm cột cả có dấu và không dấu: 'thanh tien', 'ma hang')
+    df_dt = next((df.copy() for name, df in data.items() if any(k in str(c).lower() for k in df.columns for k in ['thành tiền', 'thanh tien', 'tổng tiền', 'tong tien']) and not any(k in name.lower() for k in ['nhap', 'thuoc'])), None)
+    if df_dt is None: return "unanswerable"
+    amt_c = next((c for c in df_dt.columns if any(k in str(c).lower() for k in ['thành tiền', 'thanh tien', 'tổng tiền', 'tong tien'])), None)
+    dt_code_c = next((c for c in df_dt.columns if any(k in str(c).lower() for k in ['mã hàng', 'ma hang', 'mã hh', 'ma hh', 'mã thuốc', 'mã sp'])), None)
+    dt_oid_c = next((c for c in df_dt.columns if any(k in str(c).lower() for k in ['mã giao dịch', 'mã đơn', 'order id'])), None)
+    if not amt_c or not dt_code_c: return "unanswerable"
+    
+    df_dt = df_dt[df_dt[dt_code_c].astype(str).isin(target_codes)]
+    if valid_orders is not None and dt_oid_c:
+        df_dt = df_dt[df_dt[dt_oid_c].astype(str).isin(valid_orders)]
+    
+    return int(round(clean_num(df_dt[amt_c]).sum()))
 ```""",
 
     "inventory_unit_conversion": r"""--- VÍ DỤ MẪU: TỒN KHO & QUY ĐỔI ĐƠN VỊ (HỘP CHẴN, VIÊN LẺ) ---
@@ -696,6 +713,92 @@ def solution(data):
 }
 
 
+def extract_relevant_rulebook_clauses(rulebook_content: str, question: str, max_chars: int = 2500) -> str:
+    """
+    Trích xuất thông minh các điều khoản Rulebook liên quan trực tiếp đến câu hỏi.
+    Thay vì cắt cụt text cứng nhắc ở ký tự 2500 làm mất ngữ cảnh, hàm phân tách
+    rulebook thành các điều/mục, chấm điểm mức độ phù hợp và chọn các điều khoản trọng tâm.
+    """
+    if not rulebook_content or not rulebook_content.strip():
+        return ""
+
+    rb_text = rulebook_content.strip()
+    if len(rb_text) <= max_chars:
+        return rb_text
+
+    # Tách các điều khoản theo tiêu đề markdown (# hoặc ## hoặc Điều X)
+    raw_sections = re.split(r"(?=(?:^|\n)(?:#{1,3}\s+|Điều\s+\d+|Mục\s+\d+))", rb_text)
+    sections = [s.strip() for s in raw_sections if s.strip()]
+
+    if not sections or len(sections) == 1:
+        truncated = rb_text[:max_chars]
+        last_nl = truncated.rfind("\n")
+        if last_nl > 1500:
+            truncated = truncated[:last_nl]
+        return truncated + "\n... [Đã rút gọn để tối ưu ngữ cảnh]"
+
+    q_lower = question.lower()
+
+    # Xác định các chủ đề trọng tâm từ câu hỏi
+    wants_inventory = any(k in q_lower for k in ["tồn kho", "còn tồn", "hộp", "viên", "chai", "quy đổi", "divmod"])
+    wants_customer = any(k in q_lower for k in ["khách hàng", "khách", "khach hang", "mua nhiều nhất"])
+    wants_time_compare = any(k in q_lower for k in ["so với", "tháng trước", "tăng trưởng", "tăng hay giảm", "cùng kỳ", "trước tết"])
+    wants_pharma = any(k in q_lower for k in ["hoạt chất", "thuốc", "kê đơn", "chỉ định", "dược"])
+    wants_ranking = any(k in q_lower for k in ["nhất", "top", "xếp hạng", "cao nhất", "thấp nhất", "nhiều nhất"])
+    wants_cancellation = any(k in q_lower for k in ["hủy", "huỷ", "trả hàng", "tỉ lệ hủy", "tỷ lệ huỷ"])
+
+    scored_sections: List[Tuple[float, str]] = []
+    for sec in sections:
+        sec_low = sec.lower()
+        score = 0.0
+
+        # Điều khoản cốt lõi (luôn có điểm nền để ưu tiên)
+        if any(k in sec_low for k in ["điều 1", "điều 4", "điều 6", "điều 9", "doanh thu", "đồng hạng"]):
+            score += 2.0
+
+        if wants_inventory and any(k in sec_low for k in ["điều 5", "tồn kho", "quy đổi", "hộp chẵn"]):
+            score += 5.0
+        if wants_customer and any(k in sec_low for k in ["điều 3", "khách lẻ", "khách hàng"]):
+            score += 5.0
+        if wants_time_compare and any(k in sec_low for k in ["điều 2", "kỳ đối chiếu", "so sánh"]):
+            score += 5.0
+        if wants_pharma and any(k in sec_low for k in ["điều 7", "hoạt chất", "kê đơn"]):
+            score += 5.0
+        if wants_ranking and any(k in sec_low for k in ["điều 9", "đồng hạng", "tie-breaker"]):
+            score += 4.0
+        if wants_cancellation and any(k in sec_low for k in ["hủy", "huỷ", "trả hàng"]):
+            score += 4.0
+
+        # Tính thêm overlap từ khóa
+        q_words = set(re.findall(r"\w+", q_lower))
+        sec_words = set(re.findall(r"\w+", sec_low))
+        overlap = len(q_words & sec_words)
+        score += overlap * 0.1
+
+        scored_sections.append((score, sec))
+
+    # Sắp xếp các mục theo điểm số giảm dần và gom lại cho tới max_chars
+    scored_sections.sort(key=lambda x: x[0], reverse=True)
+    selected: List[str] = []
+    total_len = 0
+    for score, sec in scored_sections:
+        if total_len + len(sec) + 2 <= max_chars:
+            selected.append(sec)
+            total_len += len(sec) + 2
+        else:
+            remain = max_chars - total_len
+            if remain > 200:
+                selected.append(sec[:remain].rsplit("\n", 1)[0] + "\n...")
+            break
+
+    selected_set = set(selected)
+    ordered_selected = [s for s in sections if s in selected_set or any(s.startswith(p[:100]) for p in selected)]
+    if not ordered_selected:
+        ordered_selected = selected
+
+    return "\n\n".join(ordered_selected)
+
+
 def select_few_shots(intent: str) -> str:
     """
     Chọn đúng 1 ví dụ phù hợp nhất với ý định của câu hỏi.
@@ -724,18 +827,30 @@ def solution(data):
 
 NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN:
 1. THAM SỐ `data`:
-   - `data` là dictionary chứa các DataFrame: `{tên_bảng: DataFrame}`.
-   - Hãy kiểm tra danh sách bảng và cột thực tế của shop trong prompt để chọn đúng bảng.
+   - `data` là dictionary chứa các DataFrame thô: `{tên_bảng: DataFrame}`.
+   - CHÚ Ý CỰC KỲ QUAN TRỌNG:
+     + Các DataFrame trong `data` là bảng dữ liệu gốc từ Excel/CSV, KHÔNG CÓ sẵn cột `'clean_date'`!
+     + TUYỆT ĐỐI KHÔNG lặp dict comprehension qua toàn bộ `data` để lọc ngày (CẤM VIẾT: `{name: df[...] for name, df in data.items()}`) vì mỗi bảng có cột hoàn toàn khác nhau (bảng sản phẩm/thuốc không có cột ngày!).
+     + CHỈ lọc ngày trên đúng DataFrame của bảng giao dịch/hóa đơn có cột ngày sau khi đã tìm được bảng đó.
+     + Để lọc theo ngày, bạn PHẢI tìm cột ngày gốc trong bảng:
+       `d_c = next((c for c in df.columns if any(k in str(c).lower() for k in ['ngày', 'date', 'ngaylap', 'thời gian'])), None)`
+       Sau đó tự tạo cột:
+       `df['clean_date'] = clean_date(df[d_c])`
+       rồi mới lọc:
+       `df[(df['clean_date'].dt.date >= pd.to_datetime(start_date).date()) & (df['clean_date'].dt.date <= pd.to_datetime(end_date).date())]`
+     + BẮT BUỘC lọc đúng cả ngày bắt đầu và ngày kết thúc của kỳ hỏi! TUYỆT ĐỐI KHÔNG chỉ lọc `<= as_of_date` mà quên mốc đầu kỳ!
+     + TUYỆT ĐỐI KHÔNG cộng dồn tiền qua nhiều bảng khác nhau trong vòng lặp! Chọn đúng 1 bảng tổng hoặc 1 bảng chi tiết rồi `break` ngay để tránh nhân đôi số tiền!
+     + TUYỆT ĐỐI KHÔNG hardcode tên cột cố định như `df['Cần trả NCC']`, `df['Ngày bán']`, `df['Thành tiền']`! LUÔN LUÔN dùng biến cột động đã tìm được: `amt_col = next(...)` rồi dùng `clean_num(df[amt_col])`.
    - Bảng bán hàng / hóa đơn: thường có cả cột ngày và cột thành tiền/giá bán (ví dụ: 'DonHang_ChiTiet', 'BanHang_HoaDon', 'SoBanHang', 'pos'...).
-   - Bảng nhập hàng: thường có chữ 'nhap' ('DonNhapHang', 'SoNhapHang'...).
+   - Bảng nhập hàng: thường có chữ 'nhap' ('DonNhapHang', 'SoNhapHang', 'DanhSachNhapHang'...).
    - Bảng sản phẩm / thuốc / danh mục: 'SanPham', 'Thuoc', 'HangHoa', 'DanhMuc'...
    - Bảng khách hàng: 'KhachHang', 'Khach'...
 
-2. XỬ LÝ CỘT VÀ KIỂU DỮ LIỆU:
-   - Cột ngày: tìm cột có chữ 'ngày', 'date', 'ngaylap', 'thời gian'. Chuyển đổi an toàn:
-     `df[date_col] = pd.to_datetime(df[date_col], dayfirst=True, errors='coerce')`
-   - Cột tiền: bỏ dấu phẩy phân cách nghìn và khoảng trắng trước khi tính tổng:
-     `pd.to_numeric(df[col].astype(str).str.replace(',', '').str.replace(' ', ''), errors='coerce').fillna(0)`
+2. XỬ LÝ CỘT VÀ TIỆN ÍCH DỰNG SẴN TRONG MÔI TRƯỜNG:
+   - CÁC HÀM TIỆN ÍCH ĐÃ CÓ SẴN Ở GLOBAL SCOPE: `clean_num`, `clean_date`, `filter_future_data`, `apply_tie_breaker`.
+   - TUYỆT ĐỐI CẤM ĐỊNH NGHĨA LẠI CÁC HÀM NÀY (CẤM VIẾT `def clean_num...` hay `def clean_date...`), việc này làm hao tốn token và gây lỗi cú pháp! Hãy gọi trực tiếp:
+     + `clean_num(df[col])`: Tự động làm sạch cột tiền/số chuẩn xác (xử lý chuẩn cả dấu chấm và phẩy của VN '1.250.000', bỏ đ/VND/triệu/k). DÙNG: `clean_num(df[col])`!
+     + `clean_date(df[col])`: Chuyển cột ngày thô về chuẩn datetime (dayfirst=True). DÙNG: `clean_date(df[col])`.
    - Không chọn nhầm cột thuế VAT khi tính doanh thu hoặc tổng tiền.
 
 3. QUY TẮC NGHIỆP VỤ BẮT BUỘC THEO RULEBOOK:
@@ -794,7 +909,7 @@ def build_prompt(
     """
     # 1. Phân loại ý định câu hỏi và chọn Few-shot động
     intent = classify_intent(question)
-    few_shot_block = select_few_shots(intent)
+    few_shot_block = retrieve_dynamic_few_shot(question=question, intent=intent, entity_matches=entity_matches)
 
     # 2. Giải mã thời gian tự động
     temporal_info = resolve_temporal_context(question, as_of_date)
@@ -826,21 +941,38 @@ def build_prompt(
             src_col = meta.get("source_col", "")
             loc = f" (ở bảng '{src_tbl}', cột '{src_col}')" if src_tbl and src_col else ""
             term_note = f" (gợi ý từ '{term}')" if term and term.lower() != val.lower() else ""
-            entity_lines.append(f"- '{val}'{loc}{term_note}")
+
+            # Trích xuất row_context (mã hàng, SKU, đơn vị tính, quy đổi, hoạt chất...) nếu có
+            row_ctx = meta.get("row_context") or {}
+            ctx_items = []
+            for k, v in row_ctx.items():
+                k_clean = str(k).strip()
+                v_clean = str(v).strip()
+                if not v_clean or v_clean.lower() in ("nan", "none", "null"):
+                    continue
+                if src_col and k_clean.lower() == src_col.lower():
+                    continue
+                if k_clean.lower() in ("tên hàng", "tên sản phẩm", "ten_hang", "tên thuốc") and v_clean.lower() == val.lower():
+                    continue
+                ctx_items.append(f"{k_clean}: {v_clean}")
+            ctx_str = f" [Thông tin dòng: {', '.join(ctx_items)}]" if ctx_items else ""
+
+            entity_lines.append(f"- '{val}'{loc}{term_note}{ctx_str}")
         if entity_lines:
             entity_block = (
                 "\nTHỰC THỂ ĐỐI SOÁT TRONG CƠ SỞ DỮ LIỆU (ENTITY LINKING):\n"
                 "Các giá trị thực tế trong dữ liệu khớp với câu hỏi của người dùng:\n"
                 + "\n".join(entity_lines)
-                + "\n-> LƯU Ý: Hãy sử dụng chính xác các giá trị chuỗi này khi lọc điều kiện trong code.\n"
+                + "\n-> LƯU Ý: Hãy sử dụng chính xác các giá trị chuỗi hoặc Mã hàng / SKU / Quy đổi tương ứng khi lọc điều kiện hoặc tính toán trong code.\n"
             )
 
     # 3. Khối Rulebook tóm tắt (nếu có)
     rulebook_block = ""
     if rulebook_content and rulebook_content.strip():
+        rb_text = extract_relevant_rulebook_clauses(rulebook_content, question, max_chars=2500)
         rulebook_block = f"""
 ==================== QUY TẮC NGHIỆP VỤ BẮT BUỘC (THEO RULEBOOK CỦA SPLIT NÀY) ====================
-{rulebook_content.strip()}
+{rb_text}
 """
 
     # 4. Khối ghi chú doanh nghiệp (nếu có)
@@ -865,7 +997,9 @@ CÂU HỎI CỦA NGƯỜI DÙNG:
 YÊU CẦU THỰC HIỆN:
 1. Quan sát kỹ danh sách bảng và cột ở trên để chọn đúng bảng và cột.
 2. Áp dụng khoảng thời gian đã được giải mã và mốc as_of_date để lọc dữ liệu.
-3. Chỉ viết duy nhất một hàm `def solution(data):` trả về kết quả, không viết giải thích bên ngoài.
+3. Tuyệt đối không lặp dict comprehension lọc ngày trên toàn bộ `data`. Tìm bảng cụ thể, tìm cột ngày gốc bằng `d_c = next(...)`, tự tạo `df['clean_date'] = clean_date(df[d_c])` và dùng biến cột động `amt_col` thay vì hardcode tên cột.
+4. Chỉ viết duy nhất một hàm `def solution(data):` trả về kết quả, không viết giải thích bên ngoài.
+5. Viết code ngắn gọn, súc tích, không viết comment dài dòng để tránh bị cắt cụt token.
 ```python
 """
 

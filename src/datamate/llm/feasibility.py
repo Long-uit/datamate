@@ -40,6 +40,13 @@ try:
 except ImportError:
     pd = None
 
+try:
+    from datamate.grounding.temporal import resolve_temporal
+    from datamate.grounding.lunar_calendar import get_calendar
+except ImportError:
+    resolve_temporal = None
+    get_calendar = None
+
 
 def _nfc(text: str) -> str:
     if unicodedata is not None and text:
@@ -399,6 +406,18 @@ def extract_query_date_range(question: str, as_of_date_str: str) -> Tuple[Option
     Trích xuất khoảng thời gian chính [start_date, end_date] mà câu hỏi nhắm tới.
     Sử dụng heuristic và biểu thức chính quy tiếng Việt.
     """
+    if resolve_temporal is not None and as_of_date_str:
+        try:
+            cal = get_calendar() if get_calendar is not None else None
+            wins = resolve_temporal(question, as_of_date=as_of_date_str, calendar=cal)
+            if wins:
+                comp_win = next((w for w in wins if any(k in w.label for k in ["compared", "pre_tet", "last_month_compared"])), None)
+                primary_win = next((w for w in wins if w != comp_win), wins[0])
+                if primary_win and primary_win.start_date and primary_win.end_date:
+                    return primary_win.start_date, primary_win.end_date
+        except Exception:
+            pass
+
     q_low = _nfc(question).lower()
 
     # 1. Câu hỏi hỏi theo tháng cụ thể: "tháng M/YYYY" hoặc "tháng M năm YYYY" (kể cả viết tắt thangs, thang)
@@ -454,13 +473,24 @@ def extract_query_date_range(question: str, as_of_date_str: str) -> Tuple[Option
     return None, None
 
 
-def _extract_comparison_date_range(question: str, q_start: Optional[str], q_end: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+def _extract_comparison_date_range(question: str, q_start: Optional[str], q_end: Optional[str], as_of_date_str: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
     """
     Nếu câu hỏi yêu cầu so sánh kỳ chính (tháng M/YYYY) với 'tháng liền trước' / 'tháng trước đó',
     trả về khoảng ngày của tháng liền trước (M-1) để kiểm tra Điều 7 Rulebook.
     """
     if not q_start or not q_end:
         return None, None
+    if resolve_temporal is not None and as_of_date_str:
+        try:
+            cal = get_calendar() if get_calendar is not None else None
+            wins = resolve_temporal(question, as_of_date=as_of_date_str, calendar=cal)
+            if wins:
+                comp_win = next((w for w in wins if any(k in w.label for k in ["compared", "pre_tet", "last_month_compared"])), None)
+                if comp_win and comp_win.start_date and comp_win.end_date:
+                    return comp_win.start_date, comp_win.end_date
+        except Exception:
+            pass
+
     q_low = _nfc(question).lower()
     has_prev_month_cmp = bool(
         re.search(r"so\s*(?:với|vs|voi)\s*th(?:áng|ang|angs)\s*(?:li(?:ền|en)\s*)?(?:trước|truoc|trc)", q_low)
@@ -526,7 +556,7 @@ def check_feasibility(
                 return False, f"Kỳ hỏi ({q_start} đến {q_end}) bắt đầu sau mốc dữ liệu muộn nhất của shop ({shop_max}) [Điều 7 Rulebook]"
 
             # Kiểm tra thêm kỳ đối chiếu bắt buộc (ví dụ: 'so với tháng liền trước')
-            cmp_start, cmp_end = _extract_comparison_date_range(question, q_start, q_end)
+            cmp_start, cmp_end = _extract_comparison_date_range(question, q_start, q_end, as_of_date)
             if cmp_start and cmp_end:
                 if cmp_end < shop_min:
                     return False, f"Kỳ so sánh ({cmp_start} đến {cmp_end}) kết thúc trước mốc dữ liệu sớm nhất của shop ({shop_min}) [Điều 7 Rulebook]"

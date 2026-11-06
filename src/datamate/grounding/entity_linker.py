@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import difflib
 import re
+from pathlib import Path
 import unicodedata
 from typing import Optional, TYPE_CHECKING, Any
 
@@ -48,23 +49,61 @@ VIETNAMESE_ABBREVIATIONS: dict[str, str] = {
     "bnhiu": "bao nhiêu",
 }
 
-# Các cột tiềm năng chứa thực thể
-PRODUCT_COL_KEYWORDS = [
-    r"s[aả]n\s*ph[aẩ]m",
-    r"t[eê]n\s*h[aà]ng",
-    r"t[eê]n\s*m[aặ]t\s*h[aà]ng",
-    r"m[aặ]t\s*h[aà]ng",
-    r"sku",
-    r"m[aã]\s*h[aà]ng",
-    r"m[aã]\s*sp",
+# Các cột tiềm năng chứa thực thể (Mở rộng toàn diện các trường nghiệp vụ)
+ENTITY_COL_MAP = [
+    ("product", [
+        r"s[aả]n\s*ph[aẩ]m",
+        r"t[eê]n\s*h[aà]ng",
+        r"t[eê]n\s*m[aặ]t\s*h[aà]ng",
+        r"m[aặ]t\s*h[aà]ng",
+        r"thu[oố]c",
+        r"sku",
+        r"m[aã]\s*h[aà]ng",
+        r"m[aã]\s*sp",
+    ]),
+    ("active_ingredient", [
+        r"ho[aạ]t\s*ch[aấ]t",
+        r"th[aà]nh\s*ph[aầ]n",
+        r"active",
+        r"hoatchat",
+    ]),
+    ("category", [
+        r"nh[oó]m\s*h[aà]ng",
+        r"danh\s*m[uụ]c",
+        r"lo[aạ]i\s*h[aà]ng",
+        r"ng[aà]nh\s*h[aà]ng",
+        r"nh[oó]m\s*sp",
+        r"category",
+    ]),
+    ("customer", [
+        r"kh[aá]ch\s*h[aà]ng",
+        r"t[eê]n\s*kh[aá]ch",
+        r"m[aã]\s*kh",
+        r"m[aã]\s*kh[aá]ch",
+    ]),
+    ("staff", [
+        r"nh[aâ]n\s*vi[eê]n",
+        r"ng[uư][oờ]i\s*b[aá]n",
+        r"thu\s*ng[aâ]n",
+        r"d[uư][oợ]c\s*s[iĩ]",
+        r"staff",
+    ]),
+    ("supplier", [
+        r"nh[aà]\s*cung\s*c[aấ]p",
+        r"ncc",
+        r"nh[aà]\s*ph[aâ]n\s*ph[oố]i",
+        r"supplier",
+    ]),
+    ("channel", [
+        r"k[eê]nh\s*b[aá]n",
+        r"ngu[oồ]n\s*đ[oơ]n",
+        r"k[eê]nh",
+        r"channel",
+    ]),
 ]
 
-CUSTOMER_COL_KEYWORDS = [
-    r"kh[aá]ch\s*h[aà]ng",
-    r"t[eê]n\s*kh[aá]ch",
-    r"m[aã]\s*kh",
-    r"m[aã]\s*kh[aá]ch",
-]
+PRODUCT_COL_KEYWORDS = ENTITY_COL_MAP[0][1]
+CUSTOMER_COL_KEYWORDS = ENTITY_COL_MAP[3][1]
 
 
 def remove_accents(input_str: str) -> str:
@@ -153,21 +192,29 @@ def extract_candidates_from_business(business: BusinessData) -> list[Candidate]:
         for col in ti.columns:
             norm_col = normalize_entity_text(col)
 
-            # Xác định loại thực thể
+            # Xác định loại thực thể qua ENTITY_COL_MAP mở rộng
             entity_type = None
-            for pattern in PRODUCT_COL_KEYWORDS:
-                if re.search(pattern, norm_col):
-                    entity_type = "product"
+            for e_type, patterns in ENTITY_COL_MAP:
+                if any(re.search(pat, norm_col) for pat in patterns):
+                    entity_type = e_type
                     break
 
-            if not entity_type:
-                for pattern in CUSTOMER_COL_KEYWORDS:
-                    if re.search(pattern, norm_col):
-                        entity_type = "customer"
-                        break
-
             if entity_type:
+                tbl_label = Path(ti.fixed_file_name).stem if hasattr(ti, "fixed_file_name") and ti.fixed_file_name else ti.table_id
                 unique_vals = ti.df[col].dropna().unique()
+                
+                # Trích xuất các cột thông tin phụ trợ quan trọng (Mã, ĐVT, Quy đổi, Hoạt chất...)
+                is_catalog_size = len(ti.df) <= 1000
+                key_cols = [
+                    c for c in ti.columns if c != col and any(
+                        k in str(c).lower() for k in [
+                            "mã", "code", "sku", "id", "quy cách", "đơn vị", "dvt", "đvt", 
+                            "quy đổi", "quydoi", "hoạt chất", "hoatchat", "thành phần", 
+                            "nhóm", "loại", "giá", "danh mục"
+                        ]
+                    )
+                ]
+
                 for val in unique_vals:
                     val_str = str(val).strip()
                     if not val_str or len(val_str) < 2:
@@ -175,12 +222,25 @@ def extract_candidates_from_business(business: BusinessData) -> list[Candidate]:
                     key = (entity_type, val_str)
                     if key not in seen:
                         seen.add(key)
+                        row_ctx = {}
+                        if is_catalog_size and key_cols:
+                            matched_rows = ti.df[ti.df[col].astype(str).str.strip() == val_str]
+                            if not matched_rows.empty:
+                                first_row = matched_rows.iloc[0]
+                                for kc in key_cols[:5]:
+                                    v_kc = first_row.get(kc)
+                                    if v_kc is not None and not pd.isna(v_kc):
+                                        s_vkc = str(v_kc).strip()
+                                        if s_vkc and s_vkc.lower() not in ("nan", "none", "null", ""):
+                                            row_ctx[kc] = s_vkc
+
                         candidates.append(Candidate(
                             value=val_str,
                             norm_value=normalize_entity_text(val_str),
                             entity_type=entity_type,
-                            source_table=ti.table_id,
+                            source_table=tbl_label,
                             source_col=col,
+                            row_context=row_ctx,
                         ))
 
     return candidates
@@ -254,6 +314,7 @@ def link_entities(
                 metadata={
                     "source_table": cand.source_table,
                     "source_col": cand.source_col,
+                    "row_context": getattr(cand, "row_context", {}),
                 },
             ))
 
