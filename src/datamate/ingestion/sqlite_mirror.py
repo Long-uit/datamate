@@ -118,6 +118,16 @@ def to_sqlite(business: BusinessData, clean: bool = False) -> sqlite3.Connection
         # Đánh index tự động
         create_indexes(con, ti.table_id, ti.columns)
 
+        # Tạo View theo tên bảng trực quan (t_base, t_name) để LLM có thể query trực tiếp bằng SQL
+        t_base = Path(ti.fixed_file_name).stem
+        t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
+        for alias in set([t_base, t_name]):
+            if alias and alias != ti.table_id:
+                try:
+                    con.execute(f'CREATE VIEW IF NOT EXISTS "{alias}" AS SELECT * FROM "{ti.table_id}"')
+                except Exception:
+                    pass
+
         # Lưu thông tin bảng vào _table_map
         con.execute(
             "INSERT INTO _table_map VALUES (?, ?, ?, ?, ?)",

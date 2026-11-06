@@ -16,6 +16,10 @@ grounding:
   entity_linking_threshold: 0.6
   max_entity_candidates: 10
 
+output:
+  tau_star: 0.50
+  default_timeout: 30
+
 paths:
   calendar_csv: "competition_data/public_test/calendar.csv"
   rulebook_md: "competition_data/public_test/rulebook.md"

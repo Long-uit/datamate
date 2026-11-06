@@ -90,6 +90,7 @@ def main():
     from datamate.ingestion.cleaner import clean_business
     from datamate.ingestion.sqlite_mirror import get_sqlite_mirror
     from datamate.output.normalizer import apply_tie_breaker
+    from datamate.grounding.temporal import filter_future_data
 
     # Đọc mã nguồn cần thực thi
     code_str = code_file.read_text(encoding="utf-8")
@@ -120,6 +121,7 @@ def main():
         "pd": pd,
         "np": np,
         "apply_tie_breaker": apply_tie_breaker,
+        "filter_future_data": filter_future_data,
     }
 
     # Bắt stdout của code người dùng

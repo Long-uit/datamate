@@ -40,6 +40,13 @@ class GroundingConfig:
 
 
 @dataclass
+@dataclass
+class OutputConfig:
+    tau_star: float = 0.50
+    default_timeout: int = 30
+
+
+@dataclass
 class PathsConfig:
     calendar_csv: str = "competition_data/public_test/calendar.csv"
     rulebook_md: str = "competition_data/public_test/rulebook.md"
@@ -53,6 +60,7 @@ class AppConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     grounding: GroundingConfig = field(default_factory=GroundingConfig)
+    output: OutputConfig = field(default_factory=OutputConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
 
 
@@ -86,6 +94,7 @@ def load_config(config_path: Optional[str | Path] = None) -> AppConfig:
     m_data = raw_dict.get("model", {})
     e_data = raw_dict.get("execution", {})
     g_data = raw_dict.get("grounding", {})
+    o_data = raw_dict.get("output", {})
     p_data = raw_dict.get("paths", {})
 
     cfg = AppConfig(
@@ -104,6 +113,10 @@ def load_config(config_path: Optional[str | Path] = None) -> AppConfig:
         grounding=GroundingConfig(
             entity_linking_threshold=float(g_data.get("entity_linking_threshold", 0.6)),
             max_entity_candidates=int(g_data.get("max_entity_candidates", 10)),
+        ),
+        output=OutputConfig(
+            tau_star=float(o_data.get("tau_star", 0.50)),
+            default_timeout=int(o_data.get("default_timeout", 30)),
         ),
         paths=PathsConfig(
             calendar_csv=p_data.get("calendar_csv", "competition_data/public_test/calendar.csv"),

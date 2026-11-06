@@ -458,18 +458,17 @@ def apply_tie_breaker(
                 name_key = k
                 break
 
-    def sort_comparator(item: Dict[str, Any]) -> Tuple[Any, Any, Any]:
+    def sort_comparator(item: Dict[str, Any]) -> Tuple[Tuple[int, Any], str, str]:
         main_val = item.get(sort_key)
-        # Xử lý None hoặc NaN trong tiêu chí chính
+        # Xử lý None hoặc NaN trong tiêu chí chính (type-safe tuple: (type_tag, val))
         if main_val is None or is_nan_or_null(main_val):
-            main_sortable = -math.inf if descending else math.inf
+            main_sortable = (2, 0.0)
         else:
             try:
-                main_sortable = float(main_val)
-                if descending:
-                    main_sortable = -main_sortable
+                num = float(main_val)
+                main_sortable = (0, -num if descending else num)
             except Exception:
-                main_sortable = str(main_val)
+                main_sortable = (1, str(main_val))
 
         # Tiêu chí phụ 1: Mã code tăng dần
         code_val = str(item.get(code_key, "") or "") if code_key else ""

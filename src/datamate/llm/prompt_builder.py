@@ -166,22 +166,7 @@ def resolve_temporal_context(
                     }
         except Exception:
             pass
-    """
-    Phân tích câu hỏi và as_of_date để xác định khoảng thời gian cụ thể (ngày dương ISO).
-    
-    Args:
-        question (str): Câu hỏi của người dùng.
-        as_of_date_str (str): Ngày tham chiếu mốc (YYYY-MM-DD).
-        calendar_path (str, optional): Đường dẫn tệp calendar.csv nếu có.
-        
-    Returns:
-        Dict[str, Any]: Chứa các trường:
-            - as_of_date: ngày tham chiếu (str)
-            - start_date: ngày bắt đầu (str hoặc None)
-            - end_date: ngày kết thúc (str hoặc None)
-            - description: mô tả diễn giải ngắn cho prompt
-            - code_hint: gợi ý câu lệnh lọc dữ liệu trong pandas
-    """
+
     q_lower = question.lower()
     try:
         as_of = datetime.strptime(as_of_date_str, "%Y-%m-%d").date()

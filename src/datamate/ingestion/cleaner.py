@@ -141,8 +141,14 @@ def apply_group_forward_fill(df: pd.DataFrame, order_id_col: Optional[str] = Non
             return df_clean
         order_id_col = detected
 
-    # Chuẩn hóa các ô rỗng về None để hàm ffill hoạt động chính xác
-    mask_empty = df_clean.map(is_empty_value)
+    # Chuẩn hóa các ô rỗng về None để hàm ffill hoạt động chính xác (tương thích cả pandas cũ và mới)
+    if hasattr(df_clean, "map"):
+        mask_empty = df_clean.map(is_empty_value)
+    elif hasattr(df_clean, "applymap"):
+        mask_empty = df_clean.applymap(is_empty_value)
+    else:
+        mask_empty = df_clean.apply(lambda col: col.map(is_empty_value))
+
     for col in df_clean.columns:
         if mask_empty[col].any():
             df_clean.loc[mask_empty[col], col] = None
