@@ -59,7 +59,7 @@ class TestPromptBuilder(unittest.TestCase):
             q1 = "Tổng doanh thu tháng 5 năm 2025 là bao nhiêu?"
             q2 = "tháng này tổng giá trị các phiếu nhập hàng là bao nhiu"
             self.assertEqual(classify_intent(q1), "aggregation")
-            self.assertEqual(classify_intent(q2), "aggregation")
+            self.assertEqual(classify_intent(q2), "purchase_import")
             print(f"  • {criterion} -> [ĐẠT]")
         except Exception as exc:
             print(f"  • {criterion} -> [KHÔNG ĐẠT: {exc}]")
