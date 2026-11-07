@@ -35,3 +35,5 @@ run_full_public_test.log
 submission.jsonl
 
 results/
+
+scripts/

@@ -1,5 +1,5 @@
 """
-Script: scripts/inspect_pipeline.py
+Script: test/inspect_pipeline.py
 Mục đích: Công cụ chẩn đoán chuyên sâu từng module (Step-by-step Modular Diagnostic Inspector).
 Cho phép:
 1. Chọn ngẫu nhiên (--random) hoặc chỉ định 1 doanh nghiệp (--biz) và 1 câu hỏi cụ thể (--id).

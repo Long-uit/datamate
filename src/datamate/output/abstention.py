@@ -27,25 +27,35 @@ def compute_confidence_score(
     sanity_error: Optional[str] = None,
     code_text: str = "",
     has_feasibility_pass: bool = True,
+    unanswerable_source: str = "none",
 ) -> float:
     """
     Tính điểm độ tin cậy C in [0.0, 1.0] cho một đáp án suy luận.
     
     Trọng số các thành phần:
-    - Feasibility pass: Nếu không hợp lệ -> C = 0.0
+    - Feasibility pass: Nếu không hợp lệ -> C = 1.0 (cho đáp án unanswerable chuẩn từ Gate)
+    - unanswerable_source: CHỈ giữ confidence 1.0 khi source == 'gate'.
+      Nếu do mô hình sinh ra (source == 'model') khi gate đã cho qua -> C = 0.0
     - Execution health (0.4): Lỗi thực thi -> 0.0; Không lỗi lượt 1 -> 1.0; Sau retry -> 0.75
     - Sanity check (0.35): Pass -> 1.0; Fail -> 0.0
     - Code quality & Completeness (0.25): Có return hợp lệ, độ dài code hợp lý, không import cấm
     """
-    if not has_feasibility_pass:
-        return 0.0
-
     ans_type = sub_ans.get("type")
     ans_val = sub_ans.get("answer")
+    source = sub_ans.get("unanswerable_source") or unanswerable_source
 
-    # Nếu câu hỏi đã được xác định chắc chắn là unanswerable hoặc abstain có chủ đích
+    # Nếu câu hỏi đã được Feasibility Gate xác định là không khả thi ngay từ đầu
+    if not has_feasibility_pass:
+        return 1.0 if ans_type == "unanswerable" else 0.0
+
+    # Nếu đáp án là unanswerable:
+    # CHỈ giữ confidence 1.0 nếu nguồn gốc thực sự từ Feasibility Gate ('gate').
+    # Nếu do mô hình tự ý sinh ra ('model') khi gate đã cho qua -> triệt tiêu confidence về 0.0!
     if ans_type == "unanswerable":
-        return 1.0
+        if source == "gate":
+            return 1.0
+        return 0.0
+
     if ans_type == "abstain":
         return 0.0
 
@@ -110,18 +120,39 @@ def apply_abstention_gate(
     sub_ans: Dict[str, Any],
     confidence: float,
     threshold: float = 0.50,
+    unanswerable_source: str = "none",
 ) -> Tuple[Dict[str, Any], bool]:
     """
     Áp dụng cổng từ chối theo ngưỡng tau*:
+    - Kiểu 'unanswerable' CHỈ được phép nộp nếu do Feasibility Gate phát hiện (source == 'gate').
+      Nếu do mô hình tự sinh (source == 'model') khi gate đã cho qua -> ÉP THÀNH 'abstain' để tránh bị phạt -1!
     - Nếu confidence < threshold: Chuyển đáp án thành {"type": "abstain", "answer": None}.
     - Trả về tuple: (final_answer, is_abstained).
     """
     ans_type = sub_ans.get("type")
-    if ans_type in ("unanswerable", "abstain"):
+    source = sub_ans.get("unanswerable_source") or unanswerable_source
+
+    if ans_type == "unanswerable":
+        if source == "gate":
+            return sub_ans, False
+        # Mô hình tự sinh unanswerable khi Feasibility Gate đã pass -> ép thành abstain
+        return {
+            "type": "abstain",
+            "answer": None,
+            "unanswerable_source": source,
+            "reason": "Overridden model unanswerable: Feasibility Gate passed",
+        }, True
+
+    if ans_type == "abstain":
         return sub_ans, False
 
     if confidence < threshold:
-        return {"type": "abstain", "answer": None}, True
+        return {
+            "type": "abstain",
+            "answer": None,
+            "unanswerable_source": source,
+            "reason": f"Confidence {confidence:.2f} < threshold {threshold:.2f}",
+        }, True
 
     return sub_ans, False
 

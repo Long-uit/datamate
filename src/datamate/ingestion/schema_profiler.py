@@ -85,20 +85,103 @@ def profile_table_columns(df: pd.DataFrame, max_cols: int = 25) -> List[str]:
     return col_previews
 
 
+def infer_table_role(table_name: str, df: pd.DataFrame) -> str:
+    """
+    Xác định vai trò nghiệp vụ thực tế của bảng (Table Role) dựa trên cột và nội dung.
+    Không dựa vào tên bảng cố định.
+    """
+    if df is None or (hasattr(df, "empty") and df.empty):
+        return "Bảng rỗng / Chưa có dữ liệu"
+
+    t_norm = unicodedata.normalize("NFKD", str(table_name)).lower().encode("ascii", "ignore").decode("utf-8")
+    t_clean = re.sub(r"[^a-z0-9]", "", t_norm)
+    
+    cols_raw = [str(c) for c in df.columns]
+    cols_low = [c.lower() for c in cols_raw]
+    
+    # 1. Kiểm tra công nợ / sổ nợ / phiếu thu / thanh toán
+    is_debt = (
+        any(k in t_clean for k in ["congno", "sono", "sogop", "phaithu", "phaitra", "hanno", "phieuthu", "soquy", "thanhtoan"])
+        or any(any(k in c for k in ["còn nợ", "con_no", "tiền nợ", "phải thu", "phải trả", "hạn nợ", "hạn trả", "số tiền thu", "đã thu", "thu nợ"]) for c in cols_low)
+    )
+    if is_debt:
+        return "Công nợ / Sổ theo dõi nợ & thanh toán"
+
+    # 2. Kiểm tra nhập hàng / phiếu nhập
+    is_import = (
+        any(k in t_clean for k in ["nhap", "ncc", "nhacungcap", "phieunhap"])
+        or any(any(k in c for k in ["ngày nhập", "ngay_nhap", "phiếu nhập", "cần trả ncc", "tiền nhập", "giá trị nhập", "đơn giá nhập"]) for c in cols_low)
+    )
+    if is_import:
+        if any(any(k in c for k in ["mã hàng", "tên hàng", "sản phẩm", "product", "sku"]) for c in cols_low):
+            return "Nhập hàng chi tiết (mặt hàng, số lượng, giá nhập)"
+        return "Nhập hàng tổng hợp (phiếu nhập, ngày nhập, tiền nhập)"
+
+    # 3. Kiểm tra tồn kho / thẻ kho
+    is_inv = (
+        any(k in t_clean for k in ["tonkho", "thekho"])
+        or any(any(k in c for k in ["tồn kho", "tồn cuối", "tồn thực", "số lượng tồn", "sl tồn", "tồn đầu"]) for c in cols_low)
+    )
+    if is_inv:
+        return "Tồn kho / Thẻ kho (số lượng tồn, tồn thực)"
+
+    # 4. Kiểm tra chi phí vận hành
+    is_cost = (
+        any(k in t_clean for k in ["chiphi"])
+        or any(any(k in c for k in ["chi phí", "khoản chi", "loại chi"]) for c in cols_low)
+    )
+    if is_cost:
+        return "Sổ chi phí vận hành"
+
+    # 5. Kiểm tra bán hàng
+    has_date = any(any(k in c for k in ["ngày", "date", "ngaylap", "thời gian", "thoigian", "ngay_ban"]) for c in cols_low)
+    has_money = any(any(k in c for k in ["thành tiền", "tổng tiền", "tiền", "doanh thu", "tiền bán", "khách cần trả", "tổng thanh toán"]) and "nhap" not in c for c in cols_low)
+    has_item = any(any(k in c for k in ["mã hàng", "tên hàng", "sản phẩm", "tên thuốc", "mã sp", "product", "sku", "hoạt chất"]) for c in cols_low)
+    has_qty = any(any(k in c for k in ["số lượng", "sl", "quy đổi", "slquydoi"]) for c in cols_low)
+    has_sales_name = any(k in t_clean for k in ["banhang", "donhang", "hoadon", "sobanhang", "pos", "giaodich"])
+
+    if has_sales_name or (has_date and (has_money or has_item)):
+        if has_item and has_qty:
+            return "Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)"
+        return "Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)"
+
+    # 6. Kiểm tra danh mục khách hàng
+    is_cust = (
+        any(k in t_clean for k in ["khachhang", "customer"])
+        or (any(any(k in c for k in ["mã khách", "tên khách", "nhóm khách", "sđt", "điện thoại", "tenkh", "makh"]) for c in cols_low) and not has_date and not has_money)
+    )
+    if is_cust:
+        return "Danh mục khách hàng (mã khách, tên khách, nhóm khách, địa chỉ)"
+
+    # 7. Kiểm tra danh mục sản phẩm / thuốc / bảng giá
+    is_prod = (
+        any(k in t_clean for k in ["sanpham", "hanghoa", "danhmuc", "thuoc", "banggia"])
+        or (has_item and not has_date and not has_money)
+    )
+    if is_prod:
+        return "Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)"
+
+    return "Bảng dữ liệu khác"
+
+
 def profile_business_schema(business: BusinessData, max_cols: int = 25) -> str:
-    """Tạo bản tóm tắt schema phong phú (Rich Schema) cho toàn bộ shop."""
+    """Tạo bản tóm tắt schema phong phú (Rich Schema) kèm Table Roles cho toàn bộ shop."""
     schema_lines: List[str] = []
+    role_summary_lines: List[str] = ["### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):"]
 
     for ti in business.tables:
         t_base = Path(ti.fixed_file_name).stem if hasattr(ti, "fixed_file_name") and ti.fixed_file_name else ti.table_id
         t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
 
+        role = infer_table_role(t_name, ti.df)
+        role_summary_lines.append(f"- Bảng '{t_name}' (alias: '{ti.table_id}'): {role}")
+
         cols_desc = profile_table_columns(ti.df, max_cols=max_cols)
         extra_note = f", ... và {len(ti.columns) - max_cols} cột khác" if len(ti.columns) > max_cols else ""
         
         schema_lines.append(
-            f"- Bảng '{t_name}' ({ti.n_rows} dòng):\n"
+            f"- Bảng '{t_name}' [Vai trò: {role}] ({ti.n_rows} dòng):\n"
             f"  Cột ({len(ti.columns)}): [{', '.join(cols_desc)}{extra_note}]"
         )
 
-    return "\n".join(schema_lines)
+    return "\n".join(role_summary_lines) + "\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n" + "\n".join(schema_lines)
