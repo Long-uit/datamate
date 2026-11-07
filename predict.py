@@ -252,9 +252,22 @@ def main():
     parser.add_argument("--no_fill_abstain", action="store_true", help="Không tự động điền 'abstain' cho các câu hỏi còn lại khi dùng --limit")
     parser.add_argument("--resume", action="store_true", help="Tiếp tục chạy từ câu hỏi chưa hoàn thành (bỏ qua các câu đã có trong file submission)")
     parser.add_argument("--tau_star", type=float, default=0.50, help="Ngưỡng độ tin cậy tối ưu tau* để từ chối trả lời (mặc định: 0.50)")
+    parser.add_argument("--seed", type=int, default=42, help="Cố định random seed cho tính tái lập tuyệt đối (mặc định: 42)")
     parser.add_argument("--timeout", type=int, default=30, help="Thời gian chờ tối đa khi chạy code trong sandbox (giây, mặc định: 30)")
     parser.add_argument("--in_process", action="store_true", help="Chạy code trực tiếp trong tiến trình (bảo vệ cache bằng bản sao RAM) thay vì sandbox subprocess")
     args = parser.parse_args()
+
+    # Cố định random seed cho tính tái lập tuyệt đối
+    import random
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    try:
+        import torch
+        torch.manual_seed(args.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(args.seed)
+    except Exception:
+        pass
 
     # Kích hoạt bộ ghi log song song nội bộ nếu người dùng truyền --log_file
     dual_logger = None
