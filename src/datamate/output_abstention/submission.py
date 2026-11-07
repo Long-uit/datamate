@@ -249,6 +249,10 @@ class SubmissionWriter:
         error: str | None = None,
         elapsed_ms: int = 0,
         confidence: float | None = None,
+        unanswerable_source: str = "none",
+        selected_tables: list | None = None,
+        selected_columns: list | None = None,
+        self_correction_count: int = 0,
     ) -> None:
         """
         Ghi 1 dòng vào submission.jsonl (flush + fsync ngay) và xuất file log chi tiết.
@@ -300,6 +304,10 @@ class SubmissionWriter:
             "code": str(code),
             "raw_result": _clean_for_json(raw_result),
             "error": str(error) if error is not None else None,
+            "unanswerable_source": unanswerable_source,
+            "selected_tables": selected_tables or [],
+            "selected_columns": selected_columns or [],
+            "self_correction_count": int(self_correction_count),
         }
 
         try:

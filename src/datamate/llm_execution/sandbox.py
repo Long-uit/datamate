@@ -92,6 +92,7 @@ def main():
     from datamate.output.normalizer import apply_tie_breaker
     from datamate.grounding.temporal import filter_future_data
     from datamate.execution.helpers import clean_num, clean_date
+    from datamate.exceptions import DataNotFoundError
 
     # Đọc mã nguồn cần thực thi
     code_str = code_file.read_text(encoding="utf-8")
@@ -127,7 +128,10 @@ def main():
         "filter_future_data": filter_future_data,
         "clean_num": clean_num,
         "clean_date": clean_date,
+        "DataNotFoundError": DataNotFoundError,
     }
+    if isinstance(namespace.get("__builtins__"), dict):
+        namespace["__builtins__"]["DataNotFoundError"] = DataNotFoundError
 
     # Bắt stdout của code người dùng
     old_stdout = sys.stdout
@@ -139,6 +143,9 @@ def main():
         "final_result": None,
         "stdout": "",
         "error": None,
+        "error_type": None,
+        "unanswerable_source": "none",
+        "missing_info": None,
     }
 
     try:
@@ -148,15 +155,33 @@ def main():
         if "FINAL_RESULT" not in namespace:
             if "solution" in namespace and callable(namespace["solution"]):
                 _raw = namespace["solution"](data_dict)
-                if _raw == "unanswerable" or (isinstance(_raw, str) and _raw.strip().lower() in ("unanswerable", "không thể trả lời")):
-                    namespace["FINAL_RESULT"] = {"type": "unanswerable", "answer": None}
-                elif _raw is None:
-                    namespace["FINAL_RESULT"] = {"type": "abstain", "answer": None}
+                if _raw is None or (isinstance(_raw, str) and not _raw.strip()):
+                    namespace["FINAL_RESULT"] = {
+                        "type": "abstain",
+                        "answer": None,
+                        "unanswerable_source": "none",
+                        "reason": "Solution returned None or empty string",
+                    }
+                elif _raw == "unanswerable" or (isinstance(_raw, str) and _raw.strip().lower() in ("unanswerable", "không thể trả lời")):
+                    namespace["FINAL_RESULT"] = {
+                        "type": "unanswerable",
+                        "answer": None,
+                        "unanswerable_source": "model",
+                        "reason": "Model explicitly returned unanswerable string",
+                    }
+                elif isinstance(_raw, dict) and _raw.get("type") == "unanswerable":
+                    src = _raw.get("unanswerable_source", "model")
+                    namespace["FINAL_RESULT"] = {
+                        "type": "unanswerable",
+                        "answer": None,
+                        "unanswerable_source": src,
+                    }
                 else:
                     namespace["FINAL_RESULT"] = _raw
             else:
                 res_payload["ok"] = False
                 res_payload["error"] = "NO_FINAL_RESULT"
+                res_payload["error_type"] = "NoFinalResult"
 
         if "FINAL_RESULT" in namespace:
             raw_res = namespace["FINAL_RESULT"]
@@ -165,13 +190,28 @@ def main():
                 json.dumps(clean_res, ensure_ascii=False)
                 res_payload["ok"] = True
                 res_payload["final_result"] = clean_res
+                if isinstance(raw_res, dict):
+                    res_payload["unanswerable_source"] = raw_res.get("unanswerable_source", "none")
             except Exception as ser_err:
                 res_payload["ok"] = False
                 res_payload["error"] = f"CANNOT_SERIALIZE_JSON: {ser_err}"
+                res_payload["error_type"] = "SerializationError"
 
+    except DataNotFoundError as dne:
+        res_payload["ok"] = False
+        res_payload["error_type"] = "DataNotFoundError"
+        res_payload["error"] = str(dne)
+        res_payload["missing_info"] = str(dne)
     except Exception as exc:
         res_payload["ok"] = False
-        res_payload["error"] = traceback.format_exc()
+        err_tb = traceback.format_exc()
+        if "DataNotFoundError" in str(exc) or "DataNotFoundError" in err_tb:
+            res_payload["error_type"] = "DataNotFoundError"
+            res_payload["error"] = str(exc)
+            res_payload["missing_info"] = str(exc)
+        else:
+            res_payload["error_type"] = type(exc).__name__
+            res_payload["error"] = err_tb
     finally:
         sys.stdout = old_stdout
         try:
@@ -195,10 +235,13 @@ if __name__ == "__main__":
 class RunResult:
     """Kết quả thực thi mã trong sandbox subprocess."""
     ok: bool
-    final_result: Any          # Giá trị FINAL_RESULT, None nếu lỗi
-    stdout: str                # Cắt tối đa 10_000 ký tự
-    error: str | None          # Traceback hoặc mã lỗi ("TIMEOUT", "NO_FINAL_RESULT", v.v.)
+    final_result: Any                        # Giá trị FINAL_RESULT, None nếu lỗi
+    stdout: str                              # Cắt tối đa 10_000 ký tự
+    error: str | None                        # Traceback hoặc mã lỗi ("TIMEOUT", "NO_FINAL_RESULT", v.v.)
     elapsed_ms: int
+    error_type: str | None = None            # "DataNotFoundError", "Timeout", "SyntaxError", etc.
+    unanswerable_source: str = "none"        # "gate" | "model" | "none"
+    missing_info: str | None = None          # Thông tin chi tiết bảng/cột thiếu
 
 
 def run_code(code: str, business_dir: Path, timeout_s: int = 60) -> RunResult:
@@ -269,12 +312,22 @@ def run_code(code: str, business_dir: Path, timeout_s: int = 60) -> RunResult:
                     if len(stdout_str) > 10_000:
                         stdout_str = stdout_str[:10_000]
 
+                    unans_source = "none"
+                    fin_res = data.get("final_result")
+                    if isinstance(fin_res, dict):
+                        unans_source = fin_res.get("unanswerable_source", data.get("unanswerable_source", "none"))
+                    elif data.get("unanswerable_source"):
+                        unans_source = data.get("unanswerable_source")
+
                     return RunResult(
                         ok=bool(data.get("ok", False)),
-                        final_result=data.get("final_result"),
+                        final_result=fin_res,
                         stdout=stdout_str,
                         error=data.get("error"),
                         elapsed_ms=elapsed_ms,
+                        error_type=data.get("error_type"),
+                        unanswerable_source=unans_source,
+                        missing_info=data.get("missing_info"),
                     )
                 except Exception as parse_err:
                     return RunResult(
@@ -310,6 +363,8 @@ def run_code(code: str, business_dir: Path, timeout_s: int = 60) -> RunResult:
                 stdout=sub_stdout[:10_000],
                 error="TIMEOUT",
                 elapsed_ms=elapsed_ms,
+                error_type="Timeout",
+                unanswerable_source="none",
             )
         except Exception as exc:
             elapsed_ms = int((time.perf_counter() - t_start) * 1000)

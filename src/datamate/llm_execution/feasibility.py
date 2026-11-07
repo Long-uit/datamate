@@ -60,6 +60,9 @@ def _nfc(text: str) -> str:
 
 # Nhóm 1: Thuộc tính chủ quan, đánh giá cảm tính hoặc kiến thức y khoa ngoài dữ liệu POS
 SUBJECTIVE_UNANSWERABLE_PATTERNS = [
+    r"bằng\s*cấp",
+    r"chuyên\s*môn",
+    r"sở\s*thích",
     r"tay\s*nghề",
     r"lành\s*nghề",
     r"kinh\s*nghiệm",

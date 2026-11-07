@@ -88,6 +88,7 @@ def main():
     from datamate.output.normalizer import apply_tie_breaker
     from datamate.grounding.temporal import filter_future_data
     from datamate.execution.helpers import clean_num, clean_date
+    from datamate.exceptions import DataNotFoundError
 
     # Đọc mã nguồn cần thực thi
     code_str = code_file.read_text(encoding="utf-8")
@@ -123,7 +124,10 @@ def main():
         "filter_future_data": filter_future_data,
         "clean_num": clean_num,
         "clean_date": clean_date,
+        "DataNotFoundError": DataNotFoundError,
     }
+    if isinstance(namespace.get("__builtins__"), dict):
+        namespace["__builtins__"]["DataNotFoundError"] = DataNotFoundError
 
     # Bắt stdout của code
     old_stdout = sys.stdout
@@ -135,6 +139,9 @@ def main():
         "final_result": None,
         "stdout": "",
         "error": None,
+        "error_type": None,
+        "unanswerable_source": "none",
+        "missing_info": None,
     }
 
     try:
@@ -144,31 +151,63 @@ def main():
         if "FINAL_RESULT" not in namespace:
             if "solution" in namespace and callable(namespace["solution"]):
                 _raw = namespace["solution"](data_dict)
-                if _raw == "unanswerable" or (isinstance(_raw, str) and _raw.strip().lower() in ("unanswerable", "không thể trả lời")):
-                    namespace["FINAL_RESULT"] = {"type": "unanswerable", "answer": None}
-                elif _raw is None:
-                    namespace["FINAL_RESULT"] = {"type": "abstain", "answer": None}
+                if _raw is None or (isinstance(_raw, str) and not _raw.strip()):
+                    namespace["FINAL_RESULT"] = {
+                        "type": "abstain",
+                        "answer": None,
+                        "unanswerable_source": "none",
+                        "reason": "Solution returned None or empty string",
+                    }
+                elif _raw == "unanswerable" or (isinstance(_raw, str) and _raw.strip().lower() in ("unanswerable", "không thể trả lời")):
+                    namespace["FINAL_RESULT"] = {
+                        "type": "unanswerable",
+                        "answer": None,
+                        "unanswerable_source": "model",
+                        "reason": "Model explicitly returned unanswerable string",
+                    }
+                elif isinstance(_raw, dict) and _raw.get("type") == "unanswerable":
+                    src = _raw.get("unanswerable_source", "model")
+                    namespace["FINAL_RESULT"] = {
+                        "type": "unanswerable",
+                        "answer": None,
+                        "unanswerable_source": src,
+                    }
                 else:
                     namespace["FINAL_RESULT"] = _raw
             else:
                 res_payload["ok"] = False
                 res_payload["error"] = "NO_FINAL_RESULT"
+                res_payload["error_type"] = "NoFinalResult"
 
         if "FINAL_RESULT" in namespace:
             raw_res = namespace["FINAL_RESULT"]
             try:
                 clean_res = _to_json_serializable(raw_res)
-                # Kiểm tra tính hợp lệ JSON
                 json.dumps(clean_res, ensure_ascii=False)
                 res_payload["ok"] = True
                 res_payload["final_result"] = clean_res
+                if isinstance(raw_res, dict):
+                    res_payload["unanswerable_source"] = raw_res.get("unanswerable_source", "none")
             except Exception as ser_err:
                 res_payload["ok"] = False
                 res_payload["error"] = f"CANNOT_SERIALIZE_JSON: {ser_err}"
+                res_payload["error_type"] = "SerializationError"
 
-    except Exception:
+    except DataNotFoundError as dne:
         res_payload["ok"] = False
-        res_payload["error"] = traceback.format_exc()
+        res_payload["error_type"] = "DataNotFoundError"
+        res_payload["error"] = str(dne)
+        res_payload["missing_info"] = str(dne)
+    except Exception as exc:
+        res_payload["ok"] = False
+        err_tb = traceback.format_exc()
+        if "DataNotFoundError" in str(exc) or "DataNotFoundError" in err_tb:
+            res_payload["error_type"] = "DataNotFoundError"
+            res_payload["error"] = str(exc)
+            res_payload["missing_info"] = str(exc)
+        else:
+            res_payload["error_type"] = type(exc).__name__
+            res_payload["error"] = err_tb
     finally:
         sys.stdout = old_stdout
         try:

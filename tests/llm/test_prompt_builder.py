@@ -57,9 +57,20 @@ class TestPromptBuilder(unittest.TestCase):
         criterion = "Chỉ tiêu 1.1: Nhận diện chính xác intent 'aggregation' (tính tổng doanh thu, đếm đơn)"
         try:
             q1 = "Tổng doanh thu tháng 5 năm 2025 là bao nhiêu?"
-            q2 = "tháng này tổng giá trị các phiếu nhập hàng là bao nhiu"
+            q2 = "tháng này tổng số lượng sản phẩm bán ra là bao nhiêu"
             self.assertEqual(classify_intent(q1), "aggregation")
             self.assertEqual(classify_intent(q2), "aggregation")
+            print(f"  • {criterion} -> [ĐẠT]")
+        except Exception as exc:
+            print(f"  • {criterion} -> [KHÔNG ĐẠT: {exc}]")
+            raise
+
+    def test_classify_intent_purchase_import(self):
+        """Kiểm tra nhận diện câu hỏi nhóm nhập hàng / phiếu nhập."""
+        criterion = "Chỉ tiêu 1.1b: Nhận diện chính xác intent 'purchase_import' (phiếu nhập, nhập hàng)"
+        try:
+            q = "tháng này tổng giá trị các phiếu nhập hàng là bao nhiu"
+            self.assertEqual(classify_intent(q), "purchase_import")
             print(f"  • {criterion} -> [ĐẠT]")
         except Exception as exc:
             print(f"  • {criterion} -> [KHÔNG ĐẠT: {exc}]")

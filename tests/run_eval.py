@@ -20,7 +20,7 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple, Set
 
 # Tự động nạp thư mục src vào sys.path
-_SRC_DIR = str(Path(__file__).resolve().parent / "src")
+_SRC_DIR = str(Path(__file__).resolve().parent.parent / "src")
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
@@ -46,6 +46,7 @@ from datamate.ingestion.cleaner import clean_business
 from datamate.grounding.entity_linker import extract_candidates_from_business, link_entities
 from datamate.grounding.temporal import filter_future_data
 from datamate.execution.helpers import clean_num, clean_date
+from datamate.exceptions import DataNotFoundError
 from datamate.execution.sandbox import run_code
 from datamate.output.submission import make_abstain, SubmissionWriter, validate_submission
 from datamate.output.normalizer import normalize_output, apply_tie_breaker, check_result_sanity
@@ -104,6 +105,22 @@ def get_cached_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd
 # THỰC THI MÃ NGUỒN AN TOÀN TRONG SANDBOX
 # ==============================================================================
 
+def extract_referenced_tables_and_columns(code_str: str, available_tables: List[str]) -> Tuple[List[str], List[str]]:
+    """Trích xuất tên các bảng và cột được truy cập trong mã nguồn mô hình sinh ra."""
+    sel_tables = []
+    sel_cols = []
+    if not code_str:
+        return sel_tables, sel_cols
+    for t in available_tables:
+        if t in code_str:
+            sel_tables.append(t)
+    col_matches = re.findall(r"\[\s*[\'\"]([^\'\"]+)[\'\"]\s*\]", code_str)
+    for c in col_matches:
+        if c not in sel_cols and c not in sel_tables:
+            sel_cols.append(c)
+    return sel_tables, sel_cols[:15]
+
+
 def execute_solution(
     code_text: str,
     biz_dir: Path,
@@ -112,15 +129,18 @@ def execute_solution(
     business_obj: Any,
     timeout_s: int = 30,
     use_sandbox: bool = True,
-) -> Tuple[Any, Optional[str], int]:
+    return_details: bool = False,
+) -> Tuple[Any, ...]:
     """Thực thi mã nguồn mô hình sinh ra trong subprocess sandbox độc lập có hard timeout."""
     adapter = """
 if 'FINAL_RESULT' not in globals() and 'solution' in globals() and callable(solution):
     _raw_sol = solution(data)
-    if _raw_sol == "unanswerable" or (isinstance(_raw_sol, str) and _raw_sol.strip().lower() in ("unanswerable", "không thể trả lời")):
-        FINAL_RESULT = {"type": "unanswerable", "answer": None}
-    elif _raw_sol is None:
-        FINAL_RESULT = {"type": "abstain", "answer": None}
+    if _raw_sol is None or (isinstance(_raw_sol, str) and not _raw_sol.strip()):
+        FINAL_RESULT = {"type": "abstain", "answer": None, "unanswerable_source": "none"}
+    elif _raw_sol == "unanswerable" or (isinstance(_raw_sol, str) and _raw_sol.strip().lower() in ("unanswerable", "không thể trả lời")):
+        FINAL_RESULT = {"type": "unanswerable", "answer": None, "unanswerable_source": "model"}
+    elif isinstance(_raw_sol, dict) and _raw_sol.get("type") == "unanswerable":
+        FINAL_RESULT = {"type": "unanswerable", "answer": None, "unanswerable_source": _raw_sol.get("unanswerable_source", "model")}
     else:
         FINAL_RESULT = _raw_sol
 """
@@ -128,9 +148,17 @@ if 'FINAL_RESULT' not in globals() and 'solution' in globals() and callable(solu
 
     if use_sandbox:
         res = run_code(executable_code, business_dir=biz_dir, timeout_s=timeout_s)
+        unans_src = res.unanswerable_source
+        if isinstance(res.final_result, dict):
+            unans_src = res.final_result.get("unanswerable_source", unans_src)
         if res.ok:
+            if return_details:
+                return res.final_result, None, res.elapsed_ms, None, unans_src
             return res.final_result, None, res.elapsed_ms
-        return None, res.error or "Lỗi thực thi trong sandbox", res.elapsed_ms
+        err_msg = res.error or "Lỗi thực thi trong sandbox"
+        if return_details:
+            return None, err_msg, res.elapsed_ms, res.error_type, unans_src
+        return None, err_msg, res.elapsed_ms
 
     # In-process fallback
     t_start = time.perf_counter()
@@ -147,18 +175,37 @@ if 'FINAL_RESULT' not in globals() and 'solution' in globals() and callable(solu
         "filter_future_data": filter_future_data,
         "clean_num": clean_num,
         "clean_date": clean_date,
+        "DataNotFoundError": DataNotFoundError,
     }
+    if isinstance(exec_globals.get("__builtins__"), dict):
+        exec_globals["__builtins__"]["DataNotFoundError"] = DataNotFoundError
+
     try:
         exec(executable_code, exec_globals)
         elapsed_ms = int((time.perf_counter() - t_start) * 1000)
-        if "FINAL_RESULT" in exec_globals:
-            return exec_globals["FINAL_RESULT"], None, elapsed_ms
-        elif "solution" in exec_globals and callable(exec_globals["solution"]):
-            return exec_globals["solution"](isolated_data), None, elapsed_ms
-        return None, "NO_RESULT: Không tìm thấy kết quả từ hàm solution", elapsed_ms
+        fin = exec_globals.get("FINAL_RESULT")
+        if fin is None and "solution" in exec_globals and callable(exec_globals["solution"]):
+            fin = exec_globals["solution"](isolated_data)
+        
+        unans_src = "none"
+        if isinstance(fin, dict):
+            unans_src = fin.get("unanswerable_source", "none")
+
+        if return_details:
+            return fin, None, elapsed_ms, None, unans_src
+        return fin, None, elapsed_ms
+    except DataNotFoundError as dne:
+        elapsed_ms = int((time.perf_counter() - t_start) * 1000)
+        if return_details:
+            return None, str(dne), elapsed_ms, "DataNotFoundError", "none"
+        return None, str(dne), elapsed_ms
     except Exception as exc:
         elapsed_ms = int((time.perf_counter() - t_start) * 1000)
-        return None, f"{type(exc).__name__}: {exc}", elapsed_ms
+        err_msg = f"{type(exc).__name__}: {exc}"
+        err_type = "DataNotFoundError" if "DataNotFoundError" in err_msg else type(exc).__name__
+        if return_details:
+            return None, err_msg, elapsed_ms, err_type, "none"
+        return None, err_msg, elapsed_ms
 
 
 # ==============================================================================
@@ -448,13 +495,16 @@ def main():
     parser.add_argument("--tau_star", type=float, default=cfg.output.tau_star, help=f"Ngưỡng độ tin cậy tối ưu để từ chối trả lời (mặc định: {cfg.output.tau_star:.2f})")
     parser.add_argument("--timeout", type=int, default=cfg.output.default_timeout, help=f"Thời gian chờ tối đa khi chạy code trong sandbox (giây, mặc định: {cfg.output.default_timeout})")
     parser.add_argument("--in_process", action="store_true", help="Chạy code trực tiếp trong tiến trình thay vì sandbox")
+    parser.add_argument("--questions_file", type=str, default=None, help="Đường dẫn file câu hỏi cụ thể")
+    parser.add_argument("--sample", type=int, default=None, help="Lấy ngẫu nhiên N câu hỏi để đánh giá")
+    parser.add_argument("--seed", type=int, default=42, help="Seed ngẫu nhiên khi lấy mẫu (mặc định: 42)")
     args = parser.parse_args()
 
     if args.config:
         cfg = load_config(args.config)
 
     data_dir = Path(args.data_dir)
-    questions_path = data_dir / "questions.jsonl"
+    questions_path = Path(args.questions_file) if args.questions_file else (data_dir / "questions.jsonl")
     data_root = data_dir / "data"
 
     if not questions_path.exists():
@@ -484,6 +534,10 @@ def main():
         target_questions = [q for q in target_questions if q.get("business_id") == args.biz]
     if args.id:
         target_questions = [q for q in target_questions if q.get("id") == args.id]
+    if args.sample is not None and args.sample < len(target_questions):
+        import random
+        rng = random.Random(args.seed)
+        target_questions = rng.sample(target_questions, args.sample)
 
     # Resume mode
     existing_completed_ids = set()
@@ -554,7 +608,16 @@ def main():
             if not is_feasible:
                 print(f"  🛡️ [Feasibility Gate] Bất khả thi ({unans_reason}) -> Trả về 'unanswerable'")
                 sub_ans = {"type": "unanswerable", "answer": None}
-                writer.write(question_id=qid, answer=sub_ans, code="# Feasibility Gate: Unanswerable detected deterministically", raw_result="unanswerable", error=None, elapsed_ms=0, confidence=1.0)
+                writer.write(
+                    question_id=qid,
+                    answer=sub_ans,
+                    code="# Feasibility Gate: Unanswerable detected deterministically",
+                    raw_result="unanswerable",
+                    error=None,
+                    elapsed_ms=0,
+                    confidence=1.0,
+                    unanswerable_source="gate",
+                )
                 written_records[qid] = {"id": qid, **sub_ans}
                 latencies[qid] = 0
                 continue
@@ -587,9 +650,10 @@ def main():
             code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=1024)
             gen_sec = round(time.time() - t0, 2)
 
-            # Chạy code qua Sandbox
-            retry_count = 0
-            raw_result, exec_err, exec_ms = execute_solution(
+            # Chạy code qua Sandbox (Lượt 1)
+            max_self_corrections = 2
+            self_correction_count = 0
+            raw_result, exec_err, exec_ms, err_type, unans_source = execute_solution(
                 code_text=code_text,
                 biz_dir=biz_dir,
                 data_dict=data_dict,
@@ -597,6 +661,7 @@ def main():
                 business_obj=bd,
                 timeout_s=args.timeout,
                 use_sandbox=not args.in_process,
+                return_details=True,
             )
 
             # Kiểm tra Sanity Check & Feasibility Authority
@@ -606,19 +671,44 @@ def main():
                 is_sane, sanity_reason = check_result_sanity(sub_ans_cand, question=question_text, code_text=code_text)
                 if raw_result == "unanswerable" or sub_ans_cand.get("type") == "unanswerable":
                     sanity_err = "Cơ sở dữ liệu của cửa hàng CÓ ĐẦY ĐỦ số liệu để trả lời câu hỏi này (KHÔNG ĐƯỢC trả về 'unanswerable'!). Hãy kiểm tra lại danh sách bảng và cột để tính toán và trả về kết quả số/danh sách cụ thể."
+                    unans_source = "model"
                     print("  ⚠️ [Feasibility Authority] Phát hiện code trả về unanswerable trên câu hỏi khả thi -> Kích hoạt Self-Correction...")
                 elif not is_sane:
                     sanity_err = sanity_reason
 
-            # Tự sửa lỗi (Self-Correction lượt 2)
-            if exec_err or sanity_err:
-                retry_count = 1
-                err_feedback = exec_err if exec_err else f"Kết quả tính toán không hợp lý: {sanity_err}"
-                retry_prompt = f"{user_prompt}\n# Mã nguồn bị lỗi: {err_feedback}\n# Sửa lỗi và viết lại duy nhất hàm def solution(data):\n```python\n"
+            # Tự sửa lỗi (Self-Correction Loop tối đa 2 vòng)
+            while (exec_err or sanity_err) and self_correction_count < max_self_corrections:
+                self_correction_count += 1
+                print(f"  🔄 [Self-Correction Vòng {self_correction_count}/{max_self_corrections}] Đang sửa lỗi...")
+
+                # Tạo feedback chuyên biệt nếu gặp DataNotFoundError
+                if err_type == "DataNotFoundError" or (exec_err and "DataNotFoundError" in exec_err):
+                    actual_schema_summary = []
+                    for t_name, df_t in data_dict.items():
+                        actual_schema_summary.append(f"- Bảng '{t_name}': các cột {list(df_t.columns)[:15]}")
+                    schema_guide = "\n".join(actual_schema_summary[:10])
+                    err_feedback = (
+                        f"Mã nguồn bị lỗi DataNotFoundError: {exec_err}\n"
+                        f"Bảng hoặc cột bạn tìm không tồn tại trong dữ liệu thực tế của shop!\n"
+                        f"DANH SÁCH BẢNG VÀ CỘT THỰC TẾ TRONG data:\n{schema_guide}\n"
+                        f"HÃY CHỌN ĐÚNG TÊN BẢNG VÀ CỘT Ở TRÊN, KHÔNG ĐOÁN TÊN BẢNG CÓ DẤU '_' HOẶC HẬU TỐ LẠ.\n"
+                        f"Hãy viết lại code tính toán chính xác."
+                    )
+                elif exec_err:
+                    err_feedback = f"Lỗi thực thi: {exec_err}"
+                else:
+                    err_feedback = f"Kết quả tính toán không hợp lý: {sanity_err}"
+
+                retry_prompt = (
+                    f"{user_prompt}\n\n"
+                    f"# [YÊU CẦU TỰ SỬA LỖI - VÒNG {self_correction_count}]:\n"
+                    f"# {err_feedback}\n"
+                    f"# Hãy sửa lỗi và viết lại duy nhất một hàm hoàn chỉnh: def solution(data):\n```python\n"
+                )
                 t_retry = time.time()
                 retry_code = llm.generate_code(prompt=retry_prompt, system_prompt=sys_prompt, max_new_tokens=1024)
                 gen_sec = round(gen_sec + (time.time() - t_retry), 2)
-                raw_retry, err_retry, ms_retry = execute_solution(
+                raw_retry, err_retry, ms_retry, type_retry, src_retry = execute_solution(
                     code_text=retry_code,
                     biz_dir=biz_dir,
                     data_dict=data_dict,
@@ -626,52 +716,82 @@ def main():
                     business_obj=bd,
                     timeout_s=args.timeout,
                     use_sandbox=not args.in_process,
+                    return_details=True,
                 )
                 exec_ms += ms_retry
+
                 if not err_retry:
-                    code_text = retry_code
-                    raw_result = raw_retry
-                    exec_err = None
-                    sanity_err = None
-                    sub_ans_cand2 = normalize_output(raw_result, question=question_text, code_text=code_text)
-                    is_sane2, sanity_reason2 = check_result_sanity(sub_ans_cand2, question=question_text, code_text=code_text)
-                    if raw_result == "unanswerable" or sub_ans_cand2.get("type") == "unanswerable":
-                        sanity_err = "Sau khi thử lại, mô hình vẫn trả về 'unanswerable' trên câu hỏi khả thi."
+                    sub_ans_cand2 = normalize_output(raw_retry, question=question_text, code_text=retry_code)
+                    is_sane2, sanity_reason2 = check_result_sanity(sub_ans_cand2, question=question_text, code_text=retry_code)
+                    if raw_retry == "unanswerable" or sub_ans_cand2.get("type") == "unanswerable":
+                        sanity_err = f"Sau vòng {self_correction_count}, mô hình vẫn trả về 'unanswerable' trên câu hỏi khả thi."
+                        err_type = "UnanswerableReturned"
+                        unans_source = "model"
                     elif not is_sane2:
                         sanity_err = sanity_reason2
+                        err_type = "SanityError"
+                    else:
+                        # Tự sửa lỗi thành công!
+                        code_text = retry_code
+                        raw_result = raw_retry
+                        exec_err = None
+                        sanity_err = None
+                        unans_source = src_retry
+                        err_type = None
+                        print(f"  ✅ [Self-Correction] Vòng {self_correction_count} thành công!")
+                        break
+                else:
+                    exec_err = err_retry
+                    err_type = type_retry
+                    unans_source = src_retry
 
-            # Chuẩn hóa & Lá chắn 2: Abstention Gate
+            # Chuẩn hóa & Lá chắn Abstention Gate
             confidence = 0.0
             if exec_err:
-                sub_ans = make_abstain(f"Runtime Error: {exec_err}")
+                sub_ans = make_abstain(f"Runtime Error sau {self_correction_count} lần sửa: {exec_err}")
                 print(f"  ⚠️ [Lỗi thực thi Sandbox] {exec_err} -> Chủ động Abstain (0 điểm)")
             elif sanity_err:
                 sub_ans = make_abstain(f"Sanity Check: {sanity_err}")
                 print(f"  ⚠️ [Sanity Check không hợp lý] {sanity_err} -> Chủ động Abstain (0 điểm)")
             else:
                 sub_ans = normalize_output(raw_result, question=question_text, code_text=code_text)
-                if sub_ans.get("type") == "unanswerable":
-                    print(f"  🛡️ [Feasibility Authority Guard] Chặn false unanswerable -> Ép về 'abstain' để tránh bị phạt -1 điểm!")
-                    sub_ans = make_abstain("False unanswerable override: Feasibility passed")
+                confidence = compute_confidence_score(
+                    sub_ans=sub_ans,
+                    exec_error=exec_err,
+                    exec_ms=exec_ms,
+                    retry_count=self_correction_count,
+                    sanity_passed=(sanity_err is None),
+                    sanity_error=sanity_err,
+                    code_text=code_text,
+                    has_feasibility_pass=True,
+                    unanswerable_source=unans_source,
+                )
+                sub_ans, is_abs = apply_abstention_gate(
+                    sub_ans, 
+                    confidence=confidence, 
+                    threshold=args.tau_star,
+                    unanswerable_source=unans_source,
+                )
+                if is_abs:
+                    print(f"  🛡️ [Abstention Gate] C={confidence:.2f} < tau*={args.tau_star:.2f} (Source={unans_source}) -> Ép về Abstain (0 điểm)")
                 else:
-                    confidence = compute_confidence_score(
-                        sub_ans=sub_ans,
-                        exec_error=exec_err,
-                        exec_ms=exec_ms,
-                        retry_count=retry_count,
-                        sanity_passed=(sanity_err is None),
-                        sanity_error=sanity_err,
-                        code_text=code_text,
-                        has_feasibility_pass=True,
-                    )
-                    sub_ans, is_abs = apply_abstention_gate(sub_ans, confidence=confidence, threshold=args.tau_star)
-                    if is_abs:
-                        print(f"  🛡️ [Abstention Gate] C={confidence:.2f} < tau*={args.tau_star:.2f} -> Chủ động Abstain (0 điểm)")
-                    else:
-                        print(f"  ✓ Sinh: {gen_sec}s | Chạy: {exec_ms}ms | Tin cậy: {confidence:.2f} | Đáp án: {sub_ans.get('answer')} ({sub_ans.get('type')})")
+                    print(f"  ✓ Sinh: {gen_sec}s | Chạy: {exec_ms}ms | Tin cậy: {confidence:.2f} | Đáp án: {sub_ans.get('answer')} ({sub_ans.get('type')})")
 
             total_lat = int(gen_sec * 1000 + exec_ms)
-            writer.write(question_id=qid, answer=sub_ans, code=code_text, raw_result=raw_result, error=exec_err or sanity_err, elapsed_ms=total_lat, confidence=confidence)
+            sel_tables, sel_cols = extract_referenced_tables_and_columns(code_text, list(data_dict.keys()))
+            writer.write(
+                question_id=qid,
+                answer=sub_ans,
+                code=code_text,
+                raw_result=raw_result,
+                error=exec_err or sanity_err,
+                elapsed_ms=total_lat,
+                confidence=confidence,
+                unanswerable_source=unans_source,
+                selected_tables=sel_tables,
+                selected_columns=sel_cols,
+                self_correction_count=self_correction_count,
+            )
             written_records[qid] = {"id": qid, **sub_ans}
             latencies[qid] = total_lat
 
