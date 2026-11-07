@@ -20,7 +20,7 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple, Set
 
 # Tự động nạp thư mục src vào sys.path
-_SRC_DIR = str(Path(__file__).resolve().parent / "src")
+_SRC_DIR = str(Path(__file__).resolve().parent.parent / "src")
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
