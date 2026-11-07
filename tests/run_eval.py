@@ -37,20 +37,23 @@ import numpy as np
 
 # Nhập các thành phần cốt lõi của package datamate
 from datamate.config import load_config
-from datamate.llm.client import LLMClient
-from datamate.llm.prompt_builder import build_prompt, load_rulebook
-from datamate.llm.feasibility import check_feasibility, extract_shop_metadata
-from datamate.ingestion.loader import load_business, to_sqlite
-from datamate.ingestion.schema_profiler import profile_business_schema
-from datamate.ingestion.cleaner import clean_business
-from datamate.grounding.entity_linker import extract_candidates_from_business, link_entities
-from datamate.grounding.temporal import filter_future_data
-from datamate.execution.helpers import clean_num, clean_date
+from datamate.llm_execution.client import LLMClient
+from datamate.llm_execution.prompt import build_prompt, load_rulebook, build_retry_prompt
+from datamate.grounding_feasibility.feasibility import check_feasibility, extract_shop_metadata
+from datamate.ingestion_schema.loader import load_business, to_sqlite
+from datamate.ingestion_schema.schema_profiler import profile_business_schema
+from datamate.ingestion_schema.cleaner import clean_business
+from datamate.grounding_feasibility.entity_linker import extract_candidates_from_business, link_entities
+from datamate.grounding_feasibility.temporal import filter_future_data
+from datamate.llm_execution.sandbox import clean_num, clean_date, run_code
 from datamate.exceptions import DataNotFoundError
-from datamate.execution.sandbox import run_code
-from datamate.output.submission import make_abstain, SubmissionWriter, validate_submission
-from datamate.output.normalizer import normalize_output, apply_tie_breaker, check_result_sanity
-from datamate.output.abstention import compute_confidence_score, apply_abstention_gate
+from datamate.output_abstention.submission import make_abstain, SubmissionWriter, validate_submission
+from datamate.output_abstention.normalizer import normalize_output, apply_tie_breaker, check_result_sanity
+from datamate.output_abstention.abstention import (
+    compute_confidence_score,
+    apply_abstention_gate,
+    evaluate_grounding_coverage,
+)
 
 
 # ==============================================================================
@@ -68,18 +71,16 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
     try:
         raw_bd = load_business(biz_dir)
         bd = clean_business(raw_bd)
-        con = to_sqlite(bd)
+        con = None  # Tối ưu hóa nạp kép: LLM 100% dùng Pandas trên data, bỏ nạp SQLite mặc định
         data_dict: Dict[str, pd.DataFrame] = {}
         for ti in bd.tables:
-            t_base = Path(ti.fixed_file_name).stem
+            t_base = Path(ti.fixed_file_name).stem if getattr(ti, "fixed_file_name", None) else ti.table_id
             t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
             data_dict[t_name] = ti.df
-            if t_base not in data_dict:
+            if t_base != t_name and t_base not in data_dict:
                 data_dict[t_base] = ti.df
-            if ti.table_id:
+            if ti.table_id and ti.table_id not in data_dict:
                 data_dict[ti.table_id] = ti.df
-            if ti.sheet_name and ti.sheet_name not in data_dict:
-                data_dict[ti.sheet_name] = ti.df
 
         # Sử dụng Rich Schema Profiler hiển thị kiểu dữ liệu, min-max date và giá trị mẫu
         schema_summary = profile_business_schema(bd, max_cols=25)
@@ -557,6 +558,8 @@ def main():
 
     active_limit = args.limit if args.limit is not None else len(target_questions)
     active_questions = target_questions[:active_limit]
+    # Gom nhóm các câu hỏi theo shop để tận dụng tối đa RAM Cache và Persistent Sandbox Worker
+    active_questions = sorted(active_questions, key=lambda q: (q.get("business_id", ""), q.get("id", "")))
     active_qids = {q["id"] for q in active_questions} | existing_completed_ids
 
     print("=" * 80)
@@ -699,14 +702,16 @@ def main():
                 else:
                     err_feedback = f"Kết quả tính toán không hợp lý: {sanity_err}"
 
-                retry_prompt = (
-                    f"{user_prompt}\n\n"
-                    f"# [YÊU CẦU TỰ SỬA LỖI - VÒNG {self_correction_count}]:\n"
-                    f"# {err_feedback}\n"
-                    f"# Hãy sửa lỗi và viết lại duy nhất một hàm hoàn chỉnh: def solution(data):\n```python\n"
+                retry_sys_prompt, retry_user_prompt = build_retry_prompt(
+                    question=question_text,
+                    failed_code=code_text,
+                    error_message=err_feedback,
+                    schema_str=schema_str,
+                    as_of_date=as_of_date,
+                    retry_round=self_correction_count,
                 )
                 t_retry = time.time()
-                retry_code = llm.generate_code(prompt=retry_prompt, system_prompt=sys_prompt, max_new_tokens=1024)
+                retry_code = llm.generate_code(prompt=retry_user_prompt, system_prompt=retry_sys_prompt, max_new_tokens=1024)
                 gen_sec = round(gen_sec + (time.time() - t_retry), 2)
                 raw_retry, err_retry, ms_retry, type_retry, src_retry = execute_solution(
                     code_text=retry_code,
@@ -727,9 +732,11 @@ def main():
                         sanity_err = f"Sau vòng {self_correction_count}, mô hình vẫn trả về 'unanswerable' trên câu hỏi khả thi."
                         err_type = "UnanswerableReturned"
                         unans_source = "model"
+                        code_text = retry_code
                     elif not is_sane2:
                         sanity_err = sanity_reason2
                         err_type = "SanityError"
+                        code_text = retry_code
                     else:
                         # Tự sửa lỗi thành công!
                         code_text = retry_code
@@ -741,6 +748,7 @@ def main():
                         print(f"  ✅ [Self-Correction] Vòng {self_correction_count} thành công!")
                         break
                 else:
+                    code_text = retry_code
                     exec_err = err_retry
                     err_type = type_retry
                     unans_source = src_retry
@@ -755,6 +763,12 @@ def main():
                 print(f"  ⚠️ [Sanity Check không hợp lý] {sanity_err} -> Chủ động Abstain (0 điểm)")
             else:
                 sub_ans = normalize_output(raw_result, question=question_text, code_text=code_text)
+                grounding_eval_res = evaluate_grounding_coverage(
+                    code_text=code_text,
+                    question=question_text,
+                    entity_matches=entity_matches,
+                    temporal_info=temporal_res,
+                )
                 confidence = compute_confidence_score(
                     sub_ans=sub_ans,
                     exec_error=exec_err,
@@ -765,6 +779,7 @@ def main():
                     code_text=code_text,
                     has_feasibility_pass=True,
                     unanswerable_source=unans_source,
+                    grounding_eval=grounding_eval_res,
                 )
                 sub_ans, is_abs = apply_abstention_gate(
                     sub_ans, 
@@ -772,6 +787,9 @@ def main():
                     threshold=args.tau_star,
                     unanswerable_source=unans_source,
                 )
+                penalty = grounding_eval_res.get("total_penalty", 0.0)
+                if penalty > 0:
+                    print(f"  🛡️ [Grounding Penalty] -{penalty:.2f} (Entity: {grounding_eval_res.get('entity_coverage', 1.0)*100:.0f}%, Time: {grounding_eval_res.get('temporal_coverage', 1.0)*100:.0f}%)")
                 if is_abs:
                     print(f"  🛡️ [Abstention Gate] C={confidence:.2f} < tau*={args.tau_star:.2f} (Source={unans_source}) -> Ép về Abstain (0 điểm)")
                 else:

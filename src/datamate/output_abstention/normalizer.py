@@ -566,14 +566,16 @@ def normalize_output(
 
     # 2. Trường hợp unanswerable
     if raw_val == "unanswerable" or (isinstance(raw_val, str) and raw_val.strip().lower() in ("unanswerable", "không thể trả lời")):
-        return {"type": "unanswerable", "answer": None, "unanswerable_source": "model"}
+        return {"type": "unanswerable", "answer": None}
 
     # 3. Trường hợp dict đã có type
     if isinstance(raw_val, dict):
         d_type = raw_val.get("type")
         if d_type in ("unanswerable", "abstain"):
-            src = raw_val.get("unanswerable_source", "model" if d_type == "unanswerable" else "none")
-            return {"type": d_type, "answer": None, "unanswerable_source": src}
+            res_d = {"type": d_type, "answer": None}
+            if "unanswerable_source" in raw_val:
+                res_d["unanswerable_source"] = raw_val["unanswerable_source"]
+            return res_d
         if d_type in ("number", "percent", "date", "boolean", "string", "list", "table"):
             expected_type = d_type
             raw_val = raw_val.get("answer")

@@ -6,7 +6,7 @@ Hoạt động:
 2. Tự động nạp rulebook.md và calendar.csv của split tương ứng.
 3. Nạp dữ liệu các doanh nghiệp (CSV, XLSX, SQLite, JSON) kèm cơ chế in-memory caching (bao gồm cả shop_meta).
 4. Kiểm tra tính khả thi qua Module 3 (Feasibility Gate) để bắt sớm các câu hỏi 'unanswerable' (+1 điểm, 0s GPU).
-5. Xây dựng prompt kỹ thuật (kèm README.md của shop) và sinh mã phân tích dữ liệu qua mô hình LLM (Qwen2.5-Coder).
+5. Xây dựng prompt kỹ thuật (kèm README.md của shop) và sinh mã phân tích dữ liệu qua mô hình LLM (Qwen2.5-Coder-3B).
 6. Thực thi mã trong môi trường an toàn; nếu gặp lỗi thực thi (Runtime Error), tự động kích hoạt 1 lượt
    Self-Correction để mô hình tự sửa lỗi trước khi fallback về 'abstain'.
 7. Chuẩn hóa kết quả đầu ra qua Module 6 (Format Normalizer & Tie-Breaker) về đúng 8 kiểu đáp án của Ban Tổ Chức.
@@ -87,24 +87,27 @@ class DualLogger:
 
 
 # Nhập các thành phần cốt lõi của package datamate
-from datamate.grounding.temporal import filter_future_data
-from datamate.execution.helpers import clean_num, clean_date
-from datamate.llm.client import LLMClient
-from datamate.llm.prompt_builder import build_prompt, load_rulebook, resolve_temporal_context
-from datamate.llm.feasibility import check_feasibility, extract_shop_metadata
-from datamate.ingestion.loader import load_business, to_sqlite
-from datamate.ingestion.schema_profiler import profile_business_schema
-from datamate.ingestion.cleaner import clean_business
-from datamate.grounding.entity_linker import extract_candidates_from_business, link_entities, expand_abbreviations
-from datamate.execution.sandbox import run_code, RunResult
-from datamate.output.submission import (
+from datamate.grounding_feasibility.temporal import filter_future_data
+from datamate.llm_execution.sandbox import clean_num, clean_date, run_code, RunResult
+from datamate.llm_execution.client import LLMClient
+from datamate.llm_execution.prompt import build_prompt, load_rulebook, resolve_temporal_context, build_retry_prompt
+from datamate.grounding_feasibility.feasibility import check_feasibility, extract_shop_metadata
+from datamate.ingestion_schema.loader import load_business, to_sqlite
+from datamate.ingestion_schema.schema_profiler import profile_business_schema
+from datamate.ingestion_schema.cleaner import clean_business
+from datamate.grounding_feasibility.entity_linker import extract_candidates_from_business, link_entities, expand_abbreviations
+from datamate.output_abstention.submission import (
     to_answer,
     make_abstain,
     SubmissionWriter,
     validate_submission,
 )
-from datamate.output.normalizer import normalize_output, apply_tie_breaker, check_result_sanity
-from datamate.output.abstention import compute_confidence_score, apply_abstention_gate
+from datamate.output_abstention.normalizer import normalize_output, apply_tie_breaker, check_result_sanity
+from datamate.output_abstention.abstention import (
+    compute_confidence_score,
+    apply_abstention_gate,
+    evaluate_grounding_coverage,
+)
 
 
 # ==============================================================================
@@ -123,19 +126,17 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
         raw_bd = load_business(biz_dir)
         # Kích hoạt làm sạch Rule 8 (Group Forward-Fill & Deduplication)
         bd = clean_business(raw_bd)
-        con = to_sqlite(bd)
+        con = None  # Tối ưu hóa: LLM 100% dùng Pandas trên data, bỏ nạp kép SQLite để giảm 50% thời gian load & RAM
         data_dict: Dict[str, pd.DataFrame] = {}
         for ti in bd.tables:
-            t_base = Path(ti.fixed_file_name).stem
+            t_base = Path(ti.fixed_file_name).stem if getattr(ti, "fixed_file_name", None) else ti.table_id
             t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
 
             data_dict[t_name] = ti.df
-            if t_base not in data_dict:
+            if t_base != t_name and t_base not in data_dict:
                 data_dict[t_base] = ti.df
-            if ti.table_id:
+            if ti.table_id and ti.table_id not in data_dict:
                 data_dict[ti.table_id] = ti.df
-            if ti.sheet_name and ti.sheet_name not in data_dict:
-                data_dict[ti.sheet_name] = ti.df
 
         # Sử dụng Rich Schema Profiler hiển thị kiểu dữ liệu, min-max date và giá trị mẫu
         schema_summary = profile_business_schema(bd, max_cols=25)
@@ -244,7 +245,7 @@ def main():
     parser.add_argument("--output_file", type=str, default=default_output_file, help=f"Đường dẫn file xuất kết quả (mặc định: {default_output_file})")
     parser.add_argument("--log_dir", type=str, default=default_log_dir, help=f"Thư mục lưu log chi tiết từng câu hỏi (mặc định: {default_log_dir})")
     parser.add_argument("--log_file", type=str, default=None, help="Đường dẫn tệp để tự động ghi toàn bộ nhật ký console UTF-8 (thay thế cho Tee-Object)")
-    parser.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Coder-7B-Instruct", help="Tên hoặc đường dẫn mô hình (mặc định: Qwen/Qwen2.5-Coder-7B-Instruct)")
+    parser.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Coder-3B-Instruct", help="Tên hoặc đường dẫn mô hình (mặc định: Qwen/Qwen2.5-Coder-3B-Instruct)")
     parser.add_argument("--limit", type=int, default=None, help="Giới hạn số lượng câu hỏi cần chạy suy luận bằng LLM (mặc định: toàn bộ)")
     parser.add_argument("--biz", type=str, default=None, help="Chỉ chạy câu hỏi thuộc doanh nghiệp cụ thể (ví dụ: biz_201)")
     parser.add_argument("--id", type=str, default=None, help="Chỉ chạy câu hỏi theo ID cụ thể")
@@ -321,6 +322,8 @@ def main():
     total_target = len(target_questions)
     active_limit = args.limit if args.limit is not None else total_target
     active_questions = target_questions[:active_limit]
+    # Gom nhóm các câu hỏi theo shop để tận dụng tối đa RAM Cache và Persistent Sandbox Worker
+    active_questions = sorted(active_questions, key=lambda q: (q.get("business_id", ""), q.get("id", "")))
     active_qids = {q["id"] for q in active_questions} | existing_completed_ids
 
     print(f"• Số câu chạy suy luận  : {len(active_questions)} câu")
@@ -442,21 +445,40 @@ def main():
                     sanity_err = sanity_reason
                     print(f"  ⚠️ [Sanity Check] Lượt 1 vi phạm ({sanity_reason}) -> Kích hoạt Self-Correction...")
 
-            # 5.2. Cơ chế Runtime Self-Correction (1 lượt tự sửa lỗi nếu gặp ngoại lệ hoặc vi phạm Sanity Check)
-            if exec_err or sanity_err:
+            # Đánh giá độ phủ thực thể & thời gian (Grounding Coverage) ở Lượt 1
+            grounding_eval = evaluate_grounding_coverage(
+                code_text=code_text,
+                question=question_text,
+                entity_matches=entity_matches,
+                temporal_info=temporal_res,
+            )
+            missed_mentions = grounding_eval.get("missed_mentions", [])
+            should_retry_for_missed = bool(missed_mentions and not exec_err and not sanity_err and grounding_eval.get("entity_coverage", 1.0) < 0.5)
+
+            # 5.2. Cơ chế Runtime Self-Correction (1 lượt tự sửa lỗi nếu gặp ngoại lệ, vi phạm Sanity Check, hoặc bỏ sót thực thể quan trọng)
+            if exec_err or sanity_err or should_retry_for_missed:
                 retry_count = 1
-                err_feedback = exec_err if exec_err else f"Kết quả tính toán không hợp lý: {sanity_err}"
+                if exec_err:
+                    err_feedback = exec_err
+                elif sanity_err:
+                    err_feedback = f"Kết quả tính toán không hợp lý: {sanity_err}"
+                else:
+                    first_m = missed_mentions[0]
+                    err_feedback = f"Mã nguồn chưa lọc theo thực thể được hỏi: '{first_m['term']}' (giá trị thực tế: '{first_m['candidate']}')"
+                    print(f"  🔍 [Grounding Feedback] Phát hiện bỏ sót thực thể quan trọng -> Kích hoạt Self-Correction Turn 2...")
+
                 print(f"  🔄 [Self-Correction] Yêu cầu LLM tự sửa mã ({err_feedback})...")
-                retry_user_prompt = (
-                    f"{user_prompt}\n"
-                    f"# Mã nguồn ở lượt trước của bạn bị lỗi / kết quả không hợp lý:\n"
-                    f"```python\n{code_text}\n```\n"
-                    f"# Thông báo lỗi: {err_feedback}\n"
-                    f"# Hãy kiểm tra lại đúng tên bảng, tên cột và công thức trong `data`, sửa lỗi và viết lại duy nhất hàm `def solution(data):` hoàn chỉnh:\n"
-                    f"```python\n"
+                retry_sys_prompt, retry_user_prompt = build_retry_prompt(
+                    question=question_text,
+                    failed_code=code_text,
+                    error_message=err_feedback,
+                    schema_str=schema_str,
+                    as_of_date=as_of_date,
+                    retry_round=1,
+                    missed_mentions=missed_mentions,
                 )
                 t_retry = time.time()
-                retry_code = llm.generate_code(prompt=retry_user_prompt, system_prompt=sys_prompt, max_new_tokens=1024)
+                retry_code = llm.generate_code(prompt=retry_user_prompt, system_prompt=retry_sys_prompt, max_new_tokens=1024)
                 gen_sec = round(gen_sec + (time.time() - t_retry), 2)
                 raw_retry, err_retry, ms_retry = execute_solution(
                     code_text=retry_code,
@@ -488,6 +510,14 @@ def main():
                     code_text = retry_code
                     exec_err = err_retry
 
+            # Đánh giá lại Grounding Coverage sau lượt thử lại (nếu có)
+            grounding_eval = evaluate_grounding_coverage(
+                code_text=code_text,
+                question=question_text,
+                entity_matches=entity_matches,
+                temporal_info=temporal_res,
+            )
+
             # 6. Chuẩn hóa kết quả đầu ra & Đánh giá Calibrated Abstention Gate (Module 6)
             confidence = 0.0
             if exec_err:
@@ -511,8 +541,12 @@ def main():
                         sanity_error=sanity_err,
                         code_text=code_text,
                         has_feasibility_pass=True,
+                        grounding_eval=grounding_eval,
                     )
                     sub_ans, is_abstained = apply_abstention_gate(sub_ans, confidence=confidence, threshold=args.tau_star)
+                    penalty = grounding_eval.get("total_penalty", 0.0)
+                    if penalty > 0:
+                        print(f"  🛡️ [Grounding Penalty] -{penalty:.2f} (Entity Coverage: {grounding_eval.get('entity_coverage', 1.0)*100:.0f}%, Time Coverage: {grounding_eval.get('temporal_coverage', 1.0)*100:.0f}%)")
                     if is_abstained:
                         print(f"  🛡️ [Abstention Gate] Độ tin cậy thấp C={confidence:.2f} < tau*={args.tau_star:.2f} -> Chủ động Abstain (0 điểm)")
                     else:

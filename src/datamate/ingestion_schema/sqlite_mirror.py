@@ -15,9 +15,10 @@ import re
 import sqlite3
 import unicodedata
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
-from datamate.ingestion.loader import BusinessData
+if TYPE_CHECKING:
+    from datamate.ingestion_schema.loader import BusinessData
 
 log = logging.getLogger(__name__)
 

@@ -1,0 +1,64 @@
+{
+  "question_id": "q_8d076e8b04fa",
+  "business_id": "biz_119",
+  "as_of_date": "2026-07-13",
+  "original_question": "tháng 11/2025 ca chiều bán dc bnhiu tiền",
+  "normalized_question": "tháng 11/2025 ca chiều bán được bao nhiêu tiền",
+  "expanded_abbreviations": {
+    "dc": "được",
+    "bnhiu": "bao nhiêu"
+  },
+  "intent": "aggregation",
+  "temporal_desc": "Tháng 11/2025",
+  "temporal_range": [
+    "2025-11-01",
+    "2025-11-30"
+  ],
+  "entity_matches": [],
+  "pruned_schema": "### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):\n\n- Bảng 'BaoCaoTonKho' (alias: 't_01'): Tồn kho / Thẻ kho (số lượng tồn, tồn thực)\n\n- Bảng 'DanhSachHoaDonChiTiet' (alias: 't_04'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n\n- Bảng 'DanhSachHoaDonChiTietLo' (alias: 't_05'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n\n- Bảng 'DanhSachKhachHang' (alias: 't_06'): Danh mục khách hàng (mã khách, tên khách, nhóm khách, địa chỉ)\n\n- Bảng 'DanhSachLoHang' (alias: 't_07'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n\n- Bảng 'DanhSachSanPham' (alias: 't_09'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n\n- Bảng 'DanhSachThuoc' (alias: 't_10'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n\n- Bảng 'BaoCaoTonKho' [Vai trò: Tồn kho / Thẻ kho (số lượng tồn, tồn thực)] (70 dòng):\n  Cột (4): ['Mã hàng' (vd: 'SP0001'), 'Tên hàng' (vd: 'Panadol Extra Hộp 1...'), 'ĐVT' (vd: 'viên'), 'Tồn cuối kỳ' (số/tiền, vd: '80')]\n\n- Bảng 'DanhSachHoaDonChiTiet' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (63823 dòng):\n  Cột (9): ['Mã hóa đơn' (vd: 'ORD000001'), 'Mã hàng' (vd: 'SP0004'), 'Tên hàng' (vd: 'Tiffy Dey hộp 25 vỉ...'), 'Số lượng' (số/tiền, vd: '2'), 'Đơn giá' (số/tiền, vd: '4,400'), 'Giảm giá' (số/tiền, vd: '0'), 'Thành tiền' (số/tiền, vd: '8,800'), 'Số lượng quy đổi' (số/tiền, vd: '8'), 'STT' (phân loại: ['1', '2', '3', '4'])]\n\n- Bảng 'DanhSachHoaDonChiTietLo' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (65483 dòng):\n  Cột (5): ['Mã hóa đơn' (vd: 'ORD000001'), 'STT' (phân loại: ['1', '2', '3', '4']), 'Lô' (vd: 'X2501948'), 'Số lượng (ĐVT cơ bản)' (số/tiền, vd: '8'), 'Số lượng trả (ĐVT cơ bản)' (số/tiền, vd: '0')]\n\n- Bảng 'DanhSachKhachHang' [Vai trò: Danh mục khách hàng (mã khách, tên khách, nhóm khách, địa chỉ)] (300 dòng):\n  Cột (10): ['Tổng điểm' (phân loại: ['0']), 'Mã khách hàng' (vd: 'KH0001'), 'Ngày sinh' (ngày: '1965-07-19' -> '2002-01-17'), 'Tên khách hàng' (vd: 'Đào Hà Phúc'), 'Người tạo' (phân loại: ['admin']), 'Đối tượng KH' (phân loại: ['Cá nhân']), 'Điểm tích lũy' (phân loại: ['0']), 'Điện thoại' (vd: '0909460221'), 'MST' (vd: '0896203682'), 'Địa chỉ' (vd: '62 Khánh Hội')]\n\n- Bảng 'DanhSachSanPham' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (70 dòng):\n  Cột (10): ['Mã hàng' (vd: 'SP0001'), 'Loại hàng hóa' (phân loại: ['Hàng hóa']), 'Tên hàng' (vd: 'Panadol Extra hộp 1...'), 'Tồn nhỏ nhất' (số/tiền, vd: '0'), 'Được bán trực tiếp' (phân loại: ['1']), 'Nhóm hàng(3 Cấp)' (vd: 'giảm đau hạ sốt'), 'Giá bán' (số/tiền, vd: '1400'), 'ĐVT' (vd: 'viên'), 'Mã vạch EAN' (vd: '8934444599665'), 'Tồn lớn nhất' (số/tiền, vd: '999999999')]\n\n- Bảng 'DanhSachThuoc' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (70 dòng):\n  Cột (3): ['Mã hàng' (vd: 'SP0001'), 'Hoạt chất' (vd: 'Paracetamol + Cafein'), 'Thuốc kê đơn' (phân loại: ['False', 'True'])]",
+  "code_text": "def solution(data):\n    # Dry run mock code\n    return \"abstain\"",
+  "raw_result": "abstain",
+  "predicted_answer": null,
+  "predicted_type": "abstain",
+  "gold_answer": 72603400,
+  "gold_type": "number",
+  "is_correct": false,
+  "eval_score": 0.0,
+  "eval_status_label": "TỪ CHỐI TRẢ LỜI (ABSTAIN - 0.0)",
+  "confidence_score": 0.0,
+  "threshold_tau_star": 0.5,
+  "grounding_eval": {
+    "entity_coverage": 1.0,
+    "temporal_coverage": 0.0,
+    "table_coverage": 1.0,
+    "entity_penalty": 0.0,
+    "temporal_penalty": 0.25,
+    "table_penalty": 0.0,
+    "total_penalty": 0.25,
+    "missed_mentions": [],
+    "offtopic_tables": [],
+    "total_valid_mentions": 0,
+    "covered_mentions": 0
+  },
+  "latencies_ms": {
+    "ingest_schema": 35775.877899999614,
+    "feasibility": 102.2290000000794,
+    "grounding": 152.28389999901992,
+    "prompt_build": 13.310000000274158,
+    "llm_gen": 0.0,
+    "sandbox_exec": 0.002499999027349986,
+    "normalizer": 0.25880000066536013
+  },
+  "total_latency_ms": 36043.96209999868,
+  "ai_recommendations": [
+    "TRẠNG THÁI TỪ CHỐI (ABSTAIN - 0.0): Bảo toàn điểm số an toàn không bị trừ điểm.",
+    "Bổ sung ràng buộc ngày tháng ISO vào code để xóa mức phạt Temporal Penalty."
+  ],
+  "deviation_analysis": {
+    "is_applicable": false,
+    "abs_diff": null,
+    "pct_diff": null,
+    "diagnostic_hypothesis": null
+  },
+  "self_correction_trace": []
+}

@@ -39,14 +39,33 @@ VIETNAMESE_ABBREVIATIONS: dict[str, str] = {
     "sp": "sản phẩm",
     "kh": "khách hàng",
     "dthu": "doanh thu",
+    "dt": "doanh thu",
+    "dso": "doanh số",
     "sl": "số lượng",
     "slg": "số lượng",
     "đh": "đơn hàng",
     "dh": "đơn hàng",
     "sz": "size",
     "hnay": "hôm nay",
+    "hqua": "hôm qua",
     "thg": "tháng",
     "bnhiu": "bao nhiêu",
+    "bnhieu": "bao nhiêu",
+    "bnhiêu": "bao nhiêu",
+    "bn": "bao nhiêu",
+    "trc": "trước",
+    "dc": "được",
+    "đc": "được",
+    "ko": "không",
+    "k": "không",
+    "nv": "nhân viên",
+    "ncc": "nhà cung cấp",
+    "hd": "hóa đơn",
+    "hđ": "hóa đơn",
+    "ct": "chi tiết",
+    "ck": "chiết khấu",
+    "km": "khuyến mãi",
+    "tt": "thành tiền",
 }
 
 # Các cột tiềm năng chứa thực thể (Mở rộng toàn diện các trường nghiệp vụ)
@@ -128,8 +147,27 @@ def normalize_entity_text(text: str, strip_accents: bool = False) -> str:
 def expand_abbreviations(text: str) -> str:
     """Mở rộng các từ viết tắt / teencode trong câu."""
     tokens = text.split()
-    expanded = [VIETNAMESE_ABBREVIATIONS.get(t, t) for t in tokens]
+    expanded = [VIETNAMESE_ABBREVIATIONS.get(t.lower().strip(".,!?:;\"'()[]{}"), t) for t in tokens]
     return " ".join(expanded)
+
+
+def explain_and_expand_abbreviations(text: str) -> tuple[str, dict[str, str]]:
+    """
+    Mở rộng các từ viết tắt và ghi lại chi tiết các từ trước/sau đã được chuyển đổi.
+    Trả về (câu_mới, {từ_viết_tắt: dạng_chuẩn}).
+    """
+    tokens = text.split()
+    replaced = {}
+    expanded = []
+    for t in tokens:
+        clean_t = t.lower().strip(".,!?:;\"'()[]{}")
+        if clean_t in VIETNAMESE_ABBREVIATIONS:
+            full_word = VIETNAMESE_ABBREVIATIONS[clean_t]
+            replaced[t] = full_word
+            expanded.append(full_word)
+        else:
+            expanded.append(t)
+    return " ".join(expanded), replaced
 
 
 def jaro_winkler_similarity(s1: str, s2: str) -> float:

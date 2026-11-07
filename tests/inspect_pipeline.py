@@ -1,30 +1,41 @@
 """
-Script: test/inspect_pipeline.py
-Mục đích: Công cụ chẩn đoán chuyên sâu từng module (Step-by-step Modular Diagnostic Inspector).
-Cho phép:
-1. Chọn ngẫu nhiên (--random) hoặc chỉ định 1 doanh nghiệp (--biz) và 1 câu hỏi cụ thể (--id).
-2. Chạy tuần tự qua từng module và đo đạc:
-   - Module 1: Ingestion & Loader (Thời gian nạp, số bảng, dung lượng RAM)
-   - Module 2: Schema Profiler & Data Cleaner (Thời gian làm sạch, trích xuất Schema, danh sách cột)
-   - Module 3: Feasibility Gate (Thời gian kiểm tra tính khả thi, phát hiện unanswerable sớm)
-   - Module 4: Grounding (Temporal Resolver + Lunar Calendar + Entity Linker)
-   - Module 5: Prompt Assembly & Dynamic Few-shot (Phân loại Intent, chọn ví dụ mẫu, kích thước prompt)
-   - Module 6: LLM Code Generation (Thời gian sinh mã, số tokens, đoạn code Python)
-   - Module 7: Execution Sandbox (Thời gian chạy code, kiểm tra AST, kết quả thô trả về)
-   - Module 8: Output Normalizer & Abstention Shield (Chuẩn hóa 8 format, độ tin cậy, quyết định nộp/từ chối)
-   - Module 9: So sánh đối chiếu với Expected Output (Gold Answer) & Chấm điểm PA (+1 / -1 / 0)
+Script: tests/inspect_pipeline.py
+Mục đích: Công cụ Toàn Năng Kiểm Thử, Chẩn Đoán White-Box & Đánh Giá Toàn Trình (Comprehensive White-Box Diagnostic Inspector & Batch Evaluator).
+
+Bao quát 100% chức năng của `run_eval.py` và nâng cấp toàn diện 8 mục chẩn đoán chuyên sâu:
+1. Hồ sơ Metadata Cửa hàng (Shop Metadata Deep-Dive): min_date -> max_date, README, bảng, dòng, sheet merge, header.
+2. Checklist Thẩm định Khả thi (Feasibility Gate Checklist): Điều 5 (ngày tương lai), Điều 7 (ngày so sánh), Out-of-Scope concepts.
+3. Bảng Thực thể & Lịch Âm (Entity Linker & Lunar Calendar Table): ánh xạ mention -> matched_value -> table.col -> score >= 0.85, ngày âm lịch.
+4. So sánh Cắt tỉa Lược đồ (Schema Pruning Diff): Trước vs Sau, bảng giữ lại kèm lý do (intent/entity), bảng bị loại bỏ, tỷ lệ nén.
+5. Giải phẫu Prompt & Few-Shot Dynamic (Prompt & Token Budget Anatomy): exemplar title & intent, token breakdown các thành phần.
+6. Phân tích Tĩnh AST, An toàn mã & Tự sửa lỗi (AST Safety, Code Extraction & Self-Correction Trace): cú pháp AST, bảng/cột tham chiếu, tiện ích sử dụng, toàn bộ code, trace vòng 1 -> vòng 2.
+7. Giải phẫu Toán học Điểm Tự Tin (Confidence Score Breakdown): C_base (exec, sanity, ast, zero) - các mức phạt Grounding (thực thể bỏ sót, thời gian, offtopic table) vs tau* = 0.50.
+8. Phân tích Độ lệch Số học, Chuẩn hóa & Chẩn đoán Lỗi tự động (Error & Tolerance Analysis): raw -> normalized, sai số tuyệt đối, sai số %, chẩn đoán sai đơn vị (x1000), quên lọc đơn hủy, làm tròn.
+
+Hỗ trợ 2 chế độ:
+- Chế độ Đơn lẻ (Single Question Deep Inspection): Chẩn đoán chi tiết 8 mục, xuất Telemetry JSON & Dashboard PNG độ phân giải cao.
+- Chế độ Hàng loạt (Batch Evaluation Mode): Đánh giá tập dữ liệu, tính điểm Penalized Accuracy (PA), Accuracy, Coverage, xuất biểu đồ Pillow 4-panel native và file submission JSONL.
 """
 
 from __future__ import annotations
 
-import os
-import sys
-import json
-import time
-import random
 import argparse
+import ast
+from collections import defaultdict
+import csv
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+import io
+import json
+import logging
+import math
+import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+import random
+import re
+import sys
+import time
+from typing import Any, Dict, List, Optional, Set, Tuple
+import unicodedata
 
 # Tự động nạp thư mục src và root vào sys.path
 _ROOT = Path(__file__).resolve().parent.parent
@@ -41,49 +52,1719 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-import pandas as pd
 import numpy as np
+import pandas as pd
+from PIL import Image, ImageDraw, ImageFont
 
-# Nhập các thành phần module cốt lõi của DataMate
+# Nhập các thành phần cốt lõi của DataMate
 from datamate.config import load_config
-from datamate.grounding.temporal import filter_future_data
-from datamate.grounding.entity_linker import link_entities
-from datamate.grounding.rulebook import load_rulebook
-from datamate.llm.feasibility import check_feasibility
-from datamate.llm.prompt_builder import classify_intent, build_prompt, resolve_temporal_context
-from datamate.llm.few_shot_retriever import retrieve_dynamic_few_shot
-from datamate.llm.client import LLMClient
-from datamate.output.normalizer import normalize_output, check_result_sanity
-from datamate.output.abstention import compute_confidence_score, apply_abstention_gate
-from datamate.output.submission import make_abstain
+from datamate.exceptions import DataNotFoundError
+from datamate.grounding_feasibility.entity_linker import (
+    explain_and_expand_abbreviations,
+    extract_candidates_from_business,
+    link_entities,
+    VIETNAMESE_ABBREVIATIONS,
+)
+from datamate.grounding_feasibility.feasibility import (
+    check_feasibility,
+    extract_shop_metadata,
+)
+from datamate.grounding_feasibility.rulebook import load_rulebook
+from datamate.grounding_feasibility.temporal import (
+    filter_future_data,
+    get_calendar,
+    LunarCalendar,
+    resolve_temporal_context,
+    TET_SOLAR_RANGES,
+)
+from datamate.ingestion_schema.cleaner import clean_business
+from datamate.ingestion_schema.loader import load_business
+from datamate.ingestion_schema.schema_profiler import profile_business_schema
+from datamate.llm_execution.client import LLMClient
+from datamate.llm_execution.prompt import (
+    build_prompt,
+    build_retry_prompt,
+    classify_intent,
+    EXEMPLAR_BANK,
+    prune_schema_by_intent,
+    retrieve_dynamic_few_shot,
+)
+from datamate.llm_execution.sandbox import (
+    clean_date,
+    clean_num,
+    run_code,
+)
+from datamate.output_abstention.abstention import (
+    apply_abstention_gate,
+    compute_confidence_score,
+    evaluate_grounding_coverage,
+)
+from datamate.output_abstention.normalizer import (
+    apply_tie_breaker,
+    check_result_sanity,
+    normalize_output,
+)
+from datamate.output_abstention.submission import (
+    make_abstain,
+    SubmissionWriter,
+    validate_submission,
+)
 
-# Nhập các hàm pipeline đã kiểm chứng từ tests/run_eval.py
-from tests.run_eval import load_business_data, execute_solution, compare_single_answer
+
+# ==============================================================================
+# BỘ NHỚ ĐỆM DỮ LIỆU CỬA HÀNG (IN-MEMORY CACHE)
+# ==============================================================================
+
+_BUSINESS_CACHE: Dict[str, Tuple[Dict[str, pd.DataFrame], Any, str, Any, Dict[str, Any], List[Any]]] = {}
 
 
-def print_header(title: str, icon: str = "🔷"):
+def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataFrame], Any, str, Any, Dict[str, Any], List[Any]]:
+    """Nạp dữ liệu sạch của doanh nghiệp (áp dụng Rule 8), tạo schema summary, trích xuất shop_meta và candidates."""
+    biz_dir = data_root / biz_id
+    if not biz_dir.exists():
+        return {}, None, f"Không tìm thấy thư mục shop: {biz_dir}", None, {}, []
+
+    try:
+        raw_bd = load_business(biz_dir)
+        bd = clean_business(raw_bd)
+        con = None  # Tối ưu hóa nạp kép: LLM 100% dùng Pandas trên data, bỏ nạp SQLite mặc định
+        data_dict: Dict[str, pd.DataFrame] = {}
+        for ti in bd.tables:
+            t_base = Path(ti.fixed_file_name).stem if getattr(ti, "fixed_file_name", None) else ti.table_id
+            t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
+            data_dict[t_name] = ti.df
+            if t_base != t_name and t_base not in data_dict:
+                data_dict[t_base] = ti.df
+            if ti.table_id and ti.table_id not in data_dict:
+                data_dict[ti.table_id] = ti.df
+
+        # Sử dụng Rich Schema Profiler hiển thị kiểu dữ liệu, min-max date và giá trị mẫu
+        schema_summary = profile_business_schema(bd, max_cols=25)
+        shop_meta = extract_shop_metadata(business_obj=bd, data_dict=data_dict)
+        candidates = extract_candidates_from_business(bd)
+        return data_dict, con, schema_summary, bd, shop_meta, candidates
+    except Exception as exc:
+        return {}, None, f"Lỗi nạp dữ liệu: {exc}", None, {}, []
+
+
+def get_cached_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataFrame], Any, str, Any, Dict[str, Any], List[Any], bool]:
+    """Lấy dữ liệu shop, shop_meta và candidates từ RAM cache."""
+    if biz_id in _BUSINESS_CACHE:
+        d, c, s, b, sm, cd = _BUSINESS_CACHE[biz_id]
+        return d, c, s, b, sm, cd, True
+
+    d, c, s, b, sm, cd = load_business_data(biz_id, data_root)
+    _BUSINESS_CACHE[biz_id] = (d, c, s, b, sm, cd)
+    return d, c, s, b, sm, cd, False
+
+
+# ==============================================================================
+# THỰC THI MÃ NGUỒN AN TOÀN TRONG SANDBOX & TRÍCH XUẤT AST
+# ==============================================================================
+
+def validate_code_safety(code_str: str) -> Tuple[bool, Optional[str]]:
+    """Kiểm tra tính an toàn và tính hợp lệ cú pháp của mã nguồn bằng AST."""
+    if not code_str or not code_str.strip():
+        return False, "Mã nguồn rỗng"
+    try:
+        tree = ast.parse(code_str)
+    except SyntaxError as se:
+        return False, f"Lỗi cú pháp Python (SyntaxError): {se.msg} ở dòng {se.lineno}"
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            names = [alias.name for alias in node.names] if hasattr(node, "names") else []
+            for n in names:
+                if any(bad in n for bad in ["socket", "urllib", "requests", "shutil"]):
+                    return False, f"Mã nguồn chứa thư viện cấm truy cập mạng/hệ thống: {n}"
+    return True, None
+
+
+def extract_referenced_tables_and_columns(code_str: str, available_tables: List[str]) -> Tuple[List[str], List[str], List[str]]:
+    """Trích xuất tên các bảng, cột và tiện ích được truy cập trong mã nguồn."""
+    sel_tables = []
+    sel_cols = []
+    sel_utils = []
+    if not code_str:
+        return sel_tables, sel_cols, sel_utils
+
+    for t in available_tables:
+        if t in code_str:
+            sel_tables.append(t)
+
+    col_matches = re.findall(r"\[\s*[\'\"]([^\'\"]+)[\'\"]\s*\]", code_str)
+    for c in col_matches:
+        if c not in sel_cols and c not in sel_tables:
+            sel_cols.append(c)
+
+    for u in ["clean_num", "clean_date", "apply_tie_breaker", "filter_future_data", "pct", "normalize_text"]:
+        if u in code_str:
+            sel_utils.append(u)
+
+    return sel_tables, sel_cols[:15], sel_utils
+
+
+def execute_solution(
+    code_text: str,
+    biz_dir: Path,
+    data_dict: Dict[str, pd.DataFrame],
+    con: Any,
+    business_obj: Any,
+    timeout_s: int = 30,
+    use_sandbox: bool = True,
+    return_details: bool = False,
+) -> Tuple[Any, ...]:
+    """Thực thi mã nguồn mô hình sinh ra trong subprocess sandbox độc lập có hard timeout."""
+    adapter = """
+if 'FINAL_RESULT' not in globals() and 'solution' in globals() and callable(solution):
+    _raw_sol = solution(data)
+    if _raw_sol is None or (isinstance(_raw_sol, str) and not _raw_sol.strip()):
+        FINAL_RESULT = {"type": "abstain", "answer": None, "unanswerable_source": "none"}
+    elif _raw_sol == "unanswerable" or (isinstance(_raw_sol, str) and _raw_sol.strip().lower() in ("unanswerable", "không thể trả lời")):
+        FINAL_RESULT = {"type": "unanswerable", "answer": None, "unanswerable_source": "model"}
+    elif isinstance(_raw_sol, dict) and _raw_sol.get("type") == "unanswerable":
+        FINAL_RESULT = {"type": "unanswerable", "answer": None, "unanswerable_source": _raw_sol.get("unanswerable_source", "model")}
+    else:
+        FINAL_RESULT = _raw_sol
+"""
+    executable_code = code_text.strip() + "\n" + adapter
+
+    if use_sandbox:
+        res = run_code(executable_code, business_dir=biz_dir, timeout_s=timeout_s)
+        unans_src = res.unanswerable_source
+        if isinstance(res.final_result, dict):
+            unans_src = res.final_result.get("unanswerable_source", unans_src)
+        if res.ok:
+            if return_details:
+                return res.final_result, None, res.elapsed_ms, None, unans_src
+            return res.final_result, None, res.elapsed_ms
+        err_msg = res.error or "Lỗi thực thi trong sandbox"
+        if return_details:
+            return None, err_msg, res.elapsed_ms, res.error_type, unans_src
+        return None, err_msg, res.elapsed_ms
+
+    # In-process fallback
+    t_start = time.perf_counter()
+    isolated_data = {k: v.copy(deep=False) for k, v in data_dict.items()}
+    exec_globals = {
+        "__builtins__": __builtins__,
+        "pd": pd,
+        "np": np,
+        "data": isolated_data,
+        "dfs": isolated_data,
+        "con": con,
+        "business": business_obj,
+        "apply_tie_breaker": apply_tie_breaker,
+        "filter_future_data": filter_future_data,
+        "clean_num": clean_num,
+        "clean_date": clean_date,
+        "DataNotFoundError": DataNotFoundError,
+    }
+    if isinstance(exec_globals.get("__builtins__"), dict):
+        exec_globals["__builtins__"]["DataNotFoundError"] = DataNotFoundError
+
+    try:
+        exec(executable_code, exec_globals)
+        elapsed_ms = int((time.perf_counter() - t_start) * 1000)
+        fin = exec_globals.get("FINAL_RESULT")
+        if fin is None and "solution" in exec_globals and callable(exec_globals["solution"]):
+            fin = exec_globals["solution"](isolated_data)
+        
+        unans_src = "none"
+        if isinstance(fin, dict):
+            unans_src = fin.get("unanswerable_source", "none")
+
+        if return_details:
+            return fin, None, elapsed_ms, None, unans_src
+        return fin, None, elapsed_ms
+    except DataNotFoundError as dne:
+        elapsed_ms = int((time.perf_counter() - t_start) * 1000)
+        if return_details:
+            return None, str(dne), elapsed_ms, "DataNotFoundError", "none"
+        return None, str(dne), elapsed_ms
+    except Exception as exc:
+        elapsed_ms = int((time.perf_counter() - t_start) * 1000)
+        err_msg = f"{type(exc).__name__}: {exc}"
+        err_type = "DataNotFoundError" if "DataNotFoundError" in err_msg else type(exc).__name__
+        if return_details:
+            return None, err_msg, elapsed_ms, err_type, "none"
+        return None, err_msg, elapsed_ms
+
+
+# ==============================================================================
+# THUẬT TOÁN SO KHỚP ĐÁP ÁN CHUẨN MỤC 9 RULEBOOK
+# ==============================================================================
+
+def _is_number(val: Any) -> bool:
+    if isinstance(val, bool) or not isinstance(val, (int, float, Decimal)):
+        return False
+    if isinstance(val, float):
+        return math.isfinite(val)
+    if isinstance(val, Decimal):
+        return val.is_finite()
+    return True
+
+
+def _to_decimal(val: Any) -> Optional[Decimal]:
+    if not _is_number(val):
+        return None
+    try:
+        if isinstance(val, Decimal):
+            return val
+        if isinstance(val, int):
+            return Decimal(val)
+        return Decimal(str(val))
+    except Exception:
+        return None
+
+
+def _numeric_equal(pred: Any, gold: Any) -> bool:
+    p_num = _to_decimal(pred)
+    g_num = _to_decimal(gold)
+    if p_num is None or g_num is None:
+        return False
+    if p_num == g_num:
+        return True
+    if p_num == p_num.to_integral_value() and g_num == g_num.to_integral_value():
+        return False
+    try:
+        pf, gf = float(p_num), float(g_num)
+        if not math.isfinite(pf) or not math.isfinite(gf):
+            return False
+        ulp = max(math.ulp(pf), math.ulp(gf))
+        return abs(pf - gf) <= ulp if ulp < 1 else False
+    except Exception:
+        return False
+
+
+def _norm_str(s: Any) -> str:
+    val = unicodedata.normalize("NFC", str(s)).strip().casefold()
+    return re.sub(r"\s+", " ", val)
+
+
+def _split_aliases(cell: Any) -> list[str]:
+    raw = unicodedata.normalize("NFC", str(cell)).strip()
+    return [p.strip() for p in raw.split("|") if p.strip()] if "|" in raw else [raw]
+
+
+def _compare_cells(pred_cell: Any, gold_cell: Any) -> bool:
+    if _is_number(pred_cell) and _is_number(gold_cell):
+        if _numeric_equal(pred_cell, gold_cell):
+            return True
+    pred_str = _norm_str(pred_cell)
+    for alias in _split_aliases(gold_cell):
+        if _is_number(pred_cell) and _is_number(alias):
+            if _numeric_equal(pred_cell, alias):
+                return True
+        if pred_str == _norm_str(alias):
+            return True
+    return False
+
+
+def compare_single_answer(pred_record: dict, gold_record: dict) -> bool:
+    """So khớp 1 đáp án dự đoán với đáp án chuẩn theo Rulebook Mục 9."""
+    p_type = pred_record.get("type")
+    g_type = gold_record.get("type")
+
+    if p_type != g_type:
+        return False
+    if p_type in ("unanswerable", "abstain"):
+        return True
+
+    p_ans = pred_record.get("answer")
+    g_ans = gold_record.get("answer")
+
+    if p_ans is None or g_ans is None:
+        return False
+
+    if p_type == "number":
+        return _numeric_equal(p_ans, g_ans)
+
+    if p_type == "percent":
+        p_dec = _to_decimal(p_ans)
+        g_dec = _to_decimal(g_ans)
+        if p_dec is None or g_dec is None:
+            return False
+        return p_dec.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) == g_dec.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    if p_type == "string":
+        return _norm_str(p_ans) == _norm_str(g_ans)
+
+    if p_type == "date":
+        return str(p_ans).strip() == str(g_ans).strip()
+
+    if p_type == "boolean":
+        return bool(p_ans) == bool(g_ans)
+
+    if p_type == "list":
+        if not isinstance(p_ans, (list, tuple)) or not isinstance(g_ans, (list, tuple)):
+            return False
+        if len(p_ans) != len(g_ans):
+            return False
+        return all(_compare_cells(pa, ga) for pa, ga in zip(p_ans, g_ans))
+
+    if p_type == "table":
+        if not isinstance(p_ans, dict) or not isinstance(g_ans, dict):
+            return False
+        p_cols = p_ans.get("columns", [])
+        g_cols = g_ans.get("columns", [])
+        if [_norm_str(c) for c in p_cols] != [_norm_str(c) for c in g_cols]:
+            return False
+        p_rows = p_ans.get("rows", [])
+        g_rows = g_ans.get("rows", [])
+        if len(p_rows) != len(g_rows):
+            return False
+        used_gold = set()
+        for pr in p_rows:
+            matched_idx = None
+            for idx, gr in enumerate(g_rows):
+                if idx in used_gold:
+                    continue
+                if len(pr) == len(gr) and all(_compare_cells(pc, gc) for pc, gc in zip(pr, gr)):
+                    matched_idx = idx
+                    break
+            if matched_idx is None:
+                return False
+            used_gold.add(matched_idx)
+        return True
+
+    return False
+
+
+def analyze_numerical_deviation(pred_ans: Any, gold_ans: Any, pred_type: str, gold_type: str) -> Dict[str, Any]:
+    """Phân tích chuyên sâu độ lệch số học và chẩn đoán nguyên nhân lỗi định lượng."""
+    res = {
+        "is_applicable": False,
+        "abs_diff": None,
+        "pct_diff": None,
+        "diagnostic_hypothesis": None,
+    }
+    p_dec = _to_decimal(pred_ans)
+    g_dec = _to_decimal(gold_ans)
+    if p_dec is None or g_dec is None:
+        return res
+
+    res["is_applicable"] = True
+    abs_d = abs(p_dec - g_dec)
+    res["abs_diff"] = float(abs_d)
+
+    if g_dec != 0:
+        pct_d = abs(abs_d / g_dec) * 100
+        res["pct_diff"] = float(pct_d)
+    else:
+        res["pct_diff"] = 0.0
+
+    # Chẩn đoán lỗi phổ biến
+    pf = float(p_dec)
+    gf = float(g_dec)
+    if gf != 0:
+        ratio = pf / gf
+        if 990 <= ratio <= 1010 or 0.00099 <= ratio <= 0.00101:
+            res["diagnostic_hypothesis"] = "LỆCH ĐƠN VỊ TIỀN TỆ (Nghìn đồng vs Đồng, tỷ lệ x1000)."
+        elif 1.05 <= ratio <= 1.30:
+            res["diagnostic_hypothesis"] = "CÓ THỂ QUÊN LỌC ĐƠN HỦY / TRẢ LẠI (Giá trị dự đoán cao hơn chuẩn 5-30%)."
+        elif 0.70 <= ratio <= 0.95:
+            res["diagnostic_hypothesis"] = "CÓ THỂ LỌC THIẾU DÒNG HOẶC ÁP DỤNG TRÙNG ĐIỀU KIỆN (Dự đoán thấp hơn chuẩn 5-30%)."
+        elif abs_d <= Decimal("0.05"):
+            res["diagnostic_hypothesis"] = "SAI SỐ LÀM TRÒN THẬP PHÂN (Chênh lệch <= 0.05 đơn vị)."
+
+    return res
+
+
+# ==============================================================================
+# HÀM TRỰC QUAN HÓA DASHBOARD (PILLOW NATIVE DASHBOARD GENERATOR)
+# ==============================================================================
+
+def render_diagnostic_dashboard(telemetry: Dict[str, Any], output_path: Path) -> Path:
+    """
+    Vẽ dashboard chẩn đoán trực quan độ phân giải cao (1200x860 px) bằng Pillow:
+    - Card 1: Header thông tin câu hỏi, cửa hàng, ngày as_of_date và huy hiệu kết quả.
+    - Card 2: Biểu đồ thời gian thực thi từng module (Latency Breakdown Bar Chart).
+    - Card 3: Thước đo Điểm Tin Cậy Calibrated Confidence Gauge vs Ngưỡng tau* = 0.50.
+    - Card 4: Thanh tiến trình Độ Bám Thực Thể & Thời Gian (Grounding Coverage).
+    - Card 5: Khung hiển thị Trước / Sau khi mở rộng viết tắt tiếng Việt.
+    - Card 6: Hộp phân tích và Đề xuất tối ưu hóa dành cho AI.
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    width, height = 1200, 860
+    bg_color = (18, 22, 30)          # Nền tối sang trọng
+    card_bg = (28, 34, 46)           # Màu nền thẻ
+    card_border = (45, 55, 72)       # Viền thẻ
+    text_white = (248, 250, 252)
+    text_muted = (148, 163, 184)
+    text_accent = (56, 189, 248)     # Xanh cyan
+
+    img = Image.new("RGB", (width, height), color=bg_color)
+    draw = ImageDraw.Draw(img)
+
+    # 1. HEADER CARD
+    draw.rectangle([20, 20, 1180, 115], fill=card_bg, outline=card_border, width=2)
+    draw.text((40, 32), "DATAMATE — MODULAR DIAGNOSTIC INSPECTOR DASHBOARD", fill=text_accent)
+    
+    qid = telemetry.get("question_id", "q_unknown")
+    biz_id = telemetry.get("business_id", "biz_unknown")
+    as_of = telemetry.get("as_of_date", "2026-01-01")
+    draw.text((40, 58), f"Question ID: {qid}  |  Shop: {biz_id}  |  As-of-date: {as_of}", fill=text_muted)
+    
+    status_label = telemetry.get("eval_status_label", "EVALUATED")
+    status_score = telemetry.get("eval_score", 0.0)
+    if status_score > 0:
+        badge_color = (16, 185, 129)   # Xanh lá
+        badge_text = f"CORRECT (+1.0) | {status_label}"
+    elif status_score < 0:
+        badge_color = (239, 68, 68)    # Đỏ
+        badge_text = f"WRONG (-1.0) | {status_label}"
+    else:
+        badge_color = (245, 158, 11)   # Vàng hổ phách
+        badge_text = f"ABSTAIN (0.0) | {status_label}"
+
+    draw.rectangle([820, 35, 1160, 95], fill=badge_color)
+    draw.text((835, 55), badge_text, fill=(255, 255, 255))
+
+    # 2. PANEL TRÁI: BIỂU ĐỒ THỜI GIAN TỪNG MODULE (LATENCY BREAKDOWN)
+    draw.rectangle([20, 130, 580, 470], fill=card_bg, outline=card_border, width=2)
+    draw.text((40, 145), "1. THỜI GIAN THỰC THI TỪNG MODULE (LATENCY PROFILING)", fill=text_accent)
+
+    latencies = telemetry.get("latencies_ms", {})
+    total_ms = telemetry.get("total_latency_ms", 1.0)
+    modules = [
+        ("Ingestion & Profiler", latencies.get("ingest_schema", 0.0)),
+        ("Feasibility Gate", latencies.get("feasibility", 0.0)),
+        ("Vietnamese Grounding", latencies.get("grounding", 0.0)),
+        ("Prompt Assembly", latencies.get("prompt_build", 0.0)),
+        ("LLM Generation (3B)", latencies.get("llm_gen", 0.0)),
+        ("Sandbox Execution", latencies.get("sandbox_exec", 0.0)),
+        ("Normalizer & Gate", latencies.get("normalizer", 0.0)),
+    ]
+
+    max_lat = max([lat for _, lat in modules] + [1.0])
+    bar_y = 185
+    for name, lat in modules:
+        pct = (lat / total_ms * 100.0) if total_ms > 0 else 0.0
+        bar_len = int((lat / max_lat) * 260) if max_lat > 0 else 0
+        bar_len = max(4, min(260, bar_len))
+
+        draw.text((40, bar_y), f"{name[:20]:<20}", fill=text_white)
+        draw.rectangle([220, bar_y + 2, 220 + bar_len, bar_y + 14], fill=(99, 102, 241))
+        draw.text((490, bar_y), f"{lat:6.1f}ms ({pct:4.1f}%)", fill=text_muted)
+        bar_y += 38
+
+    draw.line([40, 445, 560, 445], fill=card_border, width=1)
+    draw.text((40, 450), f"TỔNG THỜI GIAN TOÀN TRÌNH: {total_ms:.1f} ms ({total_ms/1000:.2f}s)", fill=text_accent)
+
+    # 3. PANEL PHẢI TRÊN: CALIBRATED CONFIDENCE & GATE GAUGE
+    draw.rectangle([600, 130, 1180, 470], fill=card_bg, outline=card_border, width=2)
+    draw.text((620, 145), "2. ĐIỂM TIN CẬY CALIBRATED CONFIDENCE & GROUNDING", fill=text_accent)
+
+    conf = telemetry.get("confidence_score", 0.0)
+    tau = telemetry.get("threshold_tau_star", 0.50)
+    g_eval = telemetry.get("grounding_eval", {})
+    e_cov = g_eval.get("entity_coverage", 1.0) * 100
+    t_cov = g_eval.get("temporal_coverage", 1.0) * 100
+    penalty = g_eval.get("total_penalty", 0.0)
+
+    draw.text((620, 185), f"Độ Tin Cậy C: {conf:.2f} / 1.00  (Ngưỡng tau*: {tau:.2f})", fill=text_white)
+    draw.rectangle([620, 210, 1140, 235], fill=(45, 55, 72))
+    fill_w = int(conf * 520)
+    bar_color = (16, 185, 129) if conf >= tau else (245, 158, 11)
+    if fill_w > 0:
+        draw.rectangle([620, 210, 620 + fill_w, 235], fill=bar_color)
+    tau_x = 620 + int(tau * 520)
+    draw.line([tau_x, 205, tau_x, 240], fill=(239, 68, 68), width=3)
+    draw.text((tau_x - 30, 242), f"Ngưỡng tau*={tau:.2f}", fill=(239, 68, 68))
+
+    draw.text((620, 280), f"Độ bám thực thể (Entity Coverage)  : {e_cov:.1f}%", fill=text_white)
+    draw.rectangle([620, 305, 1140, 320], fill=(45, 55, 72))
+    draw.rectangle([620, 305, 620 + int(e_cov * 5.2), 320], fill=(56, 189, 248))
+
+    draw.text((620, 340), f"Độ bám thời gian (Temporal Coverage): {t_cov:.1f}%", fill=text_white)
+    draw.rectangle([620, 365, 1140, 380], fill=(45, 55, 72))
+    draw.rectangle([620, 365, 620 + int(t_cov * 5.2), 380], fill=(168, 85, 247))
+
+    draw.text((620, 400), f"Tổng điểm phạt Grounding Penalty: -{penalty:.2f}", fill=(244, 63, 94))
+    gate_decision = "CHO PHÉP NỘP ĐÁP ÁN" if conf >= tau else "LÁ CHẮN ÉP VỀ ABSTAIN AN TOÀN"
+    draw.text((620, 430), f"Quyết định Cổng Từ Chối: {gate_decision}", fill=bar_color)
+
+    # 4. PANEL DƯỚI TRÁI: VIETNAMESE TEXT PROCESSING TRƯỚC VÀ SAU
+    draw.rectangle([20, 485, 580, 840], fill=card_bg, outline=card_border, width=2)
+    draw.text((40, 500), "3. XỬ LÝ TIẾNG VIỆT & MỞ RỘNG VIẾT TẮT (TRƯỚC & SAU)", fill=text_accent)
+
+    orig_q = telemetry.get("original_question", "")
+    norm_q = telemetry.get("normalized_question", "")
+    replaced = telemetry.get("expanded_abbreviations", {})
+    intent = telemetry.get("intent", "aggregation")
+    t_desc = telemetry.get("temporal_desc", "")
+
+    draw.text((40, 530), "• Câu hỏi GỐC (Trước khi chuẩn hóa):", fill=(251, 191, 36))
+    draw.text((40, 550), f"  \"{orig_q[:70]}\"", fill=text_white)
+    if len(orig_q) > 70:
+        draw.text((40, 570), f"  \"{orig_q[70:140]}\"", fill=text_white)
+
+    draw.text((40, 600), "• Câu hỏi CHUẨN HÓA (Sau khi mở rộng viết tắt):", fill=(52, 211, 153))
+    draw.text((40, 620), f"  \"{norm_q[:70]}\"", fill=text_white)
+    if len(norm_q) > 70:
+        draw.text((40, 640), f"  \"{norm_q[70:140]}\"", fill=text_white)
+
+    rep_str = ", ".join([f"'{k}' -> '{v}'" for k, v in list(replaced.items())[:4]]) or "Không có từ viết tắt"
+    draw.text((40, 675), f"• Viết tắt phát hiện: {rep_str}", fill=text_muted)
+    draw.text((40, 705), f"• Ý định nhận diện  : {intent}", fill=text_white)
+    draw.text((40, 735), f"• Khoảng thời gian  : {t_desc[:55]}", fill=text_white)
+
+    pred_ans = telemetry.get("predicted_answer")
+    gold_ans = telemetry.get("gold_answer")
+    draw.text((40, 775), f"• DỰ ĐOÁN : {str(pred_ans)[:35]}", fill=(56, 189, 248))
+    draw.text((40, 805), f"• ĐÁP ÁN   : {str(gold_ans)[:35]}", fill=(16, 185, 129))
+
+    # 5. PANEL DƯỚI PHẢI: AI DIAGNOSTIC TELEMETRY & RECOMMENDATIONS
+    draw.rectangle([600, 485, 1180, 840], fill=card_bg, outline=card_border, width=2)
+    draw.text((620, 500), "4. AI TELEMETRY & ĐỀ XUẤT TỐI ƯU HÓA TỰ ĐỘNG", fill=text_accent)
+
+    rec_list = telemetry.get("ai_recommendations", [])
+    dy = 535
+    for i, rec in enumerate(rec_list[:6], 1):
+        draw.text((620, dy), f"{i}. {rec[:68]}", fill=text_white)
+        if len(rec) > 68:
+            dy += 22
+            draw.text((640, dy), f"{rec[68:136]}", fill=text_muted)
+        dy += 28
+
+    img.save(output_path, quality=95)
+    return output_path
+
+
+def render_batch_evaluation_dashboard(metrics: Dict[str, Any], output_path: Path | str) -> bool:
+    """Vẽ dashboard thống kê đánh giá hàng loạt (4 panels) chuẩn độ nét cao bằng Pillow (Native)."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    width, height = 1400, 950
+    bg_color = (248, 250, 252)
+    card_bg = (255, 255, 255)
+    card_border = (226, 232, 240)
+    text_dark = (30, 41, 59)
+    text_muted = (100, 116, 139)
+
+    img = Image.new("RGB", (width, height), color=bg_color)
+    draw = ImageDraw.Draw(img)
+
+    total = metrics.get("total", 0)
+    correct = metrics.get("correct", 0)
+    wrong = metrics.get("wrong", 0)
+    abstain = metrics.get("abstain", 0)
+    pa = metrics.get("pa", 0.0)
+    acc = metrics.get("accuracy", 0.0)
+    cov = metrics.get("coverage", 0.0)
+    breakdown = metrics.get("breakdown", {})
+
+    # Header
+    draw.rectangle([20, 20, 1380, 100], fill=(30, 41, 59))
+    draw.text((40, 35), "DATAMATE — BENCHMARK EVALUATION DASHBOARD", fill=(56, 189, 248))
+    draw.text((40, 65), f"Penalized Accuracy (PA): {pa:+.4f}  |  Accuracy: {acc*100:.1f}%  |  Coverage: {cov*100:.1f}%  |  Total: {total} câu", fill=(241, 245, 249))
+
+    # Panel 1: Thống kê tổng quan (Donut / Card)
+    draw.rectangle([20, 120, 680, 500], fill=card_bg, outline=card_border, width=2)
+    draw.text((40, 135), "1. TỔNG QUAN PHÂN BỔ KẾT QUẢ & ĐIỂM PA", fill=(14, 116, 144))
+    
+    # Vẽ 3 thẻ lớn: Đúng, Sai, Abstain
+    cards = [
+        ("ĐÚNG (+1.0)", correct, f"{correct/total*100:.1f}%" if total else "0%", (16, 185, 129)),
+        ("SAI (-1.0)", wrong, f"{wrong/total*100:.1f}%" if total else "0%", (239, 68, 68)),
+        ("TỪ CHỐI (0.0)", abstain, f"{abstain/total*100:.1f}%" if total else "0%", (245, 158, 11)),
+    ]
+    cx = 50
+    for title, count, pct, col in cards:
+        draw.rectangle([cx, 180, cx + 180, 310], fill=(248, 250, 252), outline=col, width=2)
+        draw.text((cx + 20, 195), title, fill=col)
+        draw.text((cx + 20, 230), f"{count}", fill=text_dark)
+        draw.text((cx + 20, 275), f"Tỷ lệ: {pct}", fill=text_muted)
+        cx += 210
+
+    # Bảng số liệu chi tiết
+    draw.text((50, 340), f"• Điểm thi Penalized Accuracy (PA) : {pa:+.4f}", fill=text_dark)
+    draw.text((50, 375), f"• Độ chính xác khi trả lời (Accuracy): {acc*100:.1f}%", fill=text_dark)
+    draw.text((50, 410), f"• Tỷ lệ tham gia trả lời (Coverage) : {cov*100:.1f}%", fill=text_dark)
+    draw.text((50, 445), f"• Thời gian chạy tổng cộng           : {metrics.get('total_time_sec', 0):.1f}s", fill=text_muted)
+
+    # Panel 2: Điểm PA theo từng loại (Bar chart)
+    draw.rectangle([700, 120, 1380, 500], fill=card_bg, outline=card_border, width=2)
+    draw.text((720, 135), "2. ĐIỂM PENALIZED ACCURACY THEO KIỂU ĐÁP ÁN", fill=(14, 116, 144))
+
+    types = sorted(breakdown.keys())
+    by = 180
+    for t in types[:8]:
+        st = breakdown[t]
+        t_pa = st.get("pa", 0.0)
+        t_tot = st.get("total", 0)
+        draw.text((720, by), f"{t:<14} (n={t_tot:>2})", fill=text_dark)
+        # Trục 0 ở x=980
+        center_x = 1000
+        bar_len = int(t_pa * 220)
+        if bar_len >= 0:
+            draw.rectangle([center_x, by + 2, center_x + bar_len, by + 16], fill=(16, 185, 129))
+        else:
+            draw.rectangle([center_x + bar_len, by + 2, center_x, by + 16], fill=(239, 68, 68))
+        draw.line([center_x, by - 2, center_x, by + 20], fill=text_muted, width=1)
+        draw.text((1240, by), f"{t_pa:+.2f}", fill=text_dark)
+        by += 38
+
+    # Panel 3: Stacked Bar Chart theo loại
+    draw.rectangle([20, 520, 680, 920], fill=card_bg, outline=card_border, width=2)
+    draw.text((40, 535), "3. TỶ LỆ ĐÚNG / SAI / ABSTAIN THEO TỪNG KIỂU", fill=(14, 116, 144))
+
+    sy = 580
+    for t in types[:8]:
+        st = breakdown[t]
+        tot = st.get("total", 1)
+        c_pct = st.get("correct", 0) / tot
+        w_pct = st.get("wrong", 0) / tot
+        a_pct = st.get("abstain", 0) / tot
+
+        draw.text((40, sy), f"{t:<14}", fill=text_dark)
+        sx = 180
+        w_c = int(c_pct * 360)
+        w_w = int(w_pct * 360)
+        w_a = int(a_pct * 360)
+        if w_c > 0:
+            draw.rectangle([sx, sy + 2, sx + w_c, sy + 16], fill=(16, 185, 129))
+        if w_w > 0:
+            draw.rectangle([sx + w_c, sy + 2, sx + w_c + w_w, sy + 16], fill=(239, 68, 68))
+        if w_a > 0:
+            draw.rectangle([sx + w_c + w_w, sy + 2, sx + w_c + w_w + w_a, sy + 16], fill=(245, 158, 11))
+
+        draw.text((560, sy), f"C:{st.get('correct',0)} W:{st.get('wrong',0)} A:{st.get('abstain',0)}", fill=text_muted)
+        sy += 40
+
+    # Panel 4: Độ trễ xử lý trung bình theo loại
+    draw.rectangle([700, 520, 1380, 920], fill=card_bg, outline=card_border, width=2)
+    draw.text((720, 535), "4. ĐỘ TRỄ XỬ LÝ TRUNG BÌNH THEO KIỂU ĐÁP ÁN (ms)", fill=(14, 116, 144))
+
+    max_lat = max([st.get("avg_latency_ms", 1.0) for st in breakdown.values()] + [1.0])
+    ly = 580
+    for t in types[:8]:
+        st = breakdown[t]
+        alat = st.get("avg_latency_ms", 0.0)
+        draw.text((720, ly), f"{t:<14}", fill=text_dark)
+        bar_len = int((alat / max_lat) * 380) if max_lat > 0 else 0
+        draw.rectangle([860, ly + 2, 860 + bar_len, ly + 16], fill=(59, 130, 246))
+        draw.text((1260, ly), f"{int(alat)} ms", fill=text_dark)
+        ly += 40
+
+    img.save(output_path, quality=95)
+    return True
+
+
+# ==============================================================================
+# HÀM SINH HƯỚNG ĐỀ XUẤT TỰ ĐỘNG CHO AI
+# ==============================================================================
+
+def generate_ai_recommendations(
+    is_match: bool,
+    pred_ans: Any,
+    gold_ans: Any,
+    pred_type: str,
+    gold_type: str,
+    confidence: float,
+    threshold: float,
+    exec_err: Optional[str],
+    sanity_err: Optional[str],
+    grounding_eval: Dict[str, Any],
+    intent: str,
+    question_text: str,
+    deviation_analysis: Dict[str, Any],
+) -> List[str]:
+    """Tự động phân tích telemetry và sinh hướng đề xuất thông minh mà AI có thể đọc và hành động."""
+    recs: List[str] = []
+
+    if is_match and pred_type != "abstain":
+        recs.append("KẾT QUẢ ĐẠT CHUẨN (+1.0): Logic pipeline ăn khớp hoàn hảo từ Intent đến Execution.")
+        recs.append("Duy trì cấu trúc Prompt và chiến lược Schema Pruning hiện tại cho nhóm intent này.")
+        if confidence < 0.80:
+            recs.append(f"Lưu ý: Độ tin cậy C={confidence:.2f} còn hơi thấp, có thể giảm bớt Grounding Penalty để tránh rủi ro.")
+        return recs
+
+    if pred_type == "abstain":
+        recs.append("TRẠNG THÁI TỪ CHỐI (ABSTAIN - 0.0): Bảo toàn điểm số an toàn không bị trừ điểm.")
+        if exec_err:
+            recs.append(f"Khắc phục Runtime Error: '{exec_err[:50]}...'. Bổ sung thư viện hoặc alias cột tương ứng.")
+        elif sanity_err:
+            recs.append(f"Khắc phục Sanity Check: '{sanity_err[:55]}...'. Kiểm tra công thức tính và điều kiện lọc.")
+        elif confidence < threshold:
+            missed = grounding_eval.get("missed_mentions", [])
+            if missed:
+                m_str = ", ".join([m.get("term", "") for m in missed[:2]])
+                recs.append(f"Bổ sung lọc thực thể bỏ sót: '{m_str}' trong prompt hoặc vòng Self-Correction lượt 2.")
+            if grounding_eval.get("temporal_coverage", 1.0) < 1.0:
+                recs.append("Bổ sung ràng buộc ngày tháng ISO vào code để xóa mức phạt Temporal Penalty.")
+        return recs
+
+    # Trường hợp trả lời sai (-1.0)
+    recs.append("CẢNH BÁO BỊ PHẠT (-1.0): Đáp án sai lệch so với Ground Truth của Ban tổ chức.")
+    if deviation_analysis.get("diagnostic_hypothesis"):
+        recs.append(f"Chẩn đoán sai số: {deviation_analysis['diagnostic_hypothesis']}")
+
+    if "đơn" in question_text.lower() and ("bnhiu" in question_text.lower() or "bao nhiêu" in question_text.lower()):
+        recs.append("Kiểm tra nhầm lẫn Count vs Sum: Câu hỏi có thể hỏi số lượng đơn (Count) nhưng code tính tổng tiền (Sum).")
+    if intent in ("rate_percentage", "time_series"):
+        recs.append("Kiểm tra thứ tự mốc so sánh: Đảm bảo công thức (V_hiện_tại - V_quá_khứ) / V_quá_khứ * 100.0.")
+    if pred_type != gold_type:
+        recs.append(f"Sai lệch định dạng đầu ra: Dự đoán kiểu '{pred_type}' trong khi đáp án chuẩn là '{gold_type}'.")
+    recs.append("Kích hoạt chuyển sang 'abstain' nếu độ tin cậy của dạng bài này chưa vượt qua 0.65.")
+
+    return recs
+
+
+# ==============================================================================
+# HÀM CHẨN ĐOÁN CHI TIẾT 1 CÂU HỎI (SINGLE INSPECTION MODE)
+# ==============================================================================
+
+def run_single_inspection(
+    target_q: Dict[str, Any],
+    gold_record: Optional[Dict[str, Any]],
+    data_dir: Path,
+    data_root: Path,
+    args: argparse.Namespace,
+) -> Dict[str, Any]:
+    qid = target_q["id"]
+    biz_id = target_q["business_id"]
+    question_text = target_q["question"]
+    as_of_date = target_q["as_of_date"]
+
     print("\n" + "=" * 80)
-    print(f" {icon}  {title}")
+    print(" 🔬  DATAMATE MODULAR WHITE-BOX DIAGNOSTICS & TELEMETRY INSPECTOR")
+    print("=" * 80)
+    print(f"• Question ID   : {qid}")
+    print(f"• Business ID   : {biz_id}")
+    print(f"• as_of_date    : {as_of_date}")
+    print(f"• Câu hỏi Gốc   : \"{question_text}\"")
+    if gold_record:
+        print(f"• Đáp án Chuẩn  : {gold_record.get('answer')} (Type: {gold_record.get('type')})")
     print("=" * 80)
 
+    latencies: Dict[str, float] = {}
 
-def print_step(step_num: int, name: str, elapsed_ms: float):
-    print(f"\n--- [BƯỚC {step_num}] {name.upper()} (⏱️ {elapsed_ms:.2f} ms) ---")
+    # --------------------------------------------------------------------------
+    # MỤC 1: XỬ LÝ TIẾNG VIỆT & MỞ RỘNG VIẾT TẮT
+    # --------------------------------------------------------------------------
+    t0 = time.perf_counter()
+    normalized_q, replaced_abbr = explain_and_expand_abbreviations(question_text)
+    ms_vn = (time.perf_counter() - t0) * 1000
 
+    print("\n" + "┌" + "─" * 78 + "┐")
+    print("│ [MỤC 1] XỬ LÝ TIẾNG VIỆT TỪ VIẾT TẮT SANG DẠNG CHUẨN (TRƯỚC & SAU)          │")
+    print("├" + "─" * 78 + "┤")
+    print(f"│ • TRƯỚC (Gốc)      : \"{question_text}\"")
+    print(f"│ • SAU (Chuẩn hóa)  : \"{normalized_q}\"")
+    if replaced_abbr:
+        rep_str = ", ".join([f"'{k}' -> '{v}'" for k, v in replaced_abbr.items()])
+        print(f"│ • Viết tắt đã mở   : {rep_str}")
+    else:
+        print("│ • Viết tắt đã mở   : (Không chứa từ viết tắt trong từ điển)")
+    print("└" + "─" * 78 + "┘")
+
+    # --------------------------------------------------------------------------
+    # MỤC 2: HỒ SƠ METADATA & DỮ LIỆU CỬA HÀNG (SHOP METADATA DEEP-DIVE)
+    # --------------------------------------------------------------------------
+    t0 = time.perf_counter()
+    data_dict, con, raw_schema_str, bd, shop_meta, candidates = load_business_data(biz_id, data_root)
+    ms_ingest = (time.perf_counter() - t0) * 1000
+    latencies["ingest_schema"] = ms_ingest
+
+    print(f"\n--- [BƯỚC 1] NẠP DỮ LIỆU CỬA HÀNG (⏱️ {ms_ingest:.2f} ms) ---")
+    print(f"  • Thư mục shop      : {(data_root / biz_id).resolve()}")
+    print(f"  • Số bảng đọc được  : {len(bd.tables) if bd else 0} bảng")
+    if shop_meta:
+        print(f"  • Khoảng ngày shop  : [{shop_meta.get('min_date')} -> {shop_meta.get('max_date')}] (so với as_of_date: {as_of_date})")
+    print(f"  • Tổng thực thể trích xuất: {len(candidates)} ứng viên")
+    if bd and bd.readme_text:
+        snippet = bd.readme_text[:120].replace('\n', ' ')
+        print(f"  • README Cửa hàng   : \"{snippet}...\"")
+
+    print("\n┌──────────────────────────────────────────────────────────────────────────────┐")
+    print("│ [MỤC 2] CHI TIẾT BẢNG DỮ LIỆU & DÒ TÌM HEADER                                │")
+    print("├──────────────────────────────────────────────────────────────────────────────┤")
+    for ti in getattr(bd, "tables", []):
+        t_base = Path(ti.fixed_file_name).stem if getattr(ti, "fixed_file_name", None) else ti.table_id
+        sheet_info = f", sheet: '{ti.sheet_name}'" if ti.sheet_name else ""
+        merge_info = f", gộp {len(ti.merged_sheets)} sheet" if getattr(ti, "merged_sheets", None) else ""
+        header_info = f", header dòng {ti.header_row_detected}" if ti.header_row_detected is not None else ""
+        print(f"│ • Bảng '{t_base}' ({ti.table_id}): {ti.n_rows} dòng, {len(ti.columns)} cột{sheet_info}{merge_info}{header_info}")
+    print("└──────────────────────────────────────────────────────────────────────────────┘")
+
+    # --------------------------------------------------------------------------
+    # MỤC 3: CHECKLIST THẨM ĐỊNH KHẢ THI (FEASIBILITY GATE CHECKLIST)
+    # --------------------------------------------------------------------------
+    t0 = time.perf_counter()
+    is_feasible, unans_reason = check_feasibility(question_text, as_of_date, shop_meta)
+    ms_feas = (time.perf_counter() - t0) * 1000
+    latencies["feasibility"] = ms_feas
+
+    calendar_path = data_dir / "calendar.csv"
+    cal_str = str(calendar_path) if calendar_path.exists() else None
+    temp_info = resolve_temporal_context(question_text, as_of_date, calendar_path=cal_str)
+
+    print(f"\n--- [BƯỚC 2] FEASIBILITY GATE CHECKLIST (⏱️ {ms_feas:.2f} ms) ---")
+    print("┌──────────────────────────────────────────────────────────────────────────────┐")
+    print("│ [MỤC 3] CHECKLIST TIÊU CHÍ RULEBOOK THẨM ĐỊNH KHẢ THI                         │")
+    print("├──────────────────────────────────────────────────────────────────────────────┤")
+    # Điều 5: Ngày tương lai
+    q_start = temp_info.get("start_date")
+    q_end = temp_info.get("end_date")
+    d5_pass = True
+    if q_start and as_of_date and q_start > as_of_date:
+        d5_pass = False
+    print(f"│ • Điều 5 (Ngày câu hỏi <= as_of_date {as_of_date}): [{'PASS' if d5_pass else 'FAIL'}] (Khoảng: {q_start} -> {q_end})")
+
+    # Điều 7: Dữ liệu kỳ đối chiếu
+    comp_start = temp_info.get("comparison_start")
+    comp_end = temp_info.get("comparison_end")
+    d7_pass = True
+    if comp_start and shop_meta.get("min_date") and comp_start < shop_meta.get("min_date"):
+        d7_pass = False
+    comp_label = f"[{'PASS' if d7_pass else 'FAIL'}] (Khoảng: {comp_start} -> {comp_end})" if comp_start else "[N/A] (Câu hỏi không có so sánh)"
+    print(f"│ • Điều 7 (Dữ liệu kỳ đối chiếu >= min_date): {comp_label}")
+
+    # Khái niệm ngoài phạm vi
+    out_of_scope = any(k in normalized_q for k in ["lương", "mặt bằng", "tiền điện", "tiền nước", "thuế thu nhập"])
+    print(f"│ • Khái niệm ngoài schema (Lương, mặt bằng, điện nước): [{'CÓ PHÁT HIỆN' if out_of_scope else 'KHÔNG'}]")
+    print(f"│ 👉 KẾT LUẬN CỔNG FEASIBILITY GATE: {'KHẢ THI TRẢ LỜI (FEASIBLE)' if is_feasible else f'TỪ CHỐI TẤT ĐỊNH (UNANSWERABLE: {unans_reason})'}")
+    print("└──────────────────────────────────────────────────────────────────────────────┘")
+
+    # --------------------------------------------------------------------------
+    # MỤC 4: GROUNDING (BẢNG THỰC THỂ & LỊCH ÂM)
+    # --------------------------------------------------------------------------
+    t0 = time.perf_counter()
+    entity_matches = link_entities(normalized_q, candidates=candidates, threshold=0.55) if candidates else []
+    ms_grounding = (time.perf_counter() - t0) * 1000
+    latencies["grounding"] = ms_grounding
+
+    cal_obj = get_calendar(cal_str)
+    lunar_info = cal_obj.get_lunar_info(as_of_date) if cal_obj and as_of_date else None
+
+    print(f"\n--- [BƯỚC 3] GROUNDING (ĐỊNH VỊ THỜI GIAN, LỊCH ÂM & THỰC THỂ) (⏱️ {ms_grounding:.2f} ms) ---")
+    print(f"  • Mốc thời gian     : {temp_info['description']}")
+    print(f"  • Khoảng ISO        : [{temp_info.get('start_date')} -> {temp_info.get('end_date')}]")
+    if lunar_info:
+        print(f"  • Ngày Âm của as-of : Ngày {lunar_info.get('lunar_day')}/{lunar_info.get('lunar_month')}/{lunar_info.get('lunar_year')} (Âm lịch)")
+    print(f"  • Gợi ý lọc Pandas  : {temp_info['code_hint']}")
+
+    print("\n┌──────────────────────────────────────────────────────────────────────────────┐")
+    print("│ [MỤC 4] BẢNG ÁNH XẠ THỰC THỂ (ENTITY LINKER MAPPING TABLE)                   │")
+    print("├──────────────────────────────────────────────────────────────────────────────┤")
+    if entity_matches:
+        print(f"│ {'Cụm từ (Mention)':<22} | {'Khớp trong DB':<22} | {'Bảng.Cột':<18} | {'Score':>6} │")
+        print("├──────────────────────────────────────────────────────────────────────────────┤")
+        for m in entity_matches[:8]:
+            mention = getattr(m, "mention", getattr(m, "matched_value", ""))[:20]
+            val = getattr(m, "matched_value", "")[:20]
+            src = f"{getattr(m, 'source_table', '')}.{getattr(m, 'source_col', '')}"[:18]
+            score = getattr(m, "score", 0.0)
+            print(f"│ {mention:<22} | {val:<22} | {src:<18} | {score:>6.2f} │")
+    else:
+        print("│ • Không phát hiện thực thể tên riêng biệt (Mã/Tên SP, Khách hàng) trong câu. │")
+    print("└──────────────────────────────────────────────────────────────────────────────┘")
+
+    # --------------------------------------------------------------------------
+    # MỤC 5: SO SÁNH CẮT TỈA LƯỢC ĐỒ (SCHEMA PRUNING DIFF)
+    # --------------------------------------------------------------------------
+    t0 = time.perf_counter()
+    intent = classify_intent(normalized_q)
+    pruned_schema = prune_schema_by_intent(
+        schema_str=raw_schema_str,
+        intent=intent,
+        question=normalized_q,
+        entity_matches=entity_matches,
+    )
+    ms_schema_prune = (time.perf_counter() - t0) * 1000
+
+    raw_len = len(raw_schema_str)
+    pruned_len = len(pruned_schema)
+    reduc_pct = ((raw_len - pruned_len) / raw_len * 100) if raw_len > 0 else 0.0
+
+    print("\n┌──────────────────────────────────────────────────────────────────────────────┐")
+    print("│ [MỤC 5] SO SÁNH CẮT TỈA LƯỢC ĐỒ (SCHEMA PRUNING DIFF)                        │")
+    print("├──────────────────────────────────────────────────────────────────────────────┤")
+    print(f"│ • Ý định phân loại : '{intent}'")
+    print(f"│ • Kích thước Schema: {raw_len} ký tự -> {pruned_len} ký tự (Giảm {reduc_pct:.1f}% nhiễu)")
+    # Liệt kê bảng giữ lại
+    retained_tables = []
+    for line in pruned_schema.splitlines():
+        if line.startswith("- Bảng '") and "'" in line[8:]:
+            tname = line[8:].split("'")[0]
+            retained_tables.append(tname)
+    all_table_names = list(data_dict.keys())
+    dropped_tables = [t for t in all_table_names if t not in retained_tables and not any(t == rt.split("_")[0] for rt in retained_tables)]
+    print(f"│ • Bảng giữ lại     : {', '.join(retained_tables[:6])}")
+    print(f"│ • Bảng lược bỏ     : {', '.join(dropped_tables[:6]) if dropped_tables else '(Không có)'}")
+    print("└──────────────────────────────────────────────────────────────────────────────┘")
+
+    # --------------------------------------------------------------------------
+    # MỤC 6: GIẢI PHẪU PROMPT & FEW-SHOT DYNAMIC (TOKEN BUDGET ANATOMY)
+    # --------------------------------------------------------------------------
+    t0 = time.perf_counter()
+    few_shot = retrieve_dynamic_few_shot(question=normalized_q, intent=intent, entity_matches=entity_matches)
+    rulebook_content = load_rulebook(str(data_dir))
+    sys_prompt, user_prompt = build_prompt(
+        schema_str=pruned_schema,
+        as_of_date=as_of_date,
+        question=normalized_q,
+        rulebook_content=rulebook_content,
+        business_note=getattr(bd, "readme_text", None) if bd else None,
+        candidates=candidates,
+        entity_matches=entity_matches,
+        return_messages=True,
+    )
+    ms_prompt = (time.perf_counter() - t0) * 1000
+    latencies["prompt_build"] = ms_prompt
+
+    exemplar_title = few_shot.splitlines()[0] if few_shot else "Mặc định (Aggregation)"
+
+    print(f"\n--- [BƯỚC 4] PROMPT BUILDER & TOKEN BUDGET (⏱️ {ms_prompt:.2f} ms) ---")
+    print("┌──────────────────────────────────────────────────────────────────────────────┐")
+    print("│ [MỤC 6] GIẢI PHẪU PROMPT & PHÂN BỔ NGÂN SÁCH TOKEN (TOKEN BUDGET)            │")
+    print("├──────────────────────────────────────────────────────────────────────────────┤")
+    print(f"│ • Ví dụ Few-Shot đã chọn : {exemplar_title[:60]}")
+    print(f"│ • System Prompt          : {len(sys_prompt)} ký tự (~{len(sys_prompt)//4} tokens)")
+    print(f"│ • Pruned Schema          : {len(pruned_schema)} ký tự (~{len(pruned_schema)//4} tokens)")
+    print(f"│ • Few-Shot Exemplar      : {len(few_shot)} ký tự (~{len(few_shot)//4} tokens)")
+    print(f"│ • Tổng User Prompt       : {len(user_prompt)} ký tự (~{len(user_prompt)//4} tokens)")
+    print("└──────────────────────────────────────────────────────────────────────────────┘")
+
+    # --------------------------------------------------------------------------
+    # MỤC 7: LLM CODE GENERATION, AN TOÀN AST & VÒNG LẶP TỰ SỬA LỖI
+    # --------------------------------------------------------------------------
+    code_text = ""
+    gen_time_s = 0.0
+    self_correction_trace = []
+
+    if not is_feasible:
+        code_text = '# Feasibility Gate detected unanswerable\ndef solution(data):\n    return "unanswerable"'
+        latencies["llm_gen"] = 0.0
+        print(f"\n--- [BƯỚC 5] LLM CODE GENERATION (Bỏ qua vì câu Unanswerable) ---")
+    elif args.with_llm:
+        print(f"\n--- [BƯỚC 5] LLM CODE GENERATION (Qwen2.5-Coder-3B GPU) ---")
+        print(f"  • Nạp mô hình {args.model_id} (4-bit NF4)...")
+        t0 = time.time()
+        client = LLMClient(model_id=args.model_id, auto_load=True)
+        code_text = client.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=1024)
+        gen_time_s = time.time() - t0
+        latencies["llm_gen"] = gen_time_s * 1000
+        print(f"  • Thời gian sinh mã : {gen_time_s:.2f}s ({latencies['llm_gen']:.1f}ms)")
+    else:
+        latencies["llm_gen"] = 0.0
+        print(f"\n--- [BƯỚC 5] LLM CODE GENERATION (Chế độ Dry-Run: Bỏ qua nạp GPU) ---")
+        print("  💡 Thêm cờ --with_llm để sinh mã thật bằng GPU.")
+        code_text = 'def solution(data):\n    # Dry run mock code\n    return "abstain"'
+
+    # Kiểm tra AST Safety
+    is_safe_ast, ast_err = validate_code_safety(code_text)
+    ref_tables, ref_cols, ref_utils = extract_referenced_tables_and_columns(code_text, list(data_dict.keys()))
+
+    print("\n┌──────────────────────────────────────────────────────────────────────────────┐")
+    print("│ [MỤC 7] PHÂN TÍCH TĨNH MÃ NGUỒN (STATIC AST SAFETY & CODE INSPECTION)         │")
+    print("├──────────────────────────────────────────────────────────────────────────────┤")
+    print(f"│ • Cú pháp & An toàn AST : [{'PASS - HỢP LỆ' if is_safe_ast else f'FAIL - {ast_err}'}]")
+    print(f"│ • Bảng code truy cập    : {', '.join(ref_tables) if ref_tables else '(Không phát hiện)'}")
+    print(f"│ • Cột code truy cập     : {', '.join(ref_cols[:8]) if ref_cols else '(Không phát hiện)'}")
+    print(f"│ • Tiện ích sử dụng      : {', '.join(ref_utils) if ref_utils else '(Không dùng)'}")
+    print("├──────────────────────────────────────────────────────────────────────────────┤")
+    print("│ [TOÀN BỘ MÃ NGUỒN PYTHON SINH RA]:                                           │")
+    for line in code_text.strip().splitlines():
+        print(f"│   {line}")
+    print("└──────────────────────────────────────────────────────────────────────────────┘")
+
+    # --------------------------------------------------------------------------
+    # THỰC THI SANDBOX & TỰ SỬA LỖI (SELF-CORRECTION)
+    # --------------------------------------------------------------------------
+    t0 = time.perf_counter()
+    raw_result = None
+    exec_err = None
+    exec_ms = 0.0
+
+    if not is_feasible:
+        raw_result = "unanswerable"
+        exec_ms = 0.0
+    elif args.with_llm:
+        raw_result, exec_err, exec_ms, err_type, unans_source = execute_solution(
+            code_text=code_text,
+            biz_dir=data_root / biz_id,
+            data_dict=data_dict,
+            con=con,
+            business_obj=bd,
+            timeout_s=30,
+            use_sandbox=True,
+            return_details=True,
+        )
+        # Self-correction nếu gặp lỗi
+        if exec_err:
+            self_correction_trace.append(f"Vòng 1 Lỗi: {exec_err}")
+            print(f"  🔄 [Self-Correction Vòng 1] Gặp lỗi: {exec_err}. Đang kích hoạt sửa lỗi...")
+            retry_sys, retry_user = build_retry_prompt(
+                question=normalized_q,
+                failed_code=code_text,
+                error_message=f"Lỗi thực thi: {exec_err}",
+                schema_str=pruned_schema,
+                as_of_date=as_of_date,
+                retry_round=1,
+            )
+            retry_code = client.generate_code(prompt=retry_user, system_prompt=retry_sys, max_new_tokens=1024)
+            r_res, r_err, r_ms = execute_solution(
+                code_text=retry_code,
+                biz_dir=data_root / biz_id,
+                data_dict=data_dict,
+                con=con,
+                business_obj=bd,
+                timeout_s=30,
+                use_sandbox=True,
+            )
+            exec_ms += r_ms
+            if not r_err:
+                code_text = retry_code
+                raw_result = r_res
+                exec_err = None
+                self_correction_trace.append("Vòng 2 Sửa thành công!")
+                print("  ✅ [Self-Correction] Vòng 2 sửa lỗi thành công!")
+            else:
+                self_correction_trace.append(f"Vòng 2 Vẫn lỗi: {r_err}")
+    else:
+        raw_result = "abstain"
+        exec_ms = 1.0
+
+    ms_sandbox = (time.perf_counter() - t0) * 1000
+    latencies["sandbox_exec"] = ms_sandbox
+
+    print(f"\n--- [BƯỚC 6] EXECUTION SANDBOX (⏱️ {ms_sandbox:.2f} ms) ---")
+    print(f"  • Thời gian chạy code: {exec_ms:.2f} ms")
+    print(f"  • Lỗi Sandbox (nếu)  : {exec_err or 'Không có (Thực thi thành công)'}")
+    print(f"  • Kết quả thô (Raw)  : {raw_result} (Kiểu: {type(raw_result).__name__})")
+
+    # --------------------------------------------------------------------------
+    # MỤC 8: GIẢI PHẪU TOÁN HỌC ĐIỂM TỰ TIN CALIBRATED CONFIDENCE
+    # --------------------------------------------------------------------------
+    t0 = time.perf_counter()
+    grounding_eval = evaluate_grounding_coverage(
+        code_text=code_text,
+        question=normalized_q,
+        entity_matches=entity_matches,
+        temporal_info=temp_info,
+    )
+
+    sanity_err = None
+    if not args.with_llm and is_feasible:
+        final_ans = make_abstain("Dry Run Mock")
+        confidence = 0.0
+    elif exec_err:
+        final_ans = make_abstain(f"Execution Error: {exec_err}")
+        confidence = 0.0
+    elif not is_feasible:
+        final_ans = {"type": "unanswerable", "answer": None}
+        confidence = 1.0
+    else:
+        norm_cand = normalize_output(raw_result, question=normalized_q, code_text=code_text)
+        is_sane, sanity_reason = check_result_sanity(norm_cand, question=normalized_q, code_text=code_text)
+        if not is_sane:
+            sanity_err = sanity_reason
+            final_ans = make_abstain(f"Sanity Check: {sanity_reason}")
+            confidence = 0.0
+        else:
+            confidence = compute_confidence_score(
+                sub_ans=norm_cand,
+                exec_error=exec_err,
+                exec_ms=int(exec_ms),
+                retry_count=len(self_correction_trace),
+                sanity_passed=True,
+                code_text=code_text,
+                has_feasibility_pass=is_feasible,
+                grounding_eval=grounding_eval,
+            )
+            final_ans, is_abs = apply_abstention_gate(norm_cand, confidence=confidence, threshold=0.50)
+
+    ms_output = (time.perf_counter() - t0) * 1000
+    latencies["normalizer"] = ms_output
+    total_pipeline_ms = sum(latencies.values())
+
+    print("\n┌──────────────────────────────────────────────────────────────────────────────┐")
+    print("│ [MỤC 8] GIẢI PHẪU TOÁN HỌC ĐIỂM TỰ TIN (CALIBRATED CONFIDENCE BREAKDOWN)      │")
+    print("├──────────────────────────────────────────────────────────────────────────────┤")
+    base_score = 1.0 if not exec_err and not sanity_err else 0.0
+    e_pen = grounding_eval.get("entity_penalty", 0.0)
+    t_pen = grounding_eval.get("temporal_penalty", 0.0)
+    tab_pen = grounding_eval.get("table_penalty", 0.0)
+    tot_pen = grounding_eval.get("total_penalty", 0.0)
+    missed_m = [m.get("term", "") for m in grounding_eval.get("missed_mentions", [])]
+
+    print(f"│ • Điểm cơ sở (C_base)   : {base_score:.2f} (Exec=0.40, Sanity=0.35, AST=0.25)")
+    print(f"│ • Phạt thực thể (P_ent) : -{e_pen:.2f} (Độ phủ: {grounding_eval.get('entity_coverage', 1.0)*100:.0f}%)")
+    if missed_m:
+        print(f"│   └─ Thực thể bỏ sót    : {', '.join(missed_m)}")
+    print(f"│ • Phạt thời gian (P_tem): -{t_pen:.2f} (Độ phủ: {grounding_eval.get('temporal_coverage', 1.0)*100:.0f}%)")
+    print(f"│ • Phạt bảng ngoài (P_tb): -{tab_pen:.2f}")
+    print(f"│ • ĐỘ TIN CẬY CUỐI CÙNG  : C = {confidence:.2f} (So với ngưỡng tau* = 0.50)")
+    gate_decision = "CHO PHÉP NỘP ĐÁP ÁN" if confidence >= 0.50 else "LÁ CHẮN ÉP VỀ ABSTAIN (0 ĐIỂM AN TOÀN)"
+    print(f"│ 👉 QUYẾT ĐỊNH CỦA CỔNG  : {gate_decision}")
+    print("└──────────────────────────────────────────────────────────────────────────────┘")
+
+    # --------------------------------------------------------------------------
+    # MỤC 9: PHÂN TÍCH ĐỘ LỆCH SỐ HỌC, BIẾN ĐỔI NORMALIZER & SO SÁNH GOLD
+    # --------------------------------------------------------------------------
+    pred_val = final_ans.get("answer")
+    pred_type = final_ans.get("type", "abstain")
+    gold_val = gold_record.get("answer") if gold_record else None
+    gold_type = gold_record.get("type") if gold_record else "unknown"
+
+    is_match = False
+    eval_score = 0.0
+    eval_label = "CHƯA CÓ ĐÁP ÁN"
+
+    if gold_record:
+        is_match = compare_single_answer(final_ans, gold_record)
+        if pred_type == "abstain":
+            eval_score = 0.0
+            eval_label = "TỪ CHỐI TRẢ LỜI (ABSTAIN - 0.0)"
+        elif is_match:
+            eval_score = 1.0
+            eval_label = "HOÀN TOÀN TRÙNG KHỚP (CORRECT - +1.0)"
+        else:
+            eval_score = -1.0
+            eval_label = "SAI LỆCH ĐÁP ÁN (WRONG - -1.0)"
+
+    dev_analysis = analyze_numerical_deviation(pred_val, gold_val, pred_type, gold_type)
+
+    print("\n" + "=" * 80)
+    print(" 🎯  GIẢI THÍCH THỐNG KÊ KẾT QUẢ & PHÂN TÍCH SAI SỐ ĐỊNH LƯỢNG")
+    print("=" * 80)
+    print(f"• DỰ ĐOÁN (PRED) : {pred_val} (Type: {pred_type})")
+    print(f"• CHUẨN   (GOLD) : {gold_val} (Type: {gold_type})")
+    print(f"• KẾT LUẬN       : {eval_label}")
+    if dev_analysis.get("is_applicable") and not is_match and pred_type != "abstain":
+        print("-" * 80)
+        print(f"• Sai số tuyệt đối: {dev_analysis['abs_diff']}")
+        print(f"• Sai số phần trăm: {dev_analysis['pct_diff']:.2f}%")
+        if dev_analysis.get("diagnostic_hypothesis"):
+            print(f"💡 CHẨN ĐOÁN LỖI TỰ ĐỘNG: {dev_analysis['diagnostic_hypothesis']}")
+    print("-" * 80)
+    print("BẢNG ĐỘ TRỄ CHI TIẾT TỪNG MODULE:")
+    for m_name, m_lat in [
+        ("1. Ingestion & Loader", latencies.get("ingest_schema", 0.0)),
+        ("2. Feasibility Gate", latencies.get("feasibility", 0.0)),
+        ("3. Grounding & Entity", latencies.get("grounding", 0.0)),
+        ("4. Prompt Assembly", latencies.get("prompt_build", 0.0)),
+        ("5. LLM Code Gen (3B)", latencies.get("llm_gen", 0.0)),
+        ("6. Sandbox Subprocess", latencies.get("sandbox_exec", 0.0)),
+        ("7. Normalizer & Gate", latencies.get("normalizer", 0.0)),
+    ]:
+        m_pct = (m_lat / total_pipeline_ms * 100.0) if total_pipeline_ms > 0 else 0.0
+        print(f"  • {m_name:<25}: {m_lat:8.2f} ms ({m_pct:5.1f}%)")
+    print(f"👉 TỔNG THỜI GIAN TOÀN TRÌNH: {total_pipeline_ms:8.2f} ms ({total_pipeline_ms/1000:.2f}s)")
+    print("=" * 80)
+
+    # --------------------------------------------------------------------------
+    # MỤC 10: TỔNG HỢP TELEMETRY & ĐỀ XUẤT CHO AI
+    # --------------------------------------------------------------------------
+    ai_recs = generate_ai_recommendations(
+        is_match=is_match,
+        pred_ans=pred_val,
+        gold_ans=gold_val,
+        pred_type=pred_type,
+        gold_type=gold_type,
+        confidence=confidence,
+        threshold=0.50,
+        exec_err=exec_err,
+        sanity_err=sanity_err,
+        grounding_eval=grounding_eval,
+        intent=intent,
+        question_text=normalized_q,
+        deviation_analysis=dev_analysis,
+    )
+
+    print("\n┌──────────────────────────────────────────────────────────────────────────────┐")
+    print("│ [MỤC 10] THÔNG TIN TELEMETRY & HƯỚNG ĐỀ XUẤT CHO AI                           │")
+    print("├──────────────────────────────────────────────────────────────────────────────┤")
+    for i, rec in enumerate(ai_recs, 1):
+        print(f"│ {i}. {rec}")
+    print("└──────────────────────────────────────────────────────────────────────────────┘")
+
+    telemetry_payload = {
+        "question_id": qid,
+        "business_id": biz_id,
+        "as_of_date": as_of_date,
+        "original_question": question_text,
+        "normalized_question": normalized_q,
+        "expanded_abbreviations": replaced_abbr,
+        "intent": intent,
+        "temporal_desc": temp_info.get("description", ""),
+        "temporal_range": [temp_info.get("start_date"), temp_info.get("end_date")],
+        "entity_matches": [getattr(m, "matched_value", str(m)) for m in entity_matches],
+        "pruned_schema": pruned_schema,
+        "code_text": code_text,
+        "raw_result": raw_result,
+        "predicted_answer": pred_val,
+        "predicted_type": pred_type,
+        "gold_answer": gold_val,
+        "gold_type": gold_type,
+        "is_correct": is_match,
+        "eval_score": eval_score,
+        "eval_status_label": eval_label,
+        "confidence_score": confidence,
+        "threshold_tau_star": 0.50,
+        "grounding_eval": grounding_eval,
+        "latencies_ms": latencies,
+        "total_latency_ms": total_pipeline_ms,
+        "ai_recommendations": ai_recs,
+        "deviation_analysis": dev_analysis,
+        "self_correction_trace": self_correction_trace,
+    }
+
+    # Xuất telemetry JSON
+    telemetry_file = Path(args.telemetry_file) if args.telemetry_file else Path("reports/diagnostics") / f"{qid}_telemetry.json"
+    telemetry_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(telemetry_file, "w", encoding="utf-8") as f:
+        json.dump(telemetry_payload, f, ensure_ascii=False, indent=2)
+    print(f"\n📁 Đã lưu Telemetry JSON tại: {telemetry_file.resolve()}")
+
+    # Xuất Dashboard PNG trực quan
+    chart_file = Path(args.chart_file) if args.chart_file else Path("reports/diagnostics") / f"{qid}_dashboard.png"
+    render_diagnostic_dashboard(telemetry_payload, chart_file)
+    print(f"🖼️ Đã tạo Dashboard hình ảnh trực quan tại: {chart_file.resolve()}\n")
+
+    return telemetry_payload
+
+
+# ==============================================================================
+# HÀM CHẠY ĐÁNH GIÁ HÀNG LOẠT (BATCH EVALUATION MODE - THAY THẾ RUN_EVAL.PY)
+# ==============================================================================
+
+def run_batch_evaluation(args: argparse.Namespace):
+    """Chạy toàn bộ pipeline suy luận và đánh giá hàng loạt thay thế hoàn toàn run_eval.py."""
+    cfg = load_config(args.config) if args.config else load_config()
+
+    data_dir = Path(args.data_dir)
+    questions_path = Path(args.questions_file) if args.questions_file else (data_dir / "questions.jsonl")
+    data_root = data_dir / "data"
+
+    if not questions_path.exists():
+        print(f"❌ Không tìm thấy questions.jsonl tại: {questions_path.resolve()}")
+        sys.exit(1)
+
+    gold_path = Path(args.gold) if args.gold else (data_dir / "answers.jsonl")
+    has_gold = gold_path.exists()
+
+    with open(questions_path, "r", encoding="utf-8") as f:
+        all_questions = [json.loads(line) for line in f if line.strip()]
+
+    gold_map: Dict[str, dict] = {}
+    if has_gold:
+        with open(gold_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    item = json.loads(line)
+                    gold_map[item["id"]] = item
+
+    rulebook_content = load_rulebook(str(data_dir))
+
+    target_questions = all_questions
+    if args.biz:
+        target_questions = [q for q in target_questions if q.get("business_id") == args.biz]
+    if args.id:
+        target_questions = [q for q in target_questions if q.get("id") == args.id]
+    if args.sample is not None and args.sample < len(target_questions):
+        rng = random.Random(args.seed)
+        target_questions = rng.sample(target_questions, args.sample)
+
+    output_path = Path(args.output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_mode = "w"
+    existing_completed_ids = set()
+
+    if args.resume and output_path.exists():
+        try:
+            with open(output_path, "r", encoding="utf-8") as f_ex:
+                for line in f_ex:
+                    if line.strip():
+                        existing_completed_ids.add(json.loads(line).get("id"))
+            if existing_completed_ids:
+                write_mode = "a"
+                target_questions = [q for q in target_questions if q["id"] not in existing_completed_ids]
+        except Exception:
+            pass
+
+    active_limit = args.limit if args.limit is not None else len(target_questions)
+    active_questions = target_questions[:active_limit]
+    active_questions = sorted(active_questions, key=lambda q: (q.get("business_id", ""), q.get("id", "")))
+    active_qids = {q["id"] for q in active_questions} | existing_completed_ids
+
+    chart_path = Path(args.chart_file) if args.chart_file else Path("results/evaluation_dashboard.png")
+    report_path = Path(args.report_file) if args.report_file else Path("results/evaluation_report.json")
+
+    print("=" * 80)
+    print("DATAMATE — PIPELINE SUY LUẬN, SO KHỚP ĐÁP ÁN & TRỰC QUAN HÓA TOÀN TRÌNH")
+    print("=" * 80)
+    print(f"• Dữ liệu đầu vào       : {questions_path.resolve()} ({len(all_questions)} câu)")
+    print(f"• Số câu thực hiện chạy : {len(active_questions)} câu (Limit: {args.limit})")
+    print(f"• File đáp án chuẩn     : {gold_path.resolve() if has_gold else 'Không có (Chế độ Test ẩn)'}")
+    print(f"• File kết quả JSONL    : {output_path.resolve()}")
+    print(f"• Ảnh Dashboard thống kê: {chart_path.resolve()}")
+    print("=" * 80)
+
+    llm: Optional[LLMClient] = None
+    if args.with_llm or not args.dry_run:
+        print(f"[Khởi tạo] Đang nạp mô hình {args.model_id} (4-bit NF4)...")
+        llm = LLMClient(model_id=args.model_id)
+
+    writer = SubmissionWriter(output_file=str(output_path), log_dir=args.log_dir, mode=write_mode).open()
+    written_records: Dict[str, dict] = {}
+    latencies: Dict[str, int] = {}
+    t_start_all = time.time()
+
+    try:
+        for idx, q in enumerate(active_questions, start=1):
+            qid = q["id"]
+            biz_id = q["business_id"]
+            question_text = q["question"]
+            as_of_date = q["as_of_date"]
+
+            print(f"\n[{idx}/{len(active_questions)}] Câu hỏi ID: {qid} (Shop: {biz_id})")
+            print(f"Nội dung: \"{question_text}\" | as_of_date: {as_of_date}")
+
+            data_dict, con, schema_str, bd, shop_meta, candidates, is_cache = get_cached_business_data(biz_id, data_root)
+            if not data_dict:
+                sub_ans = make_abstain(f"Data Not Found: {schema_str}")
+                writer.write(question_id=qid, answer=sub_ans, code="", raw_result=None, error=schema_str, elapsed_ms=0, confidence=0.0)
+                written_records[qid] = {"id": qid, **sub_ans}
+                latencies[qid] = 0
+                continue
+
+            # Lá chắn 1: Feasibility Gate
+            is_feasible, unans_reason = check_feasibility(question_text, as_of_date, shop_meta)
+            if not is_feasible:
+                print(f"  🛡️ [Feasibility Gate] Bất khả thi ({unans_reason}) -> Trả về 'unanswerable'")
+                sub_ans = {"type": "unanswerable", "answer": None}
+                writer.write(
+                    question_id=qid,
+                    answer=sub_ans,
+                    code="# Feasibility Gate: Unanswerable detected deterministically",
+                    raw_result="unanswerable",
+                    error=None,
+                    elapsed_ms=0,
+                    confidence=1.0,
+                    unanswerable_source="gate",
+                )
+                written_records[qid] = {"id": qid, **sub_ans}
+                latencies[qid] = 0
+                continue
+
+            if args.dry_run or (not args.with_llm and llm is None):
+                sub_ans = make_abstain("Dry Run Mode")
+                writer.write(question_id=qid, answer=sub_ans, code="", raw_result=None, error=None, elapsed_ms=0, confidence=0.0)
+                written_records[qid] = {"id": qid, **sub_ans}
+                latencies[qid] = 0
+                continue
+
+            # Tiền xử lý & Entity Linking
+            normalized_q, _ = explain_and_expand_abbreviations(question_text)
+            intent = classify_intent(normalized_q)
+            cal_str = str(data_dir / "calendar.csv") if (data_dir / "calendar.csv").exists() else None
+            temp_info = resolve_temporal_context(normalized_q, as_of_date, calendar_path=cal_str)
+            entity_matches = link_entities(normalized_q, candidates=candidates, threshold=0.55) if candidates else []
+
+            pruned_schema = prune_schema_by_intent(
+                schema_str=schema_str,
+                intent=intent,
+                question=normalized_q,
+                entity_matches=entity_matches,
+            )
+
+            sys_prompt, user_prompt = build_prompt(
+                schema_str=pruned_schema,
+                as_of_date=as_of_date,
+                question=normalized_q,
+                rulebook_content=rulebook_content,
+                business_note=getattr(bd, "readme_text", None) if bd else None,
+                candidates=candidates,
+                entity_matches=entity_matches,
+                return_messages=True,
+            )
+
+            t0 = time.time()
+            assert llm is not None
+            code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=1024)
+            gen_sec = round(time.time() - t0, 2)
+
+            biz_dir = data_root / biz_id
+            raw_result, exec_err, exec_ms, err_type, unans_source = execute_solution(
+                code_text=code_text,
+                biz_dir=biz_dir,
+                data_dict=data_dict,
+                con=con,
+                business_obj=bd,
+                timeout_s=args.timeout,
+                use_sandbox=not args.in_process,
+                return_details=True,
+            )
+
+            # Self-Correction tối đa 2 vòng
+            max_self_corrections = 2
+            self_correction_count = 0
+            sanity_err = None
+
+            if not exec_err:
+                sub_ans_cand = normalize_output(raw_result, question=normalized_q, code_text=code_text)
+                is_sane, sanity_reason = check_result_sanity(sub_ans_cand, question=normalized_q, code_text=code_text)
+                if raw_result == "unanswerable" or sub_ans_cand.get("type") == "unanswerable":
+                    sanity_err = "Dữ liệu shop CÓ ĐỦ số liệu (KHÔNG ĐƯỢC trả về unanswerable). Hãy tính toán cụ thể."
+                elif not is_sane:
+                    sanity_err = sanity_reason
+
+            while (exec_err or sanity_err) and self_correction_count < max_self_corrections:
+                self_correction_count += 1
+                print(f"  🔄 [Self-Correction Vòng {self_correction_count}/{max_self_corrections}] Đang sửa...")
+                err_feedback = f"Lỗi: {exec_err or sanity_err}"
+                retry_sys, retry_user = build_retry_prompt(
+                    question=normalized_q,
+                    failed_code=code_text,
+                    error_message=err_feedback,
+                    schema_str=pruned_schema,
+                    as_of_date=as_of_date,
+                    retry_round=self_correction_count,
+                )
+                t_retry = time.time()
+                retry_code = llm.generate_code(prompt=retry_user, system_prompt=retry_sys, max_new_tokens=1024)
+                gen_sec = round(gen_sec + (time.time() - t_retry), 2)
+                raw_retry, err_retry, ms_retry, type_retry, src_retry = execute_solution(
+                    code_text=retry_code,
+                    biz_dir=biz_dir,
+                    data_dict=data_dict,
+                    con=con,
+                    business_obj=bd,
+                    timeout_s=args.timeout,
+                    use_sandbox=not args.in_process,
+                    return_details=True,
+                )
+                exec_ms += ms_retry
+                if not err_retry:
+                    sub_ans_cand2 = normalize_output(raw_retry, question=normalized_q, code_text=retry_code)
+                    is_sane2, sanity_reason2 = check_result_sanity(sub_ans_cand2, question=normalized_q, code_text=retry_code)
+                    if not is_sane2 or raw_retry == "unanswerable":
+                        sanity_err = sanity_reason2 or "Vẫn trả về unanswerable"
+                        code_text = retry_code
+                    else:
+                        code_text = retry_code
+                        raw_result = raw_retry
+                        exec_err = None
+                        sanity_err = None
+                        print(f"  ✅ [Self-Correction] Vòng {self_correction_count} thành công!")
+                        break
+                else:
+                    code_text = retry_code
+                    exec_err = err_retry
+
+            # Chuẩn hóa & Cổng Abstention
+            confidence = 0.0
+            if exec_err:
+                sub_ans = make_abstain(f"Runtime Error: {exec_err}")
+            elif sanity_err:
+                sub_ans = make_abstain(f"Sanity Error: {sanity_err}")
+            else:
+                sub_ans = normalize_output(raw_result, question=normalized_q, code_text=code_text)
+                grounding_eval_res = evaluate_grounding_coverage(
+                    code_text=code_text,
+                    question=normalized_q,
+                    entity_matches=entity_matches,
+                    temporal_info=temp_info,
+                )
+                confidence = compute_confidence_score(
+                    sub_ans=sub_ans,
+                    exec_error=exec_err,
+                    exec_ms=exec_ms,
+                    retry_count=self_correction_count,
+                    sanity_passed=(sanity_err is None),
+                    sanity_error=sanity_err,
+                    code_text=code_text,
+                    has_feasibility_pass=True,
+                    unanswerable_source=unans_source,
+                    grounding_eval=grounding_eval_res,
+                )
+                sub_ans, is_abs = apply_abstention_gate(
+                    sub_ans,
+                    confidence=confidence,
+                    threshold=args.tau_star,
+                    unanswerable_source=unans_source,
+                )
+
+            total_lat = int(gen_sec * 1000 + exec_ms)
+            sel_tables, sel_cols, _ = extract_referenced_tables_and_columns(code_text, list(data_dict.keys()))
+            writer.write(
+                question_id=qid,
+                answer=sub_ans,
+                code=code_text,
+                raw_result=raw_result,
+                error=exec_err or sanity_err,
+                elapsed_ms=total_lat,
+                confidence=confidence,
+                unanswerable_source=unans_source,
+                selected_tables=sel_tables,
+                selected_columns=sel_cols,
+                self_correction_count=self_correction_count,
+            )
+            written_records[qid] = {"id": qid, **sub_ans}
+            latencies[qid] = total_lat
+            print(f"  👉 Đáp án: {sub_ans.get('answer')} (Type: {sub_ans.get('type')}, C={confidence:.2f})")
+
+        # Điền abstain cho các câu còn lại nếu không dùng --no_fill_abstain
+        if not args.no_fill_abstain:
+            for q in all_questions:
+                if q["id"] not in active_qids:
+                    abstain_ans = make_abstain("Default Abstain")
+                    writer.write(question_id=q["id"], answer=abstain_ans, code="", raw_result=None, error=None, elapsed_ms=0, confidence=0.0)
+                    written_records[q["id"]] = {"id": q["id"], **abstain_ans}
+                    latencies[q["id"]] = 0
+
+    finally:
+        writer.close()
+        for item in _BUSINESS_CACHE.values():
+            if item[1]:
+                try:
+                    item[1].close()
+                except Exception:
+                    pass
+
+    total_time = round(time.time() - t_start_all, 2)
+    print("\n" + "=" * 80)
+    print(f"HOÀN THÀNH QUÁ TRÌNH SUY LUẬN BATCH! (Thời gian: {total_time}s)")
+    print("=" * 80)
+
+    # Chấm điểm Penalized Accuracy nếu có file đáp án chuẩn
+    if has_gold:
+        print("\n[ĐÁNH GIÁ & SO KHỚP ĐÁP ÁN] Đang chấm điểm theo Rulebook...")
+        eval_qids = [q["id"] for q in active_questions]
+        correct = 0
+        wrong = 0
+        abstain = 0
+        breakdown: Dict[str, dict] = defaultdict(lambda: {"total": 0, "correct": 0, "wrong": 0, "abstain": 0, "latencies": []})
+
+        for qid in eval_qids:
+            if qid not in gold_map:
+                continue
+            gold_item = gold_map[qid]
+            g_type = gold_item.get("type", "unknown")
+            breakdown[g_type]["total"] += 1
+            breakdown[g_type]["latencies"].append(latencies.get(qid, 0))
+
+            pred_item = written_records.get(qid, {"type": "abstain", "answer": None})
+            p_type = pred_item.get("type", "abstain")
+
+            if p_type == "abstain":
+                abstain += 1
+                breakdown[g_type]["abstain"] += 1
+            else:
+                is_correct = compare_single_answer(pred_item, gold_item)
+                if is_correct:
+                    correct += 1
+                    breakdown[g_type]["correct"] += 1
+                else:
+                    wrong += 1
+                    breakdown[g_type]["wrong"] += 1
+
+        eval_total = len(eval_qids)
+        pa_score = round((correct - wrong) / eval_total, 4) if eval_total else 0.0
+        acc_score = round(correct / (correct + wrong), 4) if (correct + wrong) else 0.0
+        coverage = round((correct + wrong) / eval_total, 4) if eval_total else 0.0
+
+        for t, stat in breakdown.items():
+            tot = stat["total"]
+            stat["pa"] = round((stat["correct"] - stat["wrong"]) / tot, 4) if tot else 0.0
+            stat["avg_latency_ms"] = round(sum(stat["latencies"]) / len(stat["latencies"]), 1) if stat["latencies"] else 0.0
+
+        metrics = {
+            "total": eval_total,
+            "correct": correct,
+            "wrong": wrong,
+            "abstain": abstain,
+            "pa": pa_score,
+            "accuracy": acc_score,
+            "coverage": coverage,
+            "total_time_sec": total_time,
+            "breakdown": dict(breakdown),
+        }
+
+        print("\n" + "=" * 76)
+        print("BÁO CÁO KẾT QUẢ ĐÁNH GIÁ (PENALIZED ACCURACY - PA)")
+        print("=" * 76)
+        print(f"Tổng số câu đánh giá : {eval_total}")
+        print(f"Số câu đúng (+1)      : {correct} ({100*correct/eval_total:.1f}%)")
+        print(f"Số câu sai (-1)       : {wrong} ({100*wrong/eval_total:.1f}%)")
+        print(f"Số câu từ chối (0)    : {abstain} ({100*abstain/eval_total:.1f}%)")
+        print(f"Penalized Accuracy (PA): {pa_score:+.4f}")
+        print(f"Accuracy (khi trả lời): {acc_score*100:.1f}%")
+        print(f"Coverage (Độ bao phủ) : {coverage*100:.1f}%")
+        print("-" * 76)
+        print(f"{'Kiểu đáp án':<16} | {'Tổng':>6} | {'Đúng':>6} | {'Sai':>6} | {'Abstain':>7} | {'Điểm PA':>8}")
+        print("-" * 76)
+        for t in sorted(breakdown.keys()):
+            st = breakdown[t]
+            print(f"{t:<16} | {st['total']:>6} | {st['correct']:>6} | {st['wrong']:>6} | {st['abstain']:>7} | {st['pa']:>+8.3f}")
+        print("=" * 76)
+
+        # Lưu báo cáo JSON
+        rep_file = Path(args.report_file) if args.report_file else Path("results/evaluation_report.json")
+        rep_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(rep_file, "w", encoding="utf-8") as f_rep:
+            json.dump(metrics, f_rep, ensure_ascii=False, indent=2)
+        print(f"• Báo cáo số liệu chi tiết đã lưu tại: {rep_file.resolve()}")
+
+        # Xuất biểu đồ hình ảnh thống kê hàng loạt Native Pillow
+        chart_file = Path(args.chart_file) if args.chart_file else Path("results/evaluation_dashboard.png")
+        render_batch_evaluation_dashboard(metrics, chart_file)
+        print(f"🎉 ĐÃ XUẤT THÀNH CÔNG BIỂU ĐỒ BATCH DASHBOARD TẠI: {chart_file.resolve()}")
+
+
+# ==============================================================================
+# HÀM CHÍNH (MAIN CLI ROUTER)
+# ==============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Chẩn đoán chuyên sâu từng module DataMate trên 1 câu hỏi cụ thể.")
+    parser = argparse.ArgumentParser(
+        description="Công cụ Toàn Năng Kiểm Thử White-Box & Đánh Giá Toàn Trình (DataMate Inspector & Evaluator)."
+    )
+    # Tùy chọn chung
     parser.add_argument("--data_dir", type=str, default="competition_data/train", help="Thư mục dữ liệu train/public_test")
-    parser.add_argument("--biz", type=str, default=None, help="Chỉ định ID doanh nghiệp (ví dụ: biz_128)")
-    parser.add_argument("--id", type=str, default=None, help="Chỉ định ID câu hỏi (ví dụ: q_001883280e83)")
+    parser.add_argument("--config", type=str, default=None, help="Đường dẫn file cấu hình YAML tùy chỉnh")
+    parser.add_argument("--biz", type=str, default=None, help="Chỉ định ID doanh nghiệp (ví dụ: biz_119)")
+    parser.add_argument("--id", type=str, default=None, help="Chỉ định ID câu hỏi (ví dụ: q_8d076e8b04fa)")
     parser.add_argument("--random", action="store_true", help="Chọn ngẫu nhiên 1 câu hỏi từ tập dữ liệu")
     parser.add_argument("--with_llm", action="store_true", help="Kích hoạt nạp mô hình LLM GPU thật để sinh mã")
     parser.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Coder-3B-Instruct", help="Tên model LLM")
+    parser.add_argument("--chart_file", type=str, default=None, help="Đường dẫn file ảnh dashboard PNG")
+    parser.add_argument("--telemetry_file", type=str, default=None, help="Đường dẫn file telemetry JSON")
+
+    # Tùy chọn đánh giá hàng loạt (Batch Evaluation Mode)
+    parser.add_argument("--batch", action="store_true", help="Kích hoạt chế độ đánh giá hàng loạt nhiều câu hỏi")
+    parser.add_argument("--limit", type=int, default=None, help="Giới hạn số lượng câu hỏi cần chạy trong batch")
+    parser.add_argument("--sample", type=int, default=None, help="Lấy ngẫu nhiên N câu hỏi để đánh giá")
+    parser.add_argument("--seed", type=int, default=42, help="Seed ngẫu nhiên khi lấy mẫu")
+    parser.add_argument("--output_file", type=str, default="results/predictions.jsonl", help="File xuất kết quả dự đoán JSONL")
+    parser.add_argument("--log_dir", type=str, default="results/logs", help="Thư mục lưu log chi tiết từng câu")
+    parser.add_argument("--report_file", type=str, default="results/evaluation_report.json", help="File xuất báo cáo chi tiết JSON")
+    parser.add_argument("--gold", type=str, default=None, help="Đường dẫn file đáp án chuẩn answers.jsonl")
+    parser.add_argument("--questions_file", type=str, default=None, help="Đường dẫn file câu hỏi questions.jsonl cụ thể")
+    parser.add_argument("--dry_run", action="store_true", help="Chế độ chạy thử: không nạp GPU")
+    parser.add_argument("--no_fill_abstain", action="store_true", help="Không tự động điền abstain cho các câu còn lại")
+    parser.add_argument("--resume", action="store_true", help="Tiếp tục chạy các câu chưa hoàn thành")
+    parser.add_argument("--tau_star", type=float, default=0.50, help="Ngưỡng độ tin cậy tối ưu để từ chối trả lời (mặc định: 0.50)")
+    parser.add_argument("--timeout", type=int, default=30, help="Thời gian chờ tối đa khi chạy code trong sandbox (giây)")
+    parser.add_argument("--in_process", action="store_true", help="Chạy code trực tiếp trong tiến trình thay vì sandbox")
+
     args = parser.parse_args()
 
+    # Nhận diện chế độ: Nếu có cờ --batch hoặc (limit > 1 mà không chỉ định --id cụ thể)
+    is_batch_mode = args.batch or (args.limit is not None and args.limit > 1 and not args.id) or (args.sample is not None and not args.id)
+
+    if is_batch_mode:
+        run_batch_evaluation(args)
+        return
+
+    # Chế độ Single Inspection Mode
     data_dir = Path(args.data_dir)
-    questions_file = data_dir / "questions.jsonl"
-    answers_file = data_dir / "answers.jsonl"
+    questions_file = Path(args.questions_file) if args.questions_file else (data_dir / "questions.jsonl")
+    answers_file = Path(args.gold) if args.gold else (data_dir / "answers.jsonl")
     data_root = data_dir / "data"
 
     if not questions_file.exists():
@@ -101,7 +1782,6 @@ def main():
                     item = json.loads(line)
                     gold_answers[item["id"]] = item
 
-    # Chọn câu hỏi mục tiêu
     target_q = None
     if args.id:
         target_q = next((q for q in all_questions if q.get("id") == args.id), None)
@@ -118,250 +1798,8 @@ def main():
         print("❌ Không tìm thấy câu hỏi phù hợp với tiêu chí lọc!")
         sys.exit(1)
 
-    qid = target_q["id"]
-    biz_id = target_q["business_id"]
-    question_text = target_q["question"]
-    as_of_date = target_q["as_of_date"]
-    gold_record = gold_answers.get(qid)
-
-    print_header("CÔNG CỤ KIỂM THỬ CHẤT LƯỢNG TỪNG MODULE (DATAMATE DIAGNOSTIC INSPECTOR)")
-    print(f"• Question ID   : {qid}")
-    print(f"• Business ID   : {biz_id}")
-    print(f"• as_of_date    : {as_of_date}")
-    print(f"• Câu hỏi       : \"{question_text}\"")
-    if gold_record:
-        print(f"• Expected Gold : {gold_record.get('answer')} (Type: {gold_record.get('type')})")
-    print("=" * 80)
-
-    total_pipeline_time_ms = 0.0
-
-    # --------------------------------------------------------------------------
-    # BƯỚC 1 & 2: MODULE INGESTION + SCHEMA PROFILER & CLEANER
-    # --------------------------------------------------------------------------
-    t0 = time.time()
-    data_dict, con, schema_str, bd, shop_meta, candidates = load_business_data(biz_id, data_root)
-    t1 = time.time()
-    ms_ingest_schema = (t1 - t0) * 1000
-    total_pipeline_time_ms += ms_ingest_schema
-
-    print_step(1, "Module Ingestion (Nạp đa định dạng) & Module Schema Profiler (Làm sạch & Schema)", ms_ingest_schema)
-    print(f"  • Thư mục shop      : {(data_root / biz_id).resolve()}")
-    print(f"  • Số bảng đọc được  : {len(bd.tables) if bd else 0} bảng")
-    table_summary = [f"{t} ({len(df)} dòng, {len(df.columns)} cột)" for t, df in list(data_dict.items())[:4]]
-    print(f"  • Các bảng nạp RAM  : {', '.join(table_summary)}" + (" ..." if len(data_dict) > 4 else ""))
-    print(f"  • SQLite in-memory  : {'Đã tạo kết nối' if con else 'Không'}")
-    print(f"  • Trích đoạn Schema :\n" + "\n".join(schema_str.splitlines()[:5]) + "\n    ...")
-
-    # --------------------------------------------------------------------------
-    # BƯỚC 3: FEASIBILITY GATE (LÁ CHẮN UNANSWERABLE SỚM)
-    # --------------------------------------------------------------------------
-    t0 = time.time()
-    is_feasible, unans_reason = check_feasibility(question_text, as_of_date, shop_meta)
-    t1 = time.time()
-    ms_feas = (t1 - t0) * 1000
-    total_pipeline_time_ms += ms_feas
-
-    print_step(3, "Module Feasibility Gate (Kiểm tra tính khả thi câu hỏi)", ms_feas)
-    print(f"  • Khả thi trả lời   : {is_feasible}")
-    if not is_feasible:
-        print(f"  • Lý do từ chối sớm : {unans_reason}")
-        print("  -> ĐÁNH GIÁ: Module bắt trúng câu Unanswerable sớm, tiết kiệm 100% thời gian gọi GPU!")
-    else:
-        print("  • Đánh giá          : Câu hỏi hợp lệ, tiếp tục chuyển giao cho Grounding & LLM.")
-
-    # --------------------------------------------------------------------------
-    # BƯỚC 4: GROUNDING (TEMPORAL RESOLUTION & ENTITY LINKING)
-    # --------------------------------------------------------------------------
-    t0 = time.time()
-    calendar_path = data_dir / "calendar.csv"
-    cal_str = str(calendar_path) if calendar_path.exists() else None
-    temp_info = resolve_temporal_context(question_text, as_of_date, calendar_path=cal_str)
-    entity_matches = link_entities(question_text, candidates=candidates, threshold=0.55) if candidates else []
-    t1 = time.time()
-    ms_grounding = (t1 - t0) * 1000
-    total_pipeline_time_ms += ms_grounding
-
-    print_step(4, "Module Grounding (Định vị mốc thời gian & Đối soát thực thể)", ms_grounding)
-    print(f"  • as_of_date        : {temp_info['as_of_date']}")
-    print(f"  • Khoảng giải mã    : {temp_info['description']}")
-    print(f"  • Gợi ý lọc Pandas  : {temp_info['code_hint']}")
-    print(f"  • Tổng thực thể shop: {len(candidates)} ứng viên")
-    if entity_matches:
-        matches_repr = [f"'{m.matched_value}' (score: {m.score:.2f})" for m in entity_matches[:3]]
-        print(f"  • Khớp thực thể     : {', '.join(matches_repr)}")
-    else:
-        print("  • Khớp thực thể     : Không có thực thể riêng biệt khớp trong câu")
-
-    # --------------------------------------------------------------------------
-    # BƯỚC 5: PROMPT BUILDER & INTENT CLASSIFICATION
-    # --------------------------------------------------------------------------
-    t0 = time.time()
-    rulebook_content = load_rulebook(str(data_dir))
-    intent = classify_intent(question_text)
-    few_shot = retrieve_dynamic_few_shot(question=question_text, intent=intent, entity_matches=entity_matches)
-    sys_prompt, user_prompt = build_prompt(
-        schema_str=schema_str,
-        as_of_date=as_of_date,
-        question=question_text,
-        rulebook_content=rulebook_content,
-        business_note=getattr(bd, "readme_text", None) if bd else None,
-        candidates=candidates,
-        entity_matches=entity_matches,
-        return_messages=True
-    )
-    t1 = time.time()
-    ms_prompt = (t1 - t0) * 1000
-    total_pipeline_time_ms += ms_prompt
-
-    print_step(5, "Module LLM Prompt Assembly & Few-Shot (Phân loại ý định & Dựng Prompt)", ms_prompt)
-    print(f"  • Ý định (Intent)   : '{intent}'")
-    print(f"  • Ví dụ Few-Shot    : {few_shot.splitlines()[0] if few_shot else 'Không'}")
-    print(f"  • Độ dài User Prompt: {len(user_prompt)} ký tự (~{len(user_prompt)//4} tokens)")
-
-    # --------------------------------------------------------------------------
-    # BƯỚC 6: LLM CODE GENERATION
-    # --------------------------------------------------------------------------
-    code_text = ""
-    gen_time_s = 0.0
-    if not is_feasible:
-        code_text = '# Feasibility Gate detected unanswerable\ndef solution(data):\n    return "unanswerable"'
-        print_step(6, "Module LLM Code Generation (Bỏ qua vì câu Unanswerable)", 0.0)
-    elif args.with_llm:
-        print_step(6, "Module LLM Code Generation (Sinh mã qua Qwen2.5-Coder GPU)", 0.0)
-        print(f"  • Đang nạp mô hình {args.model_id} (4-bit NF4)...")
-        t0 = time.time()
-        client = LLMClient(model_id=args.model_id, auto_load=True)
-        code_text = client.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=512)
-        gen_time_s = time.time() - t0
-        total_pipeline_time_ms += gen_time_s * 1000
-        print(f"  • Thời gian sinh mã : {gen_time_s:.2f} giây")
-    else:
-        print_step(6, "Module LLM Code Generation (Chế độ Dry-Run: Bỏ qua nạp GPU)", 0.0)
-        print("  💡 Muốn chạy sinh mã LLM thật, hãy thêm cờ: --with_llm")
-        code_text = 'def solution(data):\n    # Dry run mock placeholder\n    return "abstain"'
-
-    print("\n  [MÃ PYTHON SINH RA]:")
-    print("  --------------------------------------------------")
-    for line in code_text.strip().splitlines()[:15]:
-        print(f"  | {line}")
-    if len(code_text.strip().splitlines()) > 15:
-        print("  | ... (đã rút gọn)")
-    print("  --------------------------------------------------")
-
-    # --------------------------------------------------------------------------
-    # BƯỚC 7: EXECUTION SANDBOX
-    # --------------------------------------------------------------------------
-    t0 = time.time()
-    raw_result = None
-    exec_err = None
-    exec_ms = 0.0
-
-    if not is_feasible:
-        raw_result = "unanswerable"
-    elif args.with_llm:
-        raw_result, exec_err, exec_ms = execute_solution(
-            code_text=code_text,
-            biz_dir=data_root / biz_id,
-            data_dict=data_dict,
-            con=con,
-            business_obj=bd,
-            timeout_s=30,
-            use_sandbox=True,
-        )
-    else:
-        raw_result = "abstain"
-        exec_ms = 1.0
-
-    t1 = time.time()
-    ms_sandbox = (t1 - t0) * 1000
-    total_pipeline_time_ms += ms_sandbox
-
-    print_step(7, "Module Execution Sandbox (Thực thi mã an toàn trong Subprocess)", ms_sandbox)
-    print(f"  • Thời gian chạy code: {exec_ms:.2f} ms")
-    print(f"  • Lỗi Sandbox (nếu)  : {exec_err or 'Không có (Thực thi thành công)'}")
-    print(f"  • Kết quả thô (Raw)  : {raw_result} (Kiểu: {type(raw_result).__name__})")
-
-    # --------------------------------------------------------------------------
-    # BƯỚC 8: OUTPUT NORMALIZER & ABSTENTION SHIELD
-    # --------------------------------------------------------------------------
-    t0 = time.time()
-    if not args.with_llm and is_feasible:
-        final_ans = make_abstain("Dry Run Mock")
-        confidence = 0.0
-    elif exec_err:
-        final_ans = make_abstain(f"Execution Error: {exec_err}")
-        confidence = 0.0
-    elif not is_feasible:
-        final_ans = {"type": "unanswerable", "answer": None}
-        confidence = 1.0
-    else:
-        norm_cand = normalize_output(raw_result, question=question_text, code_text=code_text)
-        is_sane, sanity_reason = check_result_sanity(norm_cand, question=question_text, code_text=code_text)
-        if not is_sane:
-            final_ans = make_abstain(f"Sanity Check Failed: {sanity_reason}")
-            confidence = 0.0
-        else:
-            confidence = compute_confidence_score(
-                sub_ans=norm_cand,
-                exec_error=exec_err,
-                exec_ms=int(exec_ms),
-                retry_count=0,
-                sanity_passed=True,
-                sanity_error=None,
-                code_text=code_text,
-                has_feasibility_pass=is_feasible,
-            )
-            final_ans, is_abs = apply_abstention_gate(norm_cand, confidence=confidence, threshold=0.50)
-
-    t1 = time.time()
-    ms_output = (t1 - t0) * 1000
-    total_pipeline_time_ms += ms_output
-
-    print_step(8, "Module Output Normalizer & Abstention Shield (Chuẩn hóa & Phòng thủ)", ms_output)
-    print(f"  • Độ tin cậy C       : {confidence:.2f} (Ngưỡng tau*: 0.50)")
-    print(f"  • Output cuối cùng   : {json.dumps(final_ans, ensure_ascii=False)}")
-
-    # --------------------------------------------------------------------------
-    # BƯỚC 9: SO SÁNH VỚI EXPECTED OUTPUT & CHẤM ĐIỂM PA
-    # --------------------------------------------------------------------------
-    print_header("TỔNG KẾT & SO KHỚP VỚI ĐÁP ÁN CHUẨN (EVALUATION)", "🎯")
-    print(f"• DỰ ĐOÁN (PREDICTION): {final_ans.get('answer')} (Type: {final_ans.get('type')})")
-
-    if gold_record:
-        g_ans = gold_record.get("answer")
-        g_type = gold_record.get("type")
-        print(f"• CHUẨN   (GOLD TRUTH): {g_ans} (Type: {g_type})")
-
-        is_match = compare_single_answer(final_ans, gold_record)
-        pred_type = final_ans.get("type")
-
-        if pred_type == "abstain":
-            status = "🟡 TỪ CHỐI TRẢ LỜI (ABSTAIN) -> ĐIỂM PA: 0.0 (Bảo toàn điểm, không bị phạt)"
-        elif is_match:
-            status = "🟢 HOÀN TOÀN TRÙNG KHỚP (CORRECT) -> ĐIỂM PA: +1.0 (Ăn trọn điểm)"
-        else:
-            status = "🔴 SAI LỆCH VỚI ĐÁP ÁN (WRONG) -> ĐIỂM PA: -1.0 (Bị trừ điểm)"
-
-        print(f"\n=> KẾT QUẢ ĐÁNH GIÁ: {status}")
-    else:
-        print("• Không có đáp án chuẩn trong file answers.jsonl để so sánh.")
-
-    print("\n" + "-" * 80)
-    print("BẢNG TỔNG KẾT THỜI GIAN THỰC THI TỪNG MODULE:")
-    print("-" * 80)
-    print(f"1. Ingestion & Schema Profiler         : {ms_ingest_schema:8.2f} ms")
-    print(f"2. Feasibility Gate (Unans Check)      : {ms_feas:8.2f} ms")
-    print(f"3. Grounding (Temporal & Entity Link)  : {ms_grounding:8.2f} ms")
-    print(f"4. Prompt Assembly & Few-Shot          : {ms_prompt:8.2f} ms")
-    if args.with_llm:
-        print(f"5. LLM Code Generation (Qwen-3B GPU)   : {gen_time_s*1000:8.2f} ms ({gen_time_s:.2f} s)")
-    else:
-        print(f"5. LLM Code Generation (Dry-Run Mock)  :     0.00 ms")
-    print(f"6. Execution Sandbox Subprocess        : {ms_sandbox:8.2f} ms")
-    print(f"7. Output Normalizer & Abstention Gate : {ms_output:8.2f} ms")
-    print("-" * 80)
-    print(f"👉 TỔNG THỜI GIAN TOÀN TRÌNH (END-TO-END) : {total_pipeline_time_ms:8.2f} ms ({total_pipeline_time_ms/1000:.2f} s)")
-    print("=" * 80 + "\n")
+    gold_record = gold_answers.get(target_q["id"])
+    run_single_inspection(target_q, gold_record, data_dir, data_root, args)
 
 
 if __name__ == "__main__":

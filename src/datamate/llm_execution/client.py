@@ -1,6 +1,6 @@
 """
 Module: llm_client.py
-Mục đích: Quản lý nạp mô hình Qwen2.5-Coder-7B-Instruct với cấu hình lượng tử hóa 4-bit,
+Mục đích: Quản lý nạp mô hình Qwen2.5-Coder-3B-Instruct với cấu hình lượng tử hóa 4-bit,
           thực hiện suy luận sinh mã Python tất định (Greedy Decoding T=0), kiểm tra cú pháp (AST)
           và hỗ trợ cơ chế tự sửa lỗi ngắn nếu mã sinh ra bị lỗi cú pháp.
 Tác giả: Long (AI Architect & Model Lead)
@@ -181,7 +181,7 @@ def cut_after_first_solution(code: str) -> str:
 
 class LLMClient:
     """
-    Quản lý khởi tạo và suy luận mô hình Qwen2.5-Coder-7B-Instruct với cấu hình 4-bit.
+    Quản lý khởi tạo và suy luận mô hình Qwen2.5-Coder-3B-Instruct với cấu hình 4-bit.
     Tích hợp kiểm tra cú pháp AST và cơ chế tự sửa lỗi (Self-Correction).
     """
 
@@ -190,11 +190,11 @@ class LLMClient:
         Khởi tạo client quản lý mô hình.
         
         Args:
-            model_id (str, optional): Đường dẫn repo HuggingFace hoặc thư mục model local (mặc định: Qwen/Qwen2.5-Coder-7B-Instruct).
+            model_id (str, optional): Đường dẫn repo HuggingFace hoặc thư mục model local (mặc định: Qwen/Qwen2.5-Coder-3B-Instruct).
             auto_load (bool): Tự động nạp trọng số mô hình khi khởi tạo.
         """
         if model_id is None:
-            model_id = os.environ.get("DATAMATE_MODEL_ID") or os.environ.get("MODEL_ID") or "Qwen/Qwen2.5-Coder-7B-Instruct"
+            model_id = os.environ.get("DATAMATE_MODEL_ID") or os.environ.get("MODEL_ID") or "Qwen/Qwen2.5-Coder-3B-Instruct"
         self.model_id = model_id
         self.model = None
         self.tokenizer = None

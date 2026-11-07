@@ -485,8 +485,8 @@ def load_business(business_dir: Path) -> BusinessData:
 # ---------------------------------------------------------------------------
 # Re-exports cho tương thích ngược (Phase 2 đã tách sang schema.py và sqlite_mirror.py)
 # ---------------------------------------------------------------------------
-from datamate.ingestion.schema import describe_schema  # noqa: F401
-from datamate.ingestion.sqlite_mirror import to_sqlite  # noqa: F401
+from .schema import describe_schema  # noqa: F401
+from .sqlite_mirror import to_sqlite  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
