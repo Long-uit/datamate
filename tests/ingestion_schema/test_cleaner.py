@@ -124,7 +124,63 @@ class TestRule8Cleaner(unittest.TestCase):
         self.assertEqual(len(df_clean), 1)
         self.assertEqual(df_clean.iloc[0]["Mã đơn hàng"], "ORD100")
 
+    def test_order_level_never_includes_amounts_or_quantities(self):
+        financial_cols = [
+            "Mã đơn", "Ngày đặt", "Trạng thái",
+            "Đơn giá", "Thành tiền", "Số lượng", "Chiết khấu",
+            "Giảm giá", "VAT", "Tổng cộng", "Tiền ship",
+            "Amount", "Quantity", "Discount", "Line Total"
+        ]
+        order_cols = find_order_level_cols(financial_cols, "Mã đơn")
+        # Ensure only qualitative order-level attributes are included
+        self.assertIn("Mã đơn", order_cols)
+        self.assertIn("Ngày đặt", order_cols)
+        self.assertIn("Trạng thái", order_cols)
+        # Ensure numerical / amount / discount columns are strictly excluded
+        for col in ["Đơn giá", "Thành tiền", "Số lượng", "Chiết khấu", "Giảm giá",
+                    "VAT", "Tổng cộng", "Tiền ship", "Amount", "Quantity", "Discount", "Line Total"]:
+            self.assertNotIn(col, order_cols, f"{col} should never be marked as an order-level forward fill column")
+
+    def test_two_identical_rows_across_different_orders_preserved(self):
+        raw_data = {
+            "STT": [1, 2, 3],
+            "Mã đơn": ["DH101", "DH101", "DH102"],
+            "Tên sản phẩm": ["Trà sữa trân châu", "Trà sữa trân châu", "Trà sữa trân châu"],
+            "Số lượng": [1, 1, 1],
+            "Đơn giá": [35000, 35000, 35000],
+        }
+        df = pd.DataFrame(raw_data)
+        # DH101 has two identical lines (duplicate export error) -> should be deduplicated to 1 row
+        # DH102 has an identical line to DH101 -> MUST be preserved
+        df_dedup = deduplicate_order_rows(df, "Mã đơn")
+        self.assertEqual(len(df_dedup), 2)
+        self.assertEqual(list(df_dedup["Mã đơn"]), ["DH101", "DH102"])
+        self.assertEqual(list(df_dedup["STT"]), [1, 3])
+
+    def test_order_forward_fill_boundary_isolation(self):
+        raw_data = {
+            "Mã đơn": ["DH01", None, "DH02", None],
+            "Khách hàng": ["Khách A", None, None, None],
+            "Ghi chú": ["Giao hỏa tốc", None, None, None],
+            "Sản phẩm": ["SP1", "SP2", "SP3", "SP4"],
+        }
+        df = pd.DataFrame(raw_data)
+        df_clean = apply_group_forward_fill(df, "Mã đơn")
+
+        # DH01 items get Khách A and Giao hỏa tốc
+        self.assertEqual(df_clean.loc[0, "Khách hàng"], "Khách A")
+        self.assertEqual(df_clean.loc[1, "Khách hàng"], "Khách A")
+        self.assertEqual(df_clean.loc[0, "Ghi chú"], "Giao hỏa tốc")
+        self.assertEqual(df_clean.loc[1, "Ghi chú"], "Giao hỏa tốc")
+
+        # DH02 items had None for Khách hàng and Ghi chú -> must NOT inherit from DH01
+        self.assertTrue(pd.isna(df_clean.loc[2, "Khách hàng"]))
+        self.assertTrue(pd.isna(df_clean.loc[3, "Khách hàng"]))
+        self.assertTrue(pd.isna(df_clean.loc[2, "Ghi chú"]))
+        self.assertTrue(pd.isna(df_clean.loc[3, "Ghi chú"]))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

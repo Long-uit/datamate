@@ -189,10 +189,15 @@ def deduplicate_order_rows(df: pd.DataFrame, order_id_col: Optional[str] = None)
             return df.copy()
         order_id_col = detected
 
-    # Tập cột để so khớp trùng lặp: loại trừ cột STT/chỉ mục dòng nếu có
+    # Tập cột để so khớp trùng lặp: loại trừ cột STT/chỉ mục dòng nếu có.
+    # order_id_col bắt buộc nằm trong subset_cols để đảm bảo việc khử trùng lặp
+    # CHỈ diễn ra nội bộ trong cùng một đơn hàng; các dòng giống nhau ở hai đơn khác nhau
+    # sẽ khác order_id_col nên không bao giờ bị loại bỏ.
     subset_cols = [c for c in df.columns if not is_row_index_col(c)]
     if not subset_cols:
         subset_cols = list(df.columns)
+    elif order_id_col not in subset_cols:
+        subset_cols.append(order_id_col)
 
     # Khi bảng ghi theo đơn:
     # Sau khi ffill, hai dòng giống nhau ở MỌI Ô (trừ STT) trong cùng một đơn
