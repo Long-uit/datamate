@@ -89,9 +89,17 @@ if sys.platform == "win32":
 # 2. PHÂN LOẠI Ý ĐỊNH CÂU HỎI (INTENT CLASSIFICATION)
 # ==============================================================================
 
+import unicodedata
+
+def _strip_accents(text: str) -> str:
+    s = str(text).lower()
+    s = s.replace("đ", "d").replace("Đ", "d")
+    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
 def classify_intent(question: str) -> str:
     """Phân loại câu hỏi thành các nhóm nghiệp vụ chính."""
     q_lower = question.lower()
+    q_norm = _strip_accents(q_lower)
 
     if any(k in q_lower for k in ["tay nghề", "kinh nghiệm", "sở thích", "thời tiết", "chuyên môn", "bằng cấp"]):
         return "unanswerable_suspect"
@@ -127,9 +135,10 @@ def classify_intent(question: str) -> str:
     if any(k in q_lower for k in ["tăng liên tục", "tăng giảm", "so với", "thay đổi bao nhiêu", "tăng trưởng"]):
         return "time_series"
 
-    if any(k in q_lower for k in [
-        "bán chạy nhất", "bán chạy", "nhiều nhất", "nhiều tiền nhất", "cao nhất",
-        "thấp nhất", "lời nhất", "đắt nhất", "top", "xếp thứ", "hot nhất", "giỏi nhất"
+    if any(k in q_norm for k in [
+        "ban chay nhat", "ban chay", "nhieu nhat", "nhieu tien nhat", "cao nhat",
+        "thap nhat", "loi nhat", "dat nhat", "top", "xep thu", "hot nhat", "gioi nhat",
+        "ngay nao", "mat hang nao", "san pham nao", "khach nao", "ai mua", "sp nao"
     ]):
         return "ranking_topk"
 
@@ -251,10 +260,11 @@ NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN (CODE GENERATION RULES):
 1. THAM SỐ `data`: Dictionary `{tên_bảng: DataFrame}` chứa dữ liệu gốc từ Excel/CSV (hỗ trợ tra cứu mềm không phân biệt dấu/hoa thường).
    - Tuyệt đối KHÔNG lặp dict comprehension trên toàn bộ `data` để lọc ngày (bảng sản phẩm không có ngày!).
    - Tìm đúng bảng cần dùng -> tìm cột ngày gốc `d_c = next(...)` -> tạo `df['clean_date'] = clean_date(df[d_c])`.
-   - Lọc ngày: `(df['clean_date'].dt.date >= pd.to_datetime(start_date).date()) & (df['clean_date'].dt.date <= pd.to_datetime(end_date).date())`.
+   - Lọc ngày (CÔNG THỨC BẮT BUỘC): `(df['clean_date'] >= pd.Timestamp(start_date)) & (df['clean_date'] <= pd.Timestamp(f"{end_date} 23:59:59"))` (BẮT BUỘC so sánh với pd.Timestamp, TUYỆT ĐỐI CẤM dùng .dt.date để tránh lỗi TypeError với datetime64[ns]).
    - Dùng biến cột động `amt_col = next(...)` và `clean_num(df[amt_col])` thay vì hardcode tên cột.
-2. TIỆN ÍCH CÓ SẴN Ở GLOBAL SCOPE: `clean_num`, `clean_date`, `apply_tie_breaker`, `filter_future_data`, `re`, `math`, `datetime`, `date`, `timedelta`, `pct`.
-   - TUYỆT ĐỐI CẤM định nghĩa lại hoặc import lại các hàm/module này trong code.
+2. TIỆN ÍCH CÓ SẴN Ở GLOBAL SCOPE: `clean_num`, `clean_date`, `apply_tie_breaker`, `filter_future_data`, `DataNotFoundError`, `re`, `math`, `datetime`, `date`, `timedelta`, `pct`.
+   - TUYỆT ĐỐI CẤM tự định nghĩa lại `def clean_date`, `def clean_num` hay `class DataNotFoundError` (hệ thống đã nạp sẵn).
+   - CHỈ viết DUY NHẤT một hàm `def solution(data):` và kết thúc ngay bằng ```.
 3. Bản ghi có ngày > as_of_date coi như chưa xảy ra (loại bỏ khỏi tính toán).
 4. XỬ LÝ KHI DỮ LIỆU RỖNG HOẶC KHÔNG PHÁT SINH:
    - Nếu sau khi lọc theo ngày/điều kiện mà DataFrame rỗng (không có đơn hàng nào trong kỳ):
@@ -265,8 +275,24 @@ NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN (CODE GENERATION RULES):
 5. Chỉ raise DataNotFoundError khi dữ liệu hoàn toàn thiếu hẳn bảng nghiệp vụ mà câu hỏi yêu cầu. TUYỆT ĐỐI CẤM trả về chuỗi 'unanswerable'."""
 
     conditional_rules: List[str] = []
+    q_clean = _strip_accents(q_low)
 
-    if any(k in q_low for k in ["mấy đơn", "bao nhiêu đơn", "số đơn", "số lượng đơn", "so don"]):
+    if any(k in q_clean for k in ["ngay nao", "ngay gi", "thoi diem nao", "thoi gian nao", "hom nao"]):
+        conditional_rules.append(
+            "- [CÂU HỎI TÌM NGÀY]: Câu hỏi hỏi 'ngày nào' / 'thời điểm nào' -> BẮT BUỘC group by theo ngày `df['clean_date'].dt.strftime('%Y-%m-%d')`, tìm ngày có giá trị cao nhất/thấp nhất và RETURN chuỗi ngày định dạng 'YYYY-MM-DD' (vd: return '2025-06-08'). TUYỆT ĐỐI KHÔNG RETURN TỔNG TIỀN."
+        )
+
+    if any(k in q_clean for k in ["mat hang nao", "san pham nao", "mon nao", "hang nao", "thuoc nao", "sp nao"]):
+        conditional_rules.append(
+            "- [CÂU HỎI TÌM MẶT HÀNG/SẢN PHẨM]: Câu hỏi hỏi 'mặt hàng nào' / 'sản phẩm nào' -> BẮT BUỘC group by theo tên sản phẩm và RETURN chuỗi tên mặt hàng (string, vd: return 'Gạch ống'). TUYỆT ĐỐI KHÔNG RETURN TỔNG TIỀN."
+        )
+
+    if any(k in q_clean for k in ["khach nao", "khach hang nao", "ai mua", "khach nao mua"]):
+        conditional_rules.append(
+            "- [CÂU HỎI TÌM KHÁCH HÀNG]: Câu hỏi hỏi 'khách nào' / 'ai mua' -> BẮT BUỘC group by theo tên khách và RETURN chuỗi tên khách hàng (loại bỏ khách lẻ/vãng lai)."
+        )
+
+    if any(k in q_clean for k in ["may don", "bao nhieu don", "so don", "so luong don"]):
         conditional_rules.append(
             "- [Đếm số lượng đơn]: Câu hỏi hỏi 'mấy đơn' / 'bao nhiêu đơn' -> kết quả BẮT BUỘC là đếm số lượng: `int(len(df))` hoặc `int(df[ma_don].nunique())`, TUYỆT ĐỐI KHÔNG TÍNH TỔNG TIỀN."
         )
@@ -416,7 +442,7 @@ def solution(data):
     d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian', 'ngaylap', 'hạn trả', 'han tra'])), None)
     if d_c:
         df_debt['clean_date'] = clean_date(df_debt[d_c])
-        df_debt = df_debt[df_debt['clean_date'].dt.date <= pd.to_datetime("2026-08-19").date()]
+        df_debt = df_debt[df_debt['clean_date'] <= pd.Timestamp("2026-08-19 23:59:59")]
 
     # 3. Lọc khoản còn nợ (> 0), loại bỏ khách lẻ
     df_debt['clean_debt'] = clean_num(df_debt[debt_col])
@@ -450,9 +476,9 @@ def solution(data):
     if not d_c or not a_c:
         raise DataNotFoundError("Bảng nhập hàng thiếu cột ngày hoặc cột tiền", column_name="ngày/tiền", available_columns=cols)
 
-    # 3. Lọc đúng kỳ tháng này: năm 2026, tháng 9, từ ngày 1 đến hết as_of_date
+    # 3. Lọc đúng kỳ tháng này: năm 2026, tháng 9, từ ngày 1 đến hết as_of_date (dùng Timestamp)
     df_nhap['clean_date'] = clean_date(df_nhap[d_c])
-    df_nhap = df_nhap[(df_nhap['clean_date'].dt.year == 2026) & (df_nhap['clean_date'].dt.month == 9) & (df_nhap['clean_date'].dt.date <= pd.to_datetime("2026-09-07").date())]
+    df_nhap = df_nhap[(df_nhap['clean_date'] >= pd.Timestamp("2026-09-01")) & (df_nhap['clean_date'] <= pd.Timestamp("2026-09-07 23:59:59"))]
 
     # 4. Loại bỏ phiếu hủy nếu có trạng thái hoặc ghi chú
     st_c = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt', 'ghi chú', 'cancel'])), None)
@@ -491,7 +517,7 @@ def solution(data):
         df_sales = df_sales[~df_sales[status_col].astype(str).str.lower().str.contains('hủy|huỷ|trả|cancel')]
 
     df_sales['clean_amt'] = clean_num(df_sales[amt_col])
-    mask = (df_sales['clean_date'].dt.year == 2026) & (df_sales['clean_date'].dt.month == 5) & (df_sales['clean_date'].dt.date <= pd.to_datetime("2026-05-25").date())
+    mask = (df_sales['clean_date'] >= pd.Timestamp("2026-05-01")) & (df_sales['clean_date'] <= pd.Timestamp("2026-05-25 23:59:59"))
     return int(round(df_sales[mask]['clean_amt'].sum()))
 ```""",
 
@@ -541,8 +567,8 @@ def solution(data):
         df_sales = df_sales[~df_sales[status_col].astype(str).str.lower().str.contains('hủy|huỷ|trả|cancel')]
 
     df_sales['clean_qty'] = clean_num(df_sales[qty_col])
-    # Dịp Tết 2026: 2026-02-10 đến 2026-02-26
-    mask = (df_sales['clean_date'].dt.date >= pd.to_datetime("2026-02-10").date()) & (df_sales['clean_date'].dt.date <= pd.to_datetime("2026-02-26").date())
+    # Dịp Tết 2026: 2026-02-10 đến 2026-02-26 (dùng Timestamp)
+    mask = (df_sales['clean_date'] >= pd.Timestamp("2026-02-10")) & (df_sales['clean_date'] <= pd.Timestamp("2026-02-26 23:59:59"))
     df_period = df_sales[mask]
     if df_period.empty:
         return ""
@@ -574,7 +600,7 @@ def solution(data):
         raise DataNotFoundError("Không tìm thấy bảng có cột ngày và trạng thái đơn", table_name="đơn hàng", available_tables=list(data.keys()))
 
     df_ord['clean_date'] = clean_date(df_ord[date_col])
-    mask = (df_ord['clean_date'].dt.year == 2026) & (df_ord['clean_date'].dt.month == 6)
+    mask = (df_ord['clean_date'] >= pd.Timestamp("2026-06-01")) & (df_ord['clean_date'] <= pd.Timestamp("2026-06-30 23:59:59"))
     df_period = df_ord[mask]
     total_orders = len(df_period)
     if total_orders == 0:
@@ -648,8 +674,8 @@ def solution(data):
     df_sales['clean_date'] = clean_date(df_sales[date_col])
     df_sales['clean_amt'] = clean_num(df_sales[amt_col])
 
-    mask_curr = (df_sales['clean_date'].dt.date >= pd.to_datetime("2026-05-01").date()) & (df_sales['clean_date'].dt.date <= pd.to_datetime("2026-05-25").date())
-    mask_prev = (df_sales['clean_date'].dt.date >= pd.to_datetime("2026-04-01").date()) & (df_sales['clean_date'].dt.date <= pd.to_datetime("2026-04-25").date())
+    mask_curr = (df_sales['clean_date'] >= pd.Timestamp("2026-05-01")) & (df_sales['clean_date'] <= pd.Timestamp("2026-05-25 23:59:59"))
+    mask_prev = (df_sales['clean_date'] >= pd.Timestamp("2026-04-01")) & (df_sales['clean_date'] <= pd.Timestamp("2026-04-25 23:59:59"))
 
     rev_curr = df_sales[mask_curr]['clean_amt'].sum()
     rev_prev = df_sales[mask_prev]['clean_amt'].sum()
@@ -744,7 +770,7 @@ def build_prompt(
         temporal_lines.append(f"- Kỳ đối chiếu: từ '{temporal_info.get('comparison_start')}' đến '{temporal_info.get('comparison_end')}' ({temporal_info.get('comparison_desc', '')})")
     else:
         temporal_lines.append(f"- Khoảng thời gian giải mã: {temporal_info['description']}")
-    temporal_lines.append(f"- Gợi ý lọc Pandas: {temporal_info['code_hint']}")
+    temporal_lines.append(f"- CÔNG THỨC LỌC THỜI GIAN BẮT BUỘC: {temporal_info['code_hint']}")
     temporal_text = "\n".join(temporal_lines)
 
     entity_block = ""
@@ -815,7 +841,7 @@ RÀNG BUỘC MỐC THỜI GIAN & THỰC THỂ:
 {entity_block}
 YÊU CẦU THỰC HIỆN:
 1. Quan sát danh sách bảng và cột ở trên để chọn đúng bảng và cột. Không đoán tên bảng có ký tự lạ.
-2. Áp dụng khoảng thời gian đã được giải mã và mốc as_of_date để lọc dữ liệu.
+2. Áp dụng CÔNG THỨC LỌC THỜI GIAN BẮT BUỘC đã được giải mã và mốc as_of_date để lọc dữ liệu.
 3. Không lặp dict comprehension lọc ngày trên toàn bộ `data`. Tìm bảng cụ thể, tìm cột ngày gốc bằng `d_c = next(...)`, tự tạo `df['clean_date'] = clean_date(df[d_c])` và dùng biến cột động `amt_col` thay vì hardcode tên cột.
 4. Chỉ viết duy nhất một hàm `def solution(data):` trả về kết quả, không viết giải thích bên ngoài.
 5. Viết code ngắn gọn, không viết comment dài dòng để tránh bị cắt cụt token.
