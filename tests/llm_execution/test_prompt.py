@@ -217,6 +217,33 @@ class TestPromptBuilder(unittest.TestCase):
         self.assertIn("2026-02-10", usr_p)
         self.assertIn("2026-02-26", usr_p)
 
+    def test_return_format_and_question_classification(self):
+        """Kiểm tra nhận diện câu hỏi Top-1 chuỗi, Boolean xu hướng và định dạng trả về."""
+        from datamate.llm_execution.prompt import (
+            is_boolean_question,
+            is_top1_string_question,
+            get_return_format_instruction,
+        )
+        # 1. Câu hỏi Boolean xu hướng (Question 5)
+        q_bool = "Từ tháng 7/2025 qua tháng 8/2025 rồi tháng 9/2025, doanh thu có tăng liên tục không?"
+        self.assertTrue(is_boolean_question(q_bool))
+        fmt_bool = get_return_format_instruction(q_bool)
+        self.assertIn("Boolean", fmt_bool)
+        self.assertIn("True hoặc False", fmt_bool)
+
+        # 2. Câu hỏi Top-1 String nhà cung cấp (Question 4)
+        q_supplier = "coi giùm tháng 5/2026 cuwar hàng nhập nhiều tiền hàng nhất từ nhaf cung cấp nào"
+        self.assertTrue(is_top1_string_question(q_supplier))
+        fmt_str = get_return_format_instruction(q_supplier)
+        self.assertIn("chuỗi ký tự đơn lẻ", fmt_str)
+        self.assertIn("scalar string", fmt_str)
+
+        # 3. Câu hỏi đếm đơn bị hủy (Question 1)
+        q_cancel = "so don bi huy trong thang 5 nam 2025 la bao nhieu z"
+        self.assertEqual(classify_intent(q_cancel), "cancelled_orders")
+        fmt_cancel = get_return_format_instruction(q_cancel)
+        self.assertIn("scalar number", fmt_cancel)
+
 
 if __name__ == "__main__":
     unittest.main()

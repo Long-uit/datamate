@@ -37,6 +37,9 @@ import time
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 import unicodedata
 
+if "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
+
 # Tự động nạp thư mục src và root vào sys.path
 _ROOT = Path(__file__).resolve().parent.parent
 _SRC_DIR = str(_ROOT / "src")
