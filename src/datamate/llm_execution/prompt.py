@@ -90,9 +90,17 @@ if sys.platform == "win32":
 # 2. PHÂN LOẠI Ý ĐỊNH CÂU HỎI (INTENT CLASSIFICATION)
 # ==============================================================================
 
+import unicodedata
+
+def _strip_accents(text: str) -> str:
+    s = str(text).lower()
+    s = s.replace("đ", "d").replace("Đ", "d")
+    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
 def classify_intent(question: str) -> str:
     """Phân loại câu hỏi thành các nhóm nghiệp vụ chính."""
     q_lower = question.lower()
+    q_norm = _strip_accents(q_lower)
 
     if any(k in q_lower for k in ["tay nghề", "kinh nghiệm", "sở thích", "thời tiết", "chuyên môn", "bằng cấp"]):
         return "unanswerable_suspect"
@@ -165,10 +173,19 @@ def classify_intent(question: str) -> str:
     ):
         return "quantity_sum"
 
-    if any(k in q_lower for k in [
-        "bán chạy nhất", "bán chạy", "nhiều nhất", "nhiều tiền nhất", "cao nhất",
-        "thấp nhất", "lời nhất", "đắt nhất", "top", "xếp thứ", "hot nhất", "giỏi nhất"
-    ]) or (any(k in q_lower for k in ["khách", "khach"]) and any(k in q_lower for k in ["chi tiêu", "chi tieu", "mua nhiều", "tiêu nhiều"])):
+    if (
+        any(k in q_lower for k in [
+            "bán chạy nhất", "bán chạy", "nhiều nhất", "nhiều tiền nhất", "cao nhất",
+            "thấp nhất", "lời nhất", "đắt nhất", "top", "xếp thứ", "hot nhất", "giỏi nhất"
+        ])
+        or (any(k in q_lower for k in ["khách", "khach"]) and any(k in q_lower for k in ["chi tiêu", "chi tieu", "mua nhiều", "tiêu nhiều"]))
+        or any(k in q_norm for k in [
+            "ban chay nhat", "ban chay", "nhieu nhat", "nhieu tien nhat", "cao nhat",
+            "thap nhat", "loi nhat", "dat nhat", "top", "xep thu", "hot nhat", "gioi nhat",
+            "ngay nao", "mat hang nao", "san pham nao", "khach nao", "ai mua", "sp nao"
+        ])
+    ):
+        return "ranking_topk" 
         return "ranking_topk"
 
     return "aggregation"
@@ -521,8 +538,24 @@ NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN:
 8. Chỉ raise DataNotFoundError khi dữ liệu hoàn toàn thiếu hẳn bảng/cột nghiệp vụ."""
 
     conditional_rules: List[str] = []
+    q_clean = _strip_accents(q_low)
 
-    if any(k in q_low for k in ["mấy đơn", "bao nhiêu đơn", "số đơn", "số lượng đơn", "so don", "có bao nhiêu đơn", "co bao nhiu don", "đếm số đơn", "dem so don", "bao nhiu don"]):
+    if any(k in q_clean for k in ["ngay nao", "ngay gi", "thoi diem nao", "thoi gian nao", "hom nao"]):
+        conditional_rules.append(
+            "- [CÂU HỎI TÌM NGÀY]: Câu hỏi hỏi 'ngày nào' / 'thời điểm nào' -> BẮT BUỘC group by theo ngày `df['clean_date'].dt.strftime('%Y-%m-%d')`, tìm ngày có giá trị cao nhất/thấp nhất và RETURN chuỗi ngày định dạng 'YYYY-MM-DD' (vd: return '2025-06-08'). TUYỆT ĐỐI KHÔNG RETURN TỔNG TIỀN."
+        )
+
+    if any(k in q_clean for k in ["mat hang nao", "san pham nao", "mon nao", "hang nao", "thuoc nao", "sp nao"]):
+        conditional_rules.append(
+            "- [CÂU HỎI TÌM MẶT HÀNG/SẢN PHẨM]: Câu hỏi hỏi 'mặt hàng nào' / 'sản phẩm nào' -> BẮT BUỘC group by theo tên sản phẩm và RETURN chuỗi tên mặt hàng (string, vd: return 'Gạch ống'). TUYỆT ĐỐI KHÔNG RETURN TỔNG TIỀN."
+        )
+
+    if any(k in q_clean for k in ["khach nao", "khach hang nao", "ai mua", "khach nao mua"]):
+        conditional_rules.append(
+            "- [CÂU HỎI TÌM KHÁCH HÀNG]: Câu hỏi hỏi 'khách nào' / 'ai mua' -> BẮT BUỘC group by theo tên khách và RETURN chuỗi tên khách hàng (loại bỏ khách lẻ/vãng lai)."
+        )
+
+    if any(k in q_low for k in ["mấy đơn", "bao nhiêu đơn", "số đơn", "số lượng đơn", "so don", "có bao nhiêu đơn", "co bao nhiu don", "đếm số đơn", "dem so don", "bao nhiu don"]) or any(k in q_clean for k in ["may don", "bao nhieu don", "so don", "so luong don"]):
         conditional_rules.append(
             "- [Đếm số lượng đơn]: BẮT BUỘC tìm cột mã đơn `order_col = next((c for c in cols if any(k in str(c).lower() for k in ['mã đơn', 'ma don', 'mã hoá đơn', 'mã hd', 'order_id', 'order id', 'mã chứng từ', 'mã gd', 'mã'])), None)` "
             "và đếm số đơn duy nhất bằng `int(df[order_col].dropna().nunique())`. "
@@ -838,7 +871,7 @@ def solution(data):
     d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian', 'ngaylap', 'hạn trả', 'han tra'])), None)
     if d_c:
         df_debt['clean_date'] = clean_date(df_debt[d_c])
-        df_debt = df_debt[df_debt['clean_date'].dt.date <= pd.to_datetime("2026-08-19").date()]
+        df_debt = df_debt[df_debt['clean_date'] <= pd.Timestamp("2026-08-19 23:59:59")]
 
     # 3. Lọc khoản còn nợ (> 0), loại bỏ khách lẻ
     df_debt['clean_debt'] = clean_num(df_debt[debt_col])
@@ -872,9 +905,9 @@ def solution(data):
     if not d_c or not a_c:
         raise DataNotFoundError("Bảng nhập hàng thiếu cột ngày hoặc cột tiền", column_name="ngày/tiền", available_columns=cols)
 
-    # 3. Lọc đúng kỳ tháng này: năm 2026, tháng 9, từ ngày 1 đến hết as_of_date
+    # 3. Lọc đúng kỳ tháng này: năm 2026, tháng 9, từ ngày 1 đến hết as_of_date (dùng Timestamp)
     df_nhap['clean_date'] = clean_date(df_nhap[d_c])
-    df_nhap = df_nhap[(df_nhap['clean_date'].dt.year == 2026) & (df_nhap['clean_date'].dt.month == 9) & (df_nhap['clean_date'].dt.date <= pd.to_datetime("2026-09-07").date())]
+    df_nhap = df_nhap[(df_nhap['clean_date'] >= pd.Timestamp("2026-09-01")) & (df_nhap['clean_date'] <= pd.Timestamp("2026-09-07 23:59:59"))]
 
     # 4. Loại bỏ phiếu hủy nếu có trạng thái hoặc ghi chú
     st_c = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt', 'ghi chú', 'cancel'])), None)
@@ -1360,6 +1393,7 @@ def solution(data):
 
     # BẮT BUỘC dùng Tổng tiền hàng (gross revenue), TUYỆT ĐỐI KHÔNG dùng Tổng sau giảm giá hoặc Khách đã trả
     return int(round(clean_num(df_shift[amt_col]).sum()))
+
 ```""",
 
     "ranking_topk": """--- VÍ DỤ MINH HỌA: TÌM ĐỐI TƯỢNG NHIỀU NHẤT / XẾP HẠNG (RANKING TOP-K) / ĐỒNG HẠNG ---
@@ -1553,7 +1587,7 @@ def solution(data):
         raise DataNotFoundError("Không tìm thấy bảng có cột ngày và trạng thái đơn", table_name="đơn hàng", available_tables=list(data.keys()))
 
     df_ord['clean_date'] = clean_date(df_ord[date_col])
-    mask = (df_ord['clean_date'].dt.year == 2026) & (df_ord['clean_date'].dt.month == 6)
+    mask = (df_ord['clean_date'] >= pd.Timestamp("2026-06-01")) & (df_ord['clean_date'] <= pd.Timestamp("2026-06-30 23:59:59"))
     df_period = df_ord[mask]
     total_orders = len(df_period)
     if total_orders == 0:
@@ -1627,8 +1661,8 @@ def solution(data):
     df_sales['clean_date'] = clean_date(df_sales[date_col])
     df_sales['clean_amt'] = clean_num(df_sales[amt_col])
 
-    mask_curr = (df_sales['clean_date'].dt.date >= pd.to_datetime("2026-05-01").date()) & (df_sales['clean_date'].dt.date <= pd.to_datetime("2026-05-25").date())
-    mask_prev = (df_sales['clean_date'].dt.date >= pd.to_datetime("2026-04-01").date()) & (df_sales['clean_date'].dt.date <= pd.to_datetime("2026-04-25").date())
+    mask_curr = (df_sales['clean_date'] >= pd.Timestamp("2026-05-01")) & (df_sales['clean_date'] <= pd.Timestamp("2026-05-25 23:59:59"))
+    mask_prev = (df_sales['clean_date'] >= pd.Timestamp("2026-04-01")) & (df_sales['clean_date'] <= pd.Timestamp("2026-04-25 23:59:59"))
 
     rev_curr = df_sales[mask_curr]['clean_amt'].sum()
     rev_prev = df_sales[mask_prev]['clean_amt'].sum()
@@ -1777,7 +1811,7 @@ def build_prompt(
         temporal_lines.append(f"- Kỳ đối chiếu: từ '{temporal_info.get('comparison_start')}' đến '{temporal_info.get('comparison_end')}' ({temporal_info.get('comparison_desc', '')})")
     else:
         temporal_lines.append(f"- Khoảng thời gian giải mã: {temporal_info['description']}")
-    temporal_lines.append(f"- Gợi ý lọc Pandas: {temporal_info['code_hint']}")
+    temporal_lines.append(f"- CÔNG THỨC LỌC THỜI GIAN BẮT BUỘC: {temporal_info['code_hint']}")
     temporal_text = "\n".join(temporal_lines)
 
     entity_block = ""

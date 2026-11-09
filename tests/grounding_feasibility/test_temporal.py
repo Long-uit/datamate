@@ -152,6 +152,115 @@ class TestTemporalGrounder(unittest.TestCase):
         self.assertEqual(len(df_filtered), 3)
         self.assertIn("DH3_RETURN", list(df_filtered["Mã đơn"]))
 
+    def test_year_to_date_variations_and_precedence(self):
+        ytd_queries = [
+            "Doanh thu từ đầu năm đến hết hôm nay",
+            "Số đơn từ đầu năm đến hết hnay",
+            "Tổng tiền từ đầu năm tới hết bữa nay",
+            "Doanh thu từ đầu năm tới bữa nay",
+            "Doanh thu từ đầu năm đến hôm nay",
+            "Doanh thu từ đầu năm đến nay",
+            "Doanh thu từ đầu năm tới nay",
+            "Doanh thu từ đầu năm đến hết ngày hôm nay",
+            "Doanh thu từ đầu năm",
+        ]
+        for q in ytd_queries:
+            wins = resolve_temporal(q, as_of_date="2025-05-15")
+            self.assertTrue(
+                any(w.label == "year_to_date" for w in wins),
+                f"Query '{q}' should produce year_to_date window",
+            )
+            self.assertFalse(
+                any(w.label == "today" for w in wins),
+                f"Query '{q}' should NOT produce premature 'today' window",
+            )
+            wy = next(w for w in wins if w.label == "year_to_date")
+            self.assertEqual(wy.start_date, "2025-01-01")
+            self.assertEqual(wy.end_date, "2025-05-15")
+
+            ctx = resolve_temporal_context(q, as_of_date="2025-05-15")
+            self.assertEqual(ctx["start_date"], "2025-01-01")
+            self.assertEqual(ctx["end_date"], "2025-05-15")
+
+    def test_quarter_variations(self):
+        cases = [
+            ("Doanh số quý 1 2024", "2024-01-01", "2024-03-31", "quarter_2024_Q1"),
+            ("Doanh số quý 1-2024", "2024-01-01", "2024-03-31", "quarter_2024_Q1"),
+            ("Doanh số quý 1/2024", "2024-01-01", "2024-03-31", "quarter_2024_Q1"),
+            ("Doanh số quý 1 năm 2024", "2024-01-01", "2024-03-31", "quarter_2024_Q1"),
+            ("Doanh số quý I 2024", "2024-01-01", "2024-03-31", "quarter_2024_Q1"),
+            ("Doanh số quý II 2024", "2024-04-01", "2024-06-30", "quarter_2024_Q2"),
+            ("Doanh số quý III 2024", "2024-07-01", "2024-09-30", "quarter_2024_Q3"),
+            ("Doanh số quý IV 2024", "2024-10-01", "2024-12-31", "quarter_2024_Q4"),
+            ("Doanh số Q1/2025", "2025-01-01", "2025-03-31", "quarter_2025_Q1"),
+            ("Doanh số Q2/2025", "2025-04-01", "2025-06-30", "quarter_2025_Q2"),
+            ("Doanh số Q3-2024", "2024-07-01", "2024-09-30", "quarter_2024_Q3"),
+            ("Doanh số Q4 2023", "2023-10-01", "2023-12-31", "quarter_2023_Q4"),
+        ]
+        for q, start, end, label in cases:
+            wins = resolve_temporal(q, as_of_date="2025-05-15")
+            self.assertTrue(any(w.label == label for w in wins), f"Query '{q}' should have label '{label}'")
+            w = next(w for w in wins if w.label == label)
+            self.assertEqual(w.start_date, start, f"Start date mismatch for '{q}'")
+            self.assertEqual(w.end_date, end, f"End date mismatch for '{q}'")
+
+        # Quý dạng La Mã / Q không có năm
+        wins_qi = resolve_temporal("Doanh số quý I", as_of_date="2025-05-15")
+        self.assertTrue(any(w.start_date == "2025-01-01" and w.end_date == "2025-03-31" for w in wins_qi))
+
+        wins_qiv = resolve_temporal("Doanh số quý IV", as_of_date="2025-05-15")
+        self.assertTrue(any(w.start_date == "2024-10-01" and w.end_date == "2024-12-31" for w in wins_qiv))
+
+        wins_q1 = resolve_temporal("Doanh số Q1", as_of_date="2025-05-15")
+        self.assertTrue(any(w.start_date == "2025-01-01" and w.end_date == "2025-03-31" for w in wins_q1))
+
+        wins_q3 = resolve_temporal("Doanh số Q3", as_of_date="2025-05-15")
+        self.assertTrue(any(w.start_date == "2024-07-01" and w.end_date == "2024-09-30" for w in wins_q3))
+
+    def test_code_hint_timestamp_comparison(self):
+        # 1. Hôm nay (ngày đơn lẻ)
+        ctx_today = resolve_temporal_context("Doanh thu hôm nay", as_of_date="2025-05-15")
+        hint_today = ctx_today["code_hint"]
+        self.assertIn("pd.Timestamp('2025-05-15')", hint_today)
+        self.assertIn("pd.Timestamp('2025-05-15 23:59:59')", hint_today)
+        self.assertNotIn(".dt.date", hint_today)
+        self.assertNotIn(".date()", hint_today)
+
+        # 2. Khoảng thời gian (từ đầu năm đến hết hôm nay)
+        ctx_ytd = resolve_temporal_context("Doanh thu từ đầu năm đến hết hôm nay", as_of_date="2025-05-15")
+        hint_ytd = ctx_ytd["code_hint"]
+        self.assertIn("pd.Timestamp('2025-01-01')", hint_ytd)
+        self.assertIn("pd.Timestamp('2025-05-15 23:59:59')", hint_ytd)
+        self.assertNotIn(".dt.date", hint_ytd)
+        self.assertNotIn(".date()", hint_ytd)
+
+        # 3. Quý
+        ctx_q = resolve_temporal_context("Doanh số Q2/2025", as_of_date="2025-05-15")
+        hint_q = ctx_q["code_hint"]
+        self.assertIn("pd.Timestamp('2025-04-01')", hint_q)
+        self.assertIn("pd.Timestamp('2025-06-30 23:59:59')", hint_q)
+        self.assertNotIn(".dt.date", hint_q)
+        self.assertNotIn(".date()", hint_q)
+
+        # 4. Kỳ so sánh
+        ctx_cmp = resolve_temporal_context("Doanh thu tháng này so với tháng trước", as_of_date="2025-05-15")
+        hint_cmp = ctx_cmp["code_hint"]
+        self.assertIn("Kỳ chính:", hint_cmp)
+        self.assertIn("Kỳ so sánh:", hint_cmp)
+        self.assertIn("pd.Timestamp('2025-05-01')", hint_cmp)
+        self.assertIn("pd.Timestamp('2025-05-15 23:59:59')", hint_cmp)
+        self.assertIn("pd.Timestamp('2025-04-01')", hint_cmp)
+        self.assertIn("pd.Timestamp('2025-04-15 23:59:59')", hint_cmp)
+        self.assertNotIn(".dt.date", hint_cmp)
+        self.assertNotIn(".date()", hint_cmp)
+
+        # 5. Fallback mặc định
+        ctx_fb = resolve_temporal_context("Sản phẩm nào đắt nhất", as_of_date="2025-05-15")
+        hint_fb = ctx_fb["code_hint"]
+        self.assertIn("pd.Timestamp('2025-05-15 23:59:59')", hint_fb)
+        self.assertNotIn(".dt.date", hint_fb)
+        self.assertNotIn(".date()", hint_fb)
+
 
 if __name__ == "__main__":
     unittest.main()

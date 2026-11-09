@@ -232,7 +232,7 @@ def resolve_temporal(
     if calendar is None:
         calendar = get_calendar()
 
-    # 0. Ngày cụ thể: ví dụ "vào ngày 01/12/2025", "ngay 01/12/2025", "ngày 01/12/2025"
+    # 0a. Ngày cụ thể: ví dụ "vào ngày 01/12/2025", "ngay 01/12/2025", "ngày 01/12/2025"
     m_exact_date = re.search(r"(?:vào\s+ngày|vao\s+ngay|ngay|ngày)\s+(\d{1,2}[/-]\d{1,2}[/-]\d{4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})", q)
     if m_exact_date:
         d_str = m_exact_date.group(1)
@@ -254,8 +254,12 @@ def resolve_temporal(
         except Exception:
             pass
 
-    # 1. Hôm nay / ngày mốc
-    if re.search(r"\bh[oô]m nay\b|\bng[aà]y m[oố]c\b|\bhnay\b|\bb[uữ]a nay\b", q):
+    # 0b. Kiểm tra trước cụm "từ đầu năm" để tránh "hôm nay"/"hnay"/"bữa nay" bị khớp sớm
+    ytd_pattern = r"t[uừ]\s*[dđ][aầ]u\s*n[aă]m(\s*(?:cho\s*)?(t[oớ]i|[dđ][eế]n)\s*(h[eế]t\s*)?(nay|hnay|(?:ng[aà]y\s*)?h[oô]m\s*nay|b[uữ]a\s*nay))?"
+    has_ytd = bool(re.search(ytd_pattern, q))
+
+    # 1. Hôm nay / ngày mốc (loại trừ nếu thuộc cụm từ đầu năm)
+    if not has_ytd and re.search(r"\bh[oô]m nay\b|\bng[aà]y m[oố]c\b|\bhnay\b|\bb[uữ]a nay\b", q):
         windows.append(TimeWindow(
             start_date=d.isoformat(),
             end_date=d.isoformat(),
@@ -339,8 +343,8 @@ def resolve_temporal(
                 description=f"Tháng trước (tháng {lm_month}/{lm_year})",
             ))
 
-    # 7. Từ đầu năm / từ đầu năm tới nay / từ đầu năm đến nay
-    if re.search(r"t[uừ]\s*đ[aầ]u\s*n[aă]m(\s*(t[oớ]i|đ[eế]n)\s*nay)?", q):
+    # 7. Từ đầu năm / từ đầu năm tới nay / từ đầu năm đến nay / đến hết hôm nay/hnay/bữa nay
+    if has_ytd:
         year_start = date(d.year, 1, 1)
         windows.append(TimeWindow(
             start_date=year_start.isoformat(),
@@ -485,14 +489,21 @@ def resolve_temporal(
             ))
 
     # 10. Quý Q (có hoặc không ghi năm)
-    m_quarter = re.search(r"\bqu[yý]\s*([1-4])(?:\s*(?:/|n[aă]m)\s*(\d{4}))?\b", q)
+    # Hỗ trợ: quý 1, quý 1 2024, quý 1-2024, quý 1/2024, quý 1 năm 2024,
+    # quý I -> quý IV (và quý I 2024...), Q1 -> Q4 (và Q1/2025, Q2 2024...)
+    m_quarter = re.search(
+        r"(?:\bqu[yý]\s*([1-4]|iv|iii|ii|i)\b|\bq([1-4])\b)(?:(?:\s*(?:/|-|n[aă]m)\s*|\s+)(\d{4}))?",
+        q,
+    )
     if m_quarter:
-        q_val = int(m_quarter.group(1))
+        q_raw = m_quarter.group(1) or m_quarter.group(2)
+        q_map = {"1": 1, "2": 2, "3": 3, "4": 4, "i": 1, "ii": 2, "iii": 3, "iv": 4}
+        q_val = q_map.get(str(q_raw).lower(), 1)
         start_month = (q_val - 1) * 3 + 1
         end_month = q_val * 3
 
-        if m_quarter.group(2):
-            q_year = int(m_quarter.group(2))
+        if m_quarter.group(3):
+            q_year = int(m_quarter.group(3))
         else:
             if date(d.year, start_month, 1) <= d:
                 q_year = d.year
@@ -510,7 +521,7 @@ def resolve_temporal(
 
     # 10.5. Cả năm YYYY cụ thể (Ví dụ: "năm 2024", "cả năm 2024", "suốt năm 2024")
     m_year = re.search(r"(?:trong|c[aả]|su[oố]t)?\s*n[aă]m\s*(\d{4})\b", q)
-    if m_year and not re.search(r"\bth[aá]ng\s*\d{1,2}|qu[yý]\s*[1-4]|t[eế]t", q):
+    if m_year and not re.search(r"\bth[aá]ng\s*\d{1,2}|qu[yý]\s*([1-4]|iv|iii|ii|i)|\bq[1-4]|t[eế]t", q):
         y_val = int(m_year.group(1))
         windows.append(TimeWindow(
             start_date=f"{y_val}-01-01",
@@ -579,14 +590,20 @@ def resolve_temporal(
 
 def resolve_temporal_context(
     question: str,
-    as_of_date_str: str,
+    as_of_date_str: Optional[str] = None,
     calendar_path: Optional[str | Path] = None,
+    as_of_date: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Phân tích câu hỏi và as_of_date để xác định khoảng thời gian cụ thể (ngày dương ISO),
+    cung cấp gợi ý mã Pandas chuẩn xác cho tầng sinh mã (LLM prompting),
     bao gồm kỳ chính, kỳ đối chiếu (nếu có), mô tả nghiệp vụ và gợi ý lọc code Python/Pandas.
     Single Source of Truth cho toàn bộ pipeline.
     """
+    if as_of_date_str is None and as_of_date is not None:
+        as_of_date_str = as_of_date
+    if as_of_date_str is None:
+        raise ValueError("as_of_date_str hoặc as_of_date bắt buộc phải được cung cấp.")
     cal = get_calendar(calendar_path)
     try:
         wins = resolve_temporal(question, as_of_date=as_of_date_str, calendar=cal)
@@ -600,8 +617,8 @@ def resolve_temporal_context(
         if comp_win is not None and primary_win is not None:
             desc = f"Kỳ chính: {primary_win.description} | Kỳ đối chiếu: {comp_win.description}"
             code_hint = (
-                f"# Kỳ chính: (df[date_col].dt.date >= pd.to_datetime('{primary_win.start_date}').date()) & (df[date_col].dt.date <= pd.to_datetime('{primary_win.end_date}').date())\n"
-                f"# Kỳ so sánh: (df[date_col].dt.date >= pd.to_datetime('{comp_win.start_date}').date()) & (df[date_col].dt.date <= pd.to_datetime('{comp_win.end_date}').date())"
+                f"# Kỳ chính: (df[date_col] >= pd.Timestamp('{primary_win.start_date}')) & (df[date_col] <= pd.Timestamp('{primary_win.end_date} 23:59:59'))\n"
+                f"# Kỳ so sánh: (df[date_col] >= pd.Timestamp('{comp_win.start_date}')) & (df[date_col] <= pd.Timestamp('{comp_win.end_date} 23:59:59'))"
             )
             return {
                 "as_of_date": as_of_date_str,
@@ -614,10 +631,7 @@ def resolve_temporal_context(
                 "code_hint": code_hint,
             }
         elif primary_win is not None:
-            if primary_win.start_date == primary_win.end_date:
-                code_hint = f"df[date_col].dt.date == pd.to_datetime('{primary_win.start_date}').date()"
-            else:
-                code_hint = f"(df[date_col].dt.date >= pd.to_datetime('{primary_win.start_date}').date()) & (df[date_col].dt.date <= pd.to_datetime('{primary_win.end_date}').date())"
+            code_hint = f"(df[date_col] >= pd.Timestamp('{primary_win.start_date}')) & (df[date_col] <= pd.Timestamp('{primary_win.end_date} 23:59:59'))"
             return {
                 "as_of_date": as_of_date_str,
                 "start_date": primary_win.start_date,
@@ -638,7 +652,7 @@ def resolve_temporal_context(
         "comparison_end": None,
         "comparison_desc": None,
         "description": f"Mốc thời gian tham chiếu (hôm nay): {as_of_date_str}",
-        "code_hint": f"df[date_col].dt.date <= pd.to_datetime('{as_of_date_str}').date()",
+        "code_hint": f"df[date_col] <= pd.Timestamp('{as_of_date_str} 23:59:59')",
     }
 
 
