@@ -98,16 +98,40 @@ def infer_table_role(table_name: str, df: pd.DataFrame) -> str:
     
     cols_raw = [str(c) for c in df.columns]
     cols_low = [c.lower() for c in cols_raw]
-    
-    # 1. Kiểm tra công nợ / sổ nợ / phiếu thu / thanh toán
-    is_debt = (
-        any(k in t_clean for k in ["congno", "sono", "sogop", "phaithu", "phaitra", "hanno", "phieuthu", "soquy", "thanhtoan"])
-        or any(any(k in c for k in ["còn nợ", "con_no", "tiền nợ", "phải thu", "phải trả", "hạn nợ", "hạn trả", "số tiền thu", "đã thu", "thu nợ"]) for c in cols_low)
-    )
-    if is_debt:
-        return "Công nợ / Sổ theo dõi nợ & thanh toán"
 
-    # 2. Kiểm tra nhập hàng / phiếu nhập
+    # Nhận diện các loại cột nghiệp vụ
+    # Ngày giao dịch thực tế (loại trừ ngày sinh, ngày tạo metadata, hsd)
+    trans_dates = [
+        c for c in cols_low
+        if any(k in c for k in ["ngày", "date", "ngaylap", "thời gian", "thoigian", "ngay_ban"])
+        and not any(k in c for k in ["ngày sinh", "ngaysinh", "thời gian tạo", "thoigiantao", "ngày tạo", "ngaytao", "hsd", "hạn dùng"])
+    ]
+    has_date = bool(trans_dates)
+
+    has_money = any(
+        any(k in c for k in ["thành tiền", "tổng tiền", "tiền", "doanh thu", "tiền bán", "khách cần trả", "tổng thanh toán", "tổng tiền hàng", "tổng sau giảm giá", "tổng đơn"])
+        and "nhap" not in c for c in cols_low
+    )
+    has_item = any(any(k in c for k in ["mã hàng", "tên hàng", "sản phẩm", "tên thuốc", "mã sp", "product", "sku", "hoạt chất", "tên món", "mặt hàng"]) for c in cols_low)
+    has_qty = any(any(k in c for k in ["số lượng", "sl", "quy đổi", "slquydoi"]) for c in cols_low)
+    has_sales_name = any(k in t_clean for k in ["banhang", "donhang", "hoadon", "sobanhang", "pos", "giaodich", "chitietdon", "hoadonchitiet", "chitietbanhang", "danhsachhoadon"])
+    has_sales_id = any(any(k in c for k in ["mã đơn", "mã hoá đơn", "mã hd", "mã bill", "mã phiếu", "order_id", "mã chứng từ"]) for c in cols_low)
+
+    # 1. Sổ giao hàng / Vận chuyển (đợt giao, lượt giao, ngày chở/giao, mã vận đơn, biển số xe)
+    is_delivery = (
+        any(k in t_clean for k in ["giaohang", "phieugiao", "vanchuyen", "chohang", "sochohang", "delivery", "ship"])
+        or any(any(k in c for k in ["ngày giao", "ngày chở", "lần giao", "lượt giao", "biển số", "người chở", "người giao", "sl thực giao", "đợt giao"]) for c in cols_low)
+    ) and not has_money
+    if is_delivery:
+        return "Sổ giao hàng / Vận chuyển (đợt giao, lượt giao, ngày chở/giao, mã vận đơn, biển số xe)"
+
+    # 2. Bán hàng (Ưu tiên kiểm tra trước công nợ để tránh bảng hóa đơn có cột 'Còn nợ' bị nhầm thành nợ)
+    if (has_sales_name and (has_date or has_money or has_qty or has_sales_id)) or (has_sales_id and (has_date or has_money or has_item)) or (has_date and has_money):
+        if has_item and has_qty:
+            return "Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)"
+        return "Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)"
+
+    # 3. Kiểm tra nhập hàng / phiếu nhập
     is_import = (
         any(k in t_clean for k in ["nhap", "ncc", "nhacungcap", "phieunhap"])
         or any(any(k in c for k in ["ngày nhập", "ngay_nhap", "phiếu nhập", "cần trả ncc", "tiền nhập", "giá trị nhập", "đơn giá nhập"]) for c in cols_low)
@@ -117,7 +141,7 @@ def infer_table_role(table_name: str, df: pd.DataFrame) -> str:
             return "Nhập hàng chi tiết (mặt hàng, số lượng, giá nhập)"
         return "Nhập hàng tổng hợp (phiếu nhập, ngày nhập, tiền nhập)"
 
-    # 3. Kiểm tra tồn kho / thẻ kho
+    # 4. Kiểm tra tồn kho / thẻ kho
     is_inv = (
         any(k in t_clean for k in ["tonkho", "thekho"])
         or any(any(k in c for k in ["tồn kho", "tồn cuối", "tồn thực", "số lượng tồn", "sl tồn", "tồn đầu"]) for c in cols_low)
@@ -125,7 +149,7 @@ def infer_table_role(table_name: str, df: pd.DataFrame) -> str:
     if is_inv:
         return "Tồn kho / Thẻ kho (số lượng tồn, tồn thực)"
 
-    # 4. Kiểm tra chi phí vận hành
+    # 5. Kiểm tra chi phí vận hành
     is_cost = (
         any(k in t_clean for k in ["chiphi"])
         or any(any(k in c for k in ["chi phí", "khoản chi", "loại chi"]) for c in cols_low)
@@ -133,33 +157,33 @@ def infer_table_role(table_name: str, df: pd.DataFrame) -> str:
     if is_cost:
         return "Sổ chi phí vận hành"
 
-    # 5. Kiểm tra bán hàng
-    has_date = any(any(k in c for k in ["ngày", "date", "ngaylap", "thời gian", "thoigian", "ngay_ban"]) for c in cols_low)
-    has_money = any(any(k in c for k in ["thành tiền", "tổng tiền", "tiền", "doanh thu", "tiền bán", "khách cần trả", "tổng thanh toán"]) and "nhap" not in c for c in cols_low)
-    has_item = any(any(k in c for k in ["mã hàng", "tên hàng", "sản phẩm", "tên thuốc", "mã sp", "product", "sku", "hoạt chất"]) for c in cols_low)
-    has_qty = any(any(k in c for k in ["số lượng", "sl", "quy đổi", "slquydoi"]) for c in cols_low)
-    has_sales_name = any(k in t_clean for k in ["banhang", "donhang", "hoadon", "sobanhang", "pos", "giaodich"])
+    # 6. Kiểm tra công nợ / sổ nợ (Chỉ nhận diện khi tên bảng rõ ràng hoặc có cột nợ chuyên biệt và KHÔNG phải bảng bán hàng)
+    is_debt = (
+        any(k in t_clean for k in ["congno", "sono", "sogop", "phaithu", "phaitra", "hanno", "phieuthu", "soquy"])
+        or (any(any(k in c for k in ["hạn nợ", "số ngày được nợ", "tuổi nợ", "thu nợ"]) for c in cols_low) and not has_sales_id)
+    )
+    if is_debt:
+        return "Công nợ / Sổ theo dõi nợ & thanh toán"
 
-    if has_sales_name or (has_date and (has_money or has_item)):
-        if has_item and has_qty:
-            return "Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)"
-        return "Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)"
-
-    # 6. Kiểm tra danh mục khách hàng
+    # 7. Kiểm tra danh mục khách hàng (không có ngày giao dịch và không có tiền)
     is_cust = (
         any(k in t_clean for k in ["khachhang", "customer"])
-        or (any(any(k in c for k in ["mã khách", "tên khách", "nhóm khách", "sđt", "điện thoại", "tenkh", "makh"]) for c in cols_low) and not has_date and not has_money)
-    )
+        or any(any(k in c for k in ["mã khách", "tên khách", "nhóm khách", "sđt", "điện thoại", "tenkh", "makh"]) for c in cols_low)
+    ) and not has_date and not has_money
     if is_cust:
         return "Danh mục khách hàng (mã khách, tên khách, nhóm khách, địa chỉ)"
 
-    # 7. Kiểm tra danh mục sản phẩm / thuốc / bảng giá
+    # 8. Kiểm tra danh mục sản phẩm / thuốc / bảng giá (không có ngày giao dịch và không có tiền)
     is_prod = (
         any(k in t_clean for k in ["sanpham", "hanghoa", "danhmuc", "thuoc", "banggia"])
-        or (has_item and not has_date and not has_money)
-    )
+        or has_item
+    ) and not has_date and not has_money
     if is_prod:
         return "Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)"
+
+    # 9. Fallback bán hàng nếu có has_item và has_qty
+    if has_item and has_qty:
+        return "Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)"
 
     return "Bảng dữ liệu khác"
 

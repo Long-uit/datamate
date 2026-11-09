@@ -103,10 +103,18 @@ def normalize_string(val: Any) -> Optional[str]:
     - Unicode NFC.
     - Loại bỏ khoảng trắng đầu/cuối và khoảng trắng kép.
     - Loại bỏ dấu ngoặc kép thừa nếu bị bọc dạng '"nội dung"'.
+    - Tự động unwrap nếu là list/tuple có đúng 1 phần tử (vd: ['Bia Tiger lon'] -> 'Bia Tiger lon').
     """
-    if is_nan_or_null(val):
+    if is_nan_or_null(val) or isinstance(val, type):
         return None
-    s = str(val).strip()
+    if isinstance(val, (list, tuple)) and len(val) == 1:
+        val = val[0]
+        if is_nan_or_null(val) or isinstance(val, type):
+            return None
+    s_raw = str(val).strip()
+    if s_raw.startswith("<class ") and s_raw.endswith(">"):
+        return None
+    s = s_raw
     if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
         s = s[1:-1].strip()
     # Chuẩn hóa Unicode NFC
@@ -523,13 +531,134 @@ def infer_expected_type(question: Optional[str] = None) -> Optional[str]:
     if any(k in q_low for k in ("bảng", "lập bảng", "thống kê chi tiết từng", "mỗi người còn nợ bao nhiêu")):
         return "table"
 
-    # List
-    if any(k in q_low for k in ("danh sách", "top", "những mặt hàng nào", "liệt kê", "các khách hàng", "mấy hộp chẵn", "mấy vỉ chẵn", "mấy lốc chẵn")):
+    # List (Top-K hoặc danh sách nhiều đối tượng)
+    if (
+        any(k in q_low for k in ("danh sách", "top", "những mặt hàng nào", "liệt kê", "các khách hàng", "mấy hộp chẵn", "mấy vỉ chẵn", "mấy lốc chẵn"))
+        or re.search(r"(?<!/)(?<!\d)\b([1-9]|[1-4]\d|50|mấy)\s+(?:mặt\s*hàng|sản\s*phẩm|sp|khách(?:\s*hàng)?|món|hàng|khach)\b", q_low)
+        or re.search(r"\btop\s*\d+\b", q_low)
+    ):
         return "list"
 
+    # String (Top-1 đối tượng đơn lẻ)
+    if (
+        re.search(r"\b(?:hàng|sp|món|sản\s*phẩm|hang|mon|san\s*pham)\s+n[aà]o\s+(?:bán\s*chạy|nhiều|chạy|hot|chi\s*tiêu|mua|thấp|ít|chay|ban\s*chay|nhieu)\b", q_low)
+        or re.search(r"\b(?:bán\s*(?:chạy|nhiều|hot)|chi\s*tiêu\s*nhiều|chay)\s*nhất\s*l[aà]\s*(?:gì|ai|những\s*gì|mặt\s*hàng\s*nào|sp\s*nào|gi)\b", q_low)
+        or re.search(r"\bsp\s+(?:bán|ban)\s+(?:dc|được|duoc)?\s*(?:nhiều|nhieu)\s*nhất\b", q_low)
+        or re.search(r"\b(?:hàng|hang)\s+n[aà]o\s+(?:chạy|chay)\s*nhất\b", q_low)
+        or re.search(r"\btop\s*1\b", q_low)
+    ):
+        return "string"
+
     # Number
-    if any(k in q_low for k in ("bao nhiêu", "bnhiu", "bao nhiu", "mấy", "tổng cộng", "doanh thu", "dthu", "tiền", "số lượng", "số đơn", "giá trị")):
+    if (
+        any(k in q_low for k in ("bao nhiêu", "bnhiu", "bao nhiu", "mấy", "tổng cộng", "doanh thu", "dthu", "tiền", "số lượng", "số đơn", "giá trị"))
+        or re.search(r"\bgiá\s*trị\s*trung\s*bình\s*một\s*đơn\b", q_low)
+        or re.search(r"(?:gi[aá]s?\s*tr[iị]\s*)?trung\s*b[iì]nh\s*(?:m[oộ]t|1)\s*đ[oơ]n|tb\s*(?:m[oộ]t|1)\s*đ[oơ]n|\baov\b", q_low)
+    ):
         return "number"
+
+    return None
+
+
+def _extract_scalar_from_dict(raw_dict: Dict[str, Any], question: Optional[str] = None) -> Any:
+    """
+    Trích xuất giá trị số vô hướng (scalar) từ dictionary nếu mô hình sinh mã trả về dict
+    (ví dụ: {'total_qty': 130, 'total_amount': ...} hoặc {'so_luong': 130}).
+    """
+    if not isinstance(raw_dict, dict) or not raw_dict:
+        return None
+
+    # Không can thiệp nếu là cấu trúc bảng chuẩn {"columns": [...], "rows": [...]}
+    if "columns" in raw_dict and "rows" in raw_dict:
+        return None
+
+    q_low = _nfc(question).lower() if question else ""
+
+    # 1. Nếu câu hỏi hỏi về số lượng (kg, ly, cái, hộp, bao nhiêu, mấy...)
+    is_qty_q = bool(re.search(
+        r"m[aấ]y\s*(?:kg|kilo|g|gram|ly|c[oố]c|chai|h[oộ]p|g[oó]i|vi[eê]n|th[uú]c|th[eé]p|c[aá]i|đ[oơ]n|đ[oợ]t)|"
+        r"bao\s*nhi[eê]u\s*(?:kg|kilo|g|gram|ly|c[oố]c|chai|h[oộ]p|g[oó]i|vi[eê]n|th[uú]c|th[eé]p|c[aá]i|đ[oơ]n|đ[oợ]t)|"
+        r"s[oố]\s*lu[oợ]ng|soluong|so_luong|s[oố]\s*l[uư][oợ]ng",
+        q_low,
+    ))
+    # 2. Nếu câu hỏi hỏi về tiền / doanh thu (tiền, doanh thu, giá bán, chi phí...)
+    is_amt_q = bool(re.search(
+        r"ti[eề]n|doanh\s*thu|dthu|gi[aá]\s*b[aá]n|gi[aá]\s*tr[iị]|th[aà]nh\s*ti[eề]n|t[oổ]ng\s*ti[eề]n|chi\s*ph[ií]",
+        q_low,
+    ))
+
+    # Danh sách các từ khóa đại diện cho quantity trong key
+    qty_keys = ["qty", "soluong", "so_luong", "sl", "count", "quantity", "so_don", "total_qty", "tong_sl", "tong_so_luong"]
+    # Ưu tiên cao: các từ khóa đại diện cho tổng doanh thu / tổng tiền / thành tiền
+    high_priority_amt_keys = [
+        "total_amount", "total_amt", "tong_tien", "tongtien", "thanh_tien", "thanhtien",
+        "revenue", "doanh_thu", "doanhthu", "tong_doanh_thu", "tong_gia_tri", "total_rev",
+        "total_revenue", "tong_cong", "tongcong", "clean_amt"
+    ]
+    # Ưu tiên thấp hơn: đơn giá / giá / amount chung
+    general_amt_keys = [
+        "amount", "amt", "tien", "gia_tri", "trigia", "price", "gia", "don_gia", "dongia"
+    ]
+
+    def _match_key(k: str, patterns: List[str]) -> bool:
+        k_clean = re.sub(r"[^a-z0-9]", "", _nfc(str(k)).lower())
+        return any(re.sub(r"[^a-z0-9]", "", p) in k_clean for p in patterns)
+
+    def _to_num(val: Any) -> Optional[float]:
+        # Bác bỏ boolean ngay từ đầu vì bool là subclass của int trong Python
+        if isinstance(val, bool) or is_bool_instance(val):
+            return None
+        if isinstance(val, (int, float, Decimal)) and not is_nan_or_null(val):
+            return float(val)
+        if _HAS_PANDAS_NUMPY and isinstance(val, np.number) and not is_nan_or_null(val):
+            return float(val)
+        if isinstance(val, str):
+            val_c = val.strip().replace(",", "")
+            try:
+                f = float(val_c)
+                if not math.isnan(f) and not math.isinf(f):
+                    return f
+            except Exception:
+                pass
+        return None
+
+    # Ưu tiên theo loại câu hỏi
+    if is_qty_q and not is_amt_q:
+        for k, v in raw_dict.items():
+            num = _to_num(v)
+            if _match_key(k, qty_keys) and num is not None:
+                return num
+    elif is_amt_q and not is_qty_q:
+        for k, v in raw_dict.items():
+            num = _to_num(v)
+            if _match_key(k, high_priority_amt_keys) and num is not None:
+                return num
+        for k, v in raw_dict.items():
+            num = _to_num(v)
+            if _match_key(k, general_amt_keys) and num is not None:
+                return num
+
+    # Nếu cả hai hoặc câu hỏi không nêu rõ: ưu tiên high_priority_amt_keys -> qty_keys -> general_amt_keys
+    for k, v in raw_dict.items():
+        num = _to_num(v)
+        if _match_key(k, high_priority_amt_keys) and num is not None:
+            return num
+    for k, v in raw_dict.items():
+        num = _to_num(v)
+        if _match_key(k, qty_keys) and num is not None:
+            return num
+    for k, v in raw_dict.items():
+        num = _to_num(v)
+        if _match_key(k, general_amt_keys) and num is not None:
+            return num
+
+    # Fallback: Nếu chỉ có đúng 1 giá trị là numeric trong toàn bộ dict
+    numeric_vals = [
+        _to_num(v) for v in raw_dict.values()
+        if _to_num(v) is not None
+    ]
+    if len(numeric_vals) == 1:
+        return numeric_vals[0]
 
     return None
 
@@ -564,11 +693,17 @@ def normalize_output(
     if raw_val is None or is_nan_or_null(raw_val):
         return {"type": "abstain", "answer": None}
 
+    # 1b. Chặn Python type objects (vd: return int thay vì return int(round(aov)))
+    if isinstance(raw_val, type):
+        return {"type": "abstain", "answer": None}
+    if isinstance(raw_val, str) and (raw_val.startswith("<class ") or raw_val.strip() in ("<class 'int'>", "<class 'float'>", "<class 'str'>", "<class 'list'>", "<class 'dict'>")):
+        return {"type": "abstain", "answer": None}
+
     # 2. Trường hợp unanswerable
     if raw_val == "unanswerable" or (isinstance(raw_val, str) and raw_val.strip().lower() in ("unanswerable", "không thể trả lời")):
         return {"type": "unanswerable", "answer": None}
 
-    # 3. Trường hợp dict đã có type
+    # 3. Trường hợp dict đã có type hoặc dict trả về từ hàm cần bóc tách scalar
     if isinstance(raw_val, dict):
         d_type = raw_val.get("type")
         if d_type in ("unanswerable", "abstain"):
@@ -581,10 +716,43 @@ def normalize_output(
             raw_val = raw_val.get("answer")
             if raw_val is None or is_nan_or_null(raw_val):
                 return {"type": "abstain", "answer": None}
+        elif not ("columns" in raw_val and "rows" in raw_val):
+            # Dict không phải format bảng và không phải wrapper -> trích xuất scalar nếu câu hỏi hỏi số lượng / tiền
+            extracted = _extract_scalar_from_dict(raw_val, question=question)
+            if extracted is not None:
+                raw_val = extracted
+
+    # 3b. Kiểm tra nếu raw_val là chuỗi biểu diễn Python list (vd: "['SP1', 'SP2']" hoặc '["A", "B"]')
+    if isinstance(raw_val, str):
+        s_val = raw_val.strip()
+        if (s_val.startswith("[") and s_val.endswith("]")) or (s_val.startswith("(") and s_val.endswith(")")):
+            try:
+                import ast
+                parsed_val = ast.literal_eval(s_val)
+                if isinstance(parsed_val, (list, tuple)):
+                    raw_val = list(parsed_val)
+            except Exception:
+                pass
 
     # 4. Xác định target_type
     target_type = expected_type
     q_inferred = infer_expected_type(question)
+
+    # Nhận diện câu hỏi Top-1 đơn lẻ
+    is_top1_q = (
+        q_inferred == "string"
+        or (question and bool(re.search(r"\b(?:hàng|sp|món|sản\s*phẩm|hang|mon|san\s*pham)\s+n[aà]o\s+(?:bán\s*chạy|nhiều|chạy|hot|chi\s*tiêu|mua|thấp|ít|chay|ban\s*chay|nhieu)\b", _nfc(question).lower())))
+        or (question and bool(re.search(r"\bsp\s+(?:bán|ban)\s+(?:dc|được|duoc)?\s*(?:nhiều|nhieu)\s*nhất\b", _nfc(question).lower())))
+        or (question and bool(re.search(r"\b(?:hàng|hang)\s+n[aà]o\s+(?:chạy|chay)\s*nhất\b", _nfc(question).lower())))
+        or (question and bool(re.search(r"\btop\s*1\b", _nfc(question).lower())))
+    )
+
+    # Single-element list unwrapping: nếu hỏi đối tượng đơn lẻ hoặc target_type là string
+    # mà raw_val là list/tuple có đúng 1 phần tử (ví dụ: ['Bia Tiger lon']) -> unwrap thành 'Bia Tiger lon'
+    if isinstance(raw_val, (list, tuple, set)) and len(raw_val) == 1:
+        if target_type == "string" or (not target_type and is_top1_q):
+            raw_val = list(raw_val)[0]
+            target_type = "string"
 
     if not target_type:
         if is_bool_instance(raw_val):
@@ -654,6 +822,18 @@ def normalize_output(
     elif target_type == "list":
         ans = normalize_list(raw_val)
         if ans is not None:
+            # Nếu câu hỏi nêu rõ số lượng K (Top K), cắt đúng tối đa K phần tử
+            if question:
+                q_low_k = _nfc(question).lower()
+                m_k = (
+                    re.search(r"\btop\s*(\d+)\b", q_low_k)
+                    or re.search(r"\b(\d+)\s*(?:mặt\s*hàng|sản\s*phẩm|sp|khách(?:\s*hàng)?|món|hàng|khach)\b", q_low_k)
+                    or re.search(r"\bliệt\s*kê\s*(\d+)\b", q_low_k)
+                )
+                if m_k:
+                    k_val = int(m_k.group(1))
+                    if len(ans) > k_val:
+                        ans = ans[:k_val]
             return {"type": "list", "answer": ans}
         return {"type": "abstain", "answer": None}
 
@@ -692,6 +872,12 @@ def check_result_sanity(
     if ans_type in ("unanswerable", "abstain"):
         return True, None
 
+    # 0. Chặn Python type objects (vd: return int, return float, <class 'int'>)
+    if isinstance(ans_val, type):
+        return False, f"Kết quả trả về là Python type object ({ans_val}) thay vì giá trị tính toán"
+    if isinstance(ans_val, str) and (ans_val.startswith("<class ") or ans_val.strip() in ("<class 'int'>", "<class 'float'>", "<class 'str'>", "<class 'list'>", "<class 'dict'>")):
+        return False, f"Kết quả trả về là type representation ({ans_val}) thay vì giá trị tính toán"
+
     # 1. Kiểm tra None / NaN
     if is_nan_or_null(ans_val):
         return False, "Kết quả trả về là None, NaN hoặc Inf"
@@ -703,23 +889,53 @@ def check_result_sanity(
     if ans_type == "number" and isinstance(ans_val, (int, float, Decimal)):
         num_val = float(ans_val)
         is_change_or_profit = bool(re.search(r"t[aă]ng|gi[aả]m|ch[eê]nh\s*l[eệ]ch|thay\s*đ[oổ]i|l[aã]i|l[oỗ]|l[oợ]i\s*nhu[aậ]n|bi[eế]n\s*đ[oộ]ng", q_low))
-        is_revenue_or_qty = bool(re.search(r"doanh\s*thu|doanh\s*s[oố]|t[oổ]ng\s*ti[eề]n|ti[eề]n\s*b[aá]n|s[oố]\s*lu[oợ]ng|bao\s*nhi[eê]u\s*(đ[oơ]n|ly|chai|h[oộ]p|g[oó]i|s[aả]n\s*ph[aẩ]m|kh[aá]ch|ti[eề]n|h[oó]a\s*đ[oơ]n)", q_low))
+        is_revenue_or_qty = bool(re.search(
+            r"doanh\s*thu|doanh\s*s[oố]|t[oổ]ng\s*ti[eề]n|ti[eề]n\s*b[aá]n|s[oố]\s*lu[oợ]ng|"
+            r"(?:bao\s*nhi[eê]u|m[aấ]y|may)\s*(?:đ[oơ]n|ly|chai|h[oộ]p|g[oó]i|s[aả]n\s*ph[aẩ]m|kh[aá]ch|ti[eề]n|h[oó]a\s*đ[oơ]n|kg|kilo|g|gram|t[aấ]n|tan|m[eé]t|met|m3|l[ií]t|lit|th[uú]c|h[aà]ng|m[oó]n)",
+            q_low
+        ))
 
         if not is_change_or_profit and is_revenue_or_qty and num_val < 0:
             return False, f"Số âm bất thường ({ans_val}) cho câu hỏi về doanh thu / số lượng không cho phép âm"
 
+        is_count_query = bool(re.search(r"đ[eế]m|s[oố]\s*đ[oơ]n|đ[oơ]n\s*(?:h[uủ]y|hu[yỷ])|m[aấ]y\s*đ[oơ]n|m[aấ]y\s*đ[oợ]t|s[oố]\s*đ[oợ]t|bao\s*nhi[eê]u\s*(?:đ[oơ]n|đ[oợ]t|bill)", q_low))
+        has_specific_product_or_unit = bool(re.search(
+            r"kg|kilo|g|gram|t[aấ]n|tan|m[eé]t|met|m3|l[ií]t|lit|ly|chai|h[oộ]p|g[oó]i|vi[eê]n|th[uú]c|th[eé]p|m[aá]|th[iị]t|g[aà]|c[aá]|heo|b[oò]|s[aả]n\s*ph[aẩ]m|m[aặ]t\s*h[aà]ng",
+            q_low
+        ))
+
         # 2b. Kiểm tra Silent Zero (kết quả 0 hoặc 0.0 bất thường khi hỏi doanh thu / tổng tiền / lượng bán)
-        if num_val == 0.0 and is_revenue_or_qty and not is_change_or_profit:
+        # Miễn trừ cho các truy vấn đếm thuần túy (đếm số đơn, đơn huỷ, đợt giao...) khi không hỏi về sản phẩm/đơn vị cụ thể
+        is_pure_count = is_count_query and not has_specific_product_or_unit
+        if num_val == 0.0 and is_revenue_or_qty and not is_change_or_profit and not is_pure_count:
             return False, "Silent Zero: Kết quả tính toán bằng 0 bất thường cho câu hỏi doanh thu / số lượng"
 
-    # 3. Kiểm tra kết quả 0 hoặc rỗng cho câu hỏi xếp hạng / bán chạy nhất / ai mua nhiều nhất
-    is_ranking = bool(re.search(r"b[aá]n\s*ch[aạ]y\s*nh[aấ]t|nhi[eê]u\s*nh[aấ]t|cao\s*nh[aấ]t|th[aấ]p\s*nh[aấ]t|[ií]t\s*nh[aấ]t|top\s*\d+|mua\s*nhi[eê]u\s*nh[aấ]t|ai\s*b[aá]n|ai\s*mua|m[aặ]t\s*h[aà]ng\s*n[aà]o|s[aả]n\s*ph[aẩ]m\s*n[aà]o|kh[aá]ch\s*h[aà]ng\s*n[aà]o", q_low))
+        # 2c. Kiểm tra nhầm lẫn Đếm số đơn (Count) sang Cộng tổng tiền (Sum VNĐ)
+        asks_money = bool(re.search(r"ti[eề]n|doanh\s*thu|doanh\s*s[oố]|gi[aá]\s*tr[iị]|bao\s*nhi[eê]u\s*đ[oồ]ng", q_low))
+        if is_count_query and not asks_money and num_val >= 500_000:
+            return (
+                False,
+                f"Kết quả đếm số đơn ({ans_val}) lớn bất thường như số tiền VNĐ — có dấu hiệu tính tổng tiền (.sum()) thay vì đếm số đơn duy nhất (.nunique())",
+            )
+
+    # 3. Kiểm tra kết quả 0 hoặc rỗng hoặc vi phạm Điều 3 (Khách lẻ / Phí phục vụ) cho câu hỏi xếp hạng
+    is_ranking = bool(re.search(r"b[aá]n\s*ch[aạ]y\s*nh[aấ]t|ưa\s*chu[oộ]ng\s*nh[aấ]t|trung\s*th[aà]nh\s*nh[aấ]t|s[oộ]p\s*nh[aấ]t|nhi[eê]u\s*nh[aấ]t|cao\s*nh[aấ]t|th[aấ]p\s*nh[aấ]t|[ií]t\s*nh[aấ]t|top\s*\d+|mua\s*nhi[eê]u\s*nh[aấ]t|ai\s*b[aá]n|ai\s*mua|m[aặ]t\s*h[aà]ng\s*n[aà]o|s[aả]n\s*ph[aẩ]m\s*n[aà]o|kh[aá]ch\s*h[aà]ng\s*n[aà]o|kh[aá]ch\s*n[aà]o", q_low))
     if is_ranking:
         # Nếu hỏi đối tượng nào mà trả về số 0 hoặc chuỗi rỗng
         if ans_val in (0, 0.0, "0", ""):
             return False, f"Kết quả '{ans_val}' vô lý cho câu hỏi tìm đối tượng xếp hạng / bán chạy nhất"
         if ans_type == "list" and isinstance(ans_val, (list, tuple)) and len(ans_val) == 0:
             return False, "Danh sách xếp hạng rỗng [] cho câu hỏi tìm đối tượng"
+
+        # Kiểm tra trả về 'Khách lẻ' / 'Phí phục vụ' trái Điều 3 Rulebook
+        cand_strs = [str(ans_val).strip().lower()] if isinstance(ans_val, str) else (
+            [str(x).strip().lower() for x in ans_val] if isinstance(ans_val, (list, tuple)) else []
+        )
+        for cs in cand_strs:
+            if re.match(r"^(?:kh[aá]ch\s*l[eẻ]|l[eẻ]|v[aã]ng\s*lai|kh[aá]ch\s*v[aã]ng\s*lai|kl)$", cs):
+                return False, "Vi phạm Điều 3 Rulebook: Không được xếp hạng 'Khách lẻ / Vãng lai' (bắt buộc lọc bỏ khách lẻ trước khi xếp hạng)"
+            if re.match(r"^(?:ph[ií]\s*ph[uụ]c\s*v[uụ]|ph[uụ]\s*thu\s*ph[uụ]c\s*v[uụ])$", cs):
+                return False, "Vi phạm Điều 3 Rulebook: 'Phí phục vụ' không được coi là một mặt hàng khi xếp hạng sản phẩm/món"
 
     # 4. Kiểm tra danh sách rỗng
     if ans_type == "list" and isinstance(ans_val, (list, tuple)) and len(ans_val) == 0:

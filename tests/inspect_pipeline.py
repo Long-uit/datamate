@@ -34,7 +34,7 @@ import random
 import re
 import sys
 import time
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 import unicodedata
 
 # Tự động nạp thư mục src và root vào sys.path
@@ -72,6 +72,7 @@ from datamate.grounding_feasibility.feasibility import (
 from datamate.grounding_feasibility.rulebook import load_rulebook
 from datamate.grounding_feasibility.temporal import (
     filter_future_data,
+    format_temporal_for_prompt,
     get_calendar,
     LunarCalendar,
     resolve_temporal_context,
@@ -98,6 +99,7 @@ from datamate.output_abstention.abstention import (
     apply_abstention_gate,
     compute_confidence_score,
     evaluate_grounding_coverage,
+    evaluate_semantic_rule_compliance,
 )
 from datamate.output_abstention.normalizer import (
     apply_tie_breaker,
@@ -108,6 +110,7 @@ from datamate.output_abstention.submission import (
     make_abstain,
     SubmissionWriter,
     validate_submission,
+    _clean_for_json,
 )
 
 
@@ -347,88 +350,213 @@ def _split_aliases(cell: Any) -> list[str]:
     return [p.strip() for p in raw.split("|") if p.strip()] if "|" in raw else [raw]
 
 
-def _compare_cells(pred_cell: Any, gold_cell: Any) -> bool:
-    if _is_number(pred_cell) and _is_number(gold_cell):
-        if _numeric_equal(pred_cell, gold_cell):
+def _to_bool(val: Any) -> Optional[bool]:
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        if val == 1:
             return True
-    pred_str = _norm_str(pred_cell)
-    for alias in _split_aliases(gold_cell):
-        if _is_number(pred_cell) and _is_number(alias):
-            if _numeric_equal(pred_cell, alias):
+        if val == 0:
+            return False
+        return None
+    if isinstance(val, str):
+        s = val.strip().lower()
+        if s in ("true", "1", "có", "đúng", "yes", "t", "y"):
+            return True
+        if s in ("false", "0", "không", "sai", "no", "f", "n"):
+            return False
+        return None
+    return None
+
+
+def _compare_cells(pred_cell: Any, gold_cell: Any, aliases: Optional[Any] = None) -> bool:
+    try:
+        if _is_number(pred_cell) and _is_number(gold_cell):
+            if _numeric_equal(pred_cell, gold_cell):
                 return True
-        if pred_str == _norm_str(alias):
-            return True
-    return False
+        pred_str = _norm_str(pred_cell)
+        for alias in _split_aliases(gold_cell):
+            if _is_number(pred_cell) and _is_number(alias):
+                if _numeric_equal(pred_cell, alias):
+                    return True
+            if pred_str == _norm_str(alias):
+                return True
+        if aliases is not None:
+            if isinstance(aliases, (str, bytes)):
+                alias_list = [aliases]
+            elif isinstance(aliases, (int, float, Decimal)) and not isinstance(aliases, bool):
+                alias_list = [aliases]
+            elif isinstance(aliases, (list, tuple, set)):
+                alias_list = list(aliases)
+            elif isinstance(aliases, dict):
+                alias_list = list(aliases.values())
+            else:
+                alias_list = [aliases]
+            for a in alias_list:
+                if a is None or isinstance(a, bool):
+                    continue
+                if isinstance(a, (list, tuple, set)):
+                    sub_aliases = list(a)
+                else:
+                    sub_aliases = [a]
+                for sa in sub_aliases:
+                    if sa is None or isinstance(sa, bool):
+                        continue
+                    if _is_number(pred_cell) and _is_number(sa):
+                        if _numeric_equal(pred_cell, sa):
+                            return True
+                    for alias in _split_aliases(sa):
+                        if _is_number(pred_cell) and _is_number(alias):
+                            if _numeric_equal(pred_cell, alias):
+                                return True
+                        if pred_str == _norm_str(alias):
+                            return True
+        return False
+    except Exception:
+        return False
 
 
 def compare_single_answer(pred_record: dict, gold_record: dict) -> bool:
-    """So khớp 1 đáp án dự đoán với đáp án chuẩn theo Rulebook Mục 9."""
-    p_type = pred_record.get("type")
-    g_type = gold_record.get("type")
-
-    if p_type != g_type:
-        return False
-    if p_type in ("unanswerable", "abstain"):
-        return True
-
-    p_ans = pred_record.get("answer")
-    g_ans = gold_record.get("answer")
-
-    if p_ans is None or g_ans is None:
-        return False
-
-    if p_type == "number":
-        return _numeric_equal(p_ans, g_ans)
-
-    if p_type == "percent":
-        p_dec = _to_decimal(p_ans)
-        g_dec = _to_decimal(g_ans)
-        if p_dec is None or g_dec is None:
+    """So khớp 1 đáp án dự đoán với đáp án chuẩn theo Rulebook Mục 9 (hỗ trợ alias product code/tên)."""
+    try:
+        if not isinstance(pred_record, dict) or not isinstance(gold_record, dict):
             return False
-        return p_dec.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) == g_dec.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-    if p_type == "string":
-        return _norm_str(p_ans) == _norm_str(g_ans)
+        p_type = pred_record.get("type")
+        g_type = gold_record.get("type")
 
-    if p_type == "date":
-        return str(p_ans).strip() == str(g_ans).strip()
+        if not p_type or not g_type or p_type != g_type:
+            return False
+        if p_type in ("unanswerable", "abstain"):
+            return True
 
-    if p_type == "boolean":
-        return bool(p_ans) == bool(g_ans)
+        p_ans = pred_record.get("answer")
+        g_ans = gold_record.get("answer")
 
-    if p_type == "list":
-        if not isinstance(p_ans, (list, tuple)) or not isinstance(g_ans, (list, tuple)):
+        if p_ans is None or g_ans is None:
             return False
-        if len(p_ans) != len(g_ans):
-            return False
-        return all(_compare_cells(pa, ga) for pa, ga in zip(p_ans, g_ans))
 
-    if p_type == "table":
-        if not isinstance(p_ans, dict) or not isinstance(g_ans, dict):
-            return False
-        p_cols = p_ans.get("columns", [])
-        g_cols = g_ans.get("columns", [])
-        if [_norm_str(c) for c in p_cols] != [_norm_str(c) for c in g_cols]:
-            return False
-        p_rows = p_ans.get("rows", [])
-        g_rows = g_ans.get("rows", [])
-        if len(p_rows) != len(g_rows):
-            return False
-        used_gold = set()
-        for pr in p_rows:
-            matched_idx = None
-            for idx, gr in enumerate(g_rows):
-                if idx in used_gold:
-                    continue
-                if len(pr) == len(gr) and all(_compare_cells(pc, gc) for pc, gc in zip(pr, gr)):
-                    matched_idx = idx
-                    break
-            if matched_idx is None:
+        g_alias = gold_record.get("alias")
+
+        if p_type == "number":
+            return _numeric_equal(p_ans, g_ans)
+
+        if p_type == "percent":
+            p_dec = _to_decimal(p_ans)
+            g_dec = _to_decimal(g_ans)
+            if p_dec is None or g_dec is None:
                 return False
-            used_gold.add(matched_idx)
-        return True
+            try:
+                return p_dec.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) == g_dec.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            except Exception:
+                return False
 
-    return False
+        if p_type == "string":
+            if isinstance(g_alias, (str, bytes, int, float, Decimal)) and not isinstance(g_alias, bool):
+                cell_aliases = [g_alias]
+            elif isinstance(g_alias, (list, tuple, set)):
+                cell_aliases = list(g_alias)
+            else:
+                cell_aliases = None
+            return _compare_cells(p_ans, g_ans, cell_aliases)
+
+        if p_type == "date":
+            p_str = str(p_ans).strip()
+            g_str = str(g_ans).strip()
+            if p_str == g_str:
+                return True
+            if len(g_str) == 10 and len(p_str) > 10 and p_str[:10] == g_str:
+                return True
+            if len(p_str) == 10 and len(g_str) > 10 and g_str[:10] == p_str:
+                return True
+            return False
+
+        if p_type == "boolean":
+            p_b = _to_bool(p_ans)
+            g_b = _to_bool(g_ans)
+            if p_b is None or g_b is None:
+                return False
+            return p_b == g_b
+
+        if p_type == "list":
+            if not isinstance(p_ans, (list, tuple)) or not isinstance(g_ans, (list, tuple)):
+                return False
+            if len(p_ans) != len(g_ans):
+                return False
+            has_per_element_alias = (
+                isinstance(g_alias, (list, tuple)) and len(g_alias) == len(g_ans)
+            )
+            return all(
+                _compare_cells(
+                    pa,
+                    ga,
+                    g_alias[idx] if (has_per_element_alias and isinstance(g_alias[idx], (list, tuple, set, str, bytes, int, float, Decimal))) else None,
+                )
+                for idx, (pa, ga) in enumerate(zip(p_ans, g_ans))
+            )
+
+        if p_type == "table":
+            if not isinstance(p_ans, dict) or not isinstance(g_ans, dict):
+                return False
+
+            p_cols = p_ans.get("columns")
+            g_cols = g_ans.get("columns")
+            if not isinstance(p_cols, (list, tuple)) or not isinstance(g_cols, (list, tuple)):
+                return False
+            if [_norm_str(c) for c in p_cols] != [_norm_str(c) for c in g_cols]:
+                return False
+
+            p_rows = p_ans.get("rows")
+            g_rows = g_ans.get("rows")
+            if not isinstance(p_rows, (list, tuple)) or not isinstance(g_rows, (list, tuple)):
+                return False
+            if len(p_rows) != len(g_rows):
+                return False
+
+            if any(not isinstance(r, (list, tuple)) for r in p_rows):
+                return False
+            if any(not isinstance(r, (list, tuple)) for r in g_rows):
+                return False
+
+            has_per_row_alias = (
+                isinstance(g_alias, (list, tuple)) and len(g_alias) == len(g_rows)
+            )
+            used_gold = set()
+            for pr in p_rows:
+                matched_idx = None
+                for idx, gr in enumerate(g_rows):
+                    if idx in used_gold:
+                        continue
+                    if len(pr) != len(gr):
+                        continue
+                    # 1. So khớp trực tiếp toàn bộ ô trong dòng
+                    if all(_compare_cells(pc, gc) for pc, gc in zip(pr, gr)):
+                        matched_idx = idx
+                        break
+                    # 2. So khớp có hỗ trợ alias cho ô thực thể (mã khách hàng / mã sản phẩm)
+                    row_alias = (
+                        g_alias[idx]
+                        if (has_per_row_alias and isinstance(g_alias[idx], (list, tuple, set, str, bytes, int, float, Decimal)))
+                        else None
+                    )
+                    if row_alias is not None:
+                        row_matched = False
+                        for c_idx in range(len(gr)):
+                            if _compare_cells(pr[c_idx], gr[c_idx], row_alias):
+                                if all(_compare_cells(pr[i], gr[i]) for i in range(len(gr)) if i != c_idx):
+                                    row_matched = True
+                                    break
+                        if row_matched:
+                            matched_idx = idx
+                            break
+                if matched_idx is None:
+                    return False
+                used_gold.add(matched_idx)
+            return True
+
+        return False
+    except Exception:
+        return False
 
 
 def analyze_numerical_deviation(pred_ans: Any, gold_ans: Any, pred_type: str, gold_type: str) -> Dict[str, Any]:
@@ -1044,7 +1172,7 @@ def run_single_inspection(
         print(f"  • Nạp mô hình {args.model_id} (4-bit NF4)...")
         t0 = time.time()
         client = LLMClient(model_id=args.model_id, auto_load=True)
-        code_text = client.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=1024)
+        code_text = client.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=getattr(args, "max_new_tokens", 1536))
         gen_time_s = time.time() - t0
         latencies["llm_gen"] = gen_time_s * 1000
         print(f"  • Thời gian sinh mã : {gen_time_s:.2f}s ({latencies['llm_gen']:.1f}ms)")
@@ -1104,8 +1232,9 @@ def run_single_inspection(
                 schema_str=pruned_schema,
                 as_of_date=as_of_date,
                 retry_round=1,
+                temporal_text=format_temporal_for_prompt(temp_info),
             )
-            retry_code = client.generate_code(prompt=retry_user, system_prompt=retry_sys, max_new_tokens=1024)
+            retry_code = client.generate_code(prompt=retry_user, system_prompt=retry_sys, max_new_tokens=getattr(args, "max_new_tokens", 1536))
             r_res, r_err, r_ms = execute_solution(
                 code_text=retry_code,
                 biz_dir=data_root / biz_id,
@@ -1323,9 +1452,291 @@ def run_single_inspection(
     # Xuất Dashboard PNG trực quan
     chart_file = Path(args.chart_file) if args.chart_file else Path("reports/diagnostics") / f"{qid}_dashboard.png"
     render_diagnostic_dashboard(telemetry_payload, chart_file)
-    print(f"🖼️ Đã tạo Dashboard hình ảnh trực quan tại: {chart_file.resolve()}\n")
+    print(f"🖼️ Đã tạo Dashboard hình ảnh trực quan tại: {chart_file.resolve()}")
+
+    # Xuất Báo cáo Markdown (.md) chi tiết cho câu hỏi
+    md_file = Path(args.md_file) if getattr(args, "md_file", None) else Path("reports/diagnostics") / f"{qid}_report.md"
+    render_single_markdown_report(telemetry_payload, md_file)
+    print(f"📝 Đã xuất Báo cáo Markdown chi tiết tại: {md_file.resolve()}\n")
 
     return telemetry_payload
+
+
+def render_single_markdown_report(telemetry: Dict[str, Any], md_path: Path):
+    """Xuất báo cáo phân tích chuyên sâu (.md) cho 1 câu hỏi (Single Inspection Mode)."""
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    qid = telemetry.get("question_id", "unknown")
+    biz_id = telemetry.get("business_id", "unknown")
+    as_of = telemetry.get("as_of_date", "")
+    orig_q = telemetry.get("original_question", "")
+    norm_q = telemetry.get("normalized_question", "")
+    intent = telemetry.get("intent", "")
+    t_desc = telemetry.get("temporal_desc", "")
+    t_range = telemetry.get("temporal_range", [])
+    entities = telemetry.get("entity_matches", [])
+    pred_val = telemetry.get("predicted_answer")
+    pred_type = telemetry.get("predicted_type", "abstain")
+    gold_val = telemetry.get("gold_answer")
+    gold_type = telemetry.get("gold_type", "unknown")
+    eval_label = telemetry.get("eval_status_label", "")
+    eval_score = telemetry.get("eval_score", 0.0)
+    conf = telemetry.get("confidence_score", 0.0)
+    tau = telemetry.get("threshold_tau_star", 0.50)
+    code_text = telemetry.get("code_text", "")
+    dev = telemetry.get("deviation_analysis") or {}
+    recs = telemetry.get("ai_recommendations") or []
+    traces = telemetry.get("self_correction_trace") or []
+
+    lines = [
+        f"# Báo cáo Kiểm thử Chuyên sâu Câu hỏi `{qid}` (`{biz_id}`)",
+        "",
+        "## 1. Thông tin Câu hỏi & Ngữ cảnh Neo dữ liệu (Grounding)",
+        f"- **Mã câu hỏi (`question_id`)**: `{qid}`",
+        f"- **Doanh nghiệp (`business_id`)**: `{biz_id}`",
+        f"- **Ngày tham chiếu (`as_of_date`)**: `{as_of}`",
+        f"- **Câu hỏi gốc**: {orig_q}",
+        f"- **Câu hỏi chuẩn hóa**: {norm_q}",
+        f"- **Ý định (`intent`)**: `{intent}`",
+        f"- **Mốc thời gian giải mã**: {t_desc} (`{t_range}`)",
+        f"- **Thực thể khớp trong CSDL**: {', '.join(f'`{e}`' for e in entities) if entities else '*(Không có)*'}",
+        "",
+        "## 2. Kết quả Dự đoán & Chấm điểm Penalized Accuracy (PA)",
+        f"- **Đáp án Dự đoán (Pred)**: `{pred_val}` (Kiểu: `{pred_type}`)",
+        f"- **Đáp án Chuẩn (Gold)**: `{gold_val}` (Kiểu: `{gold_type}`)",
+        f"- **Kết luận Đánh giá**: **{eval_label}** (Điểm PA: `{eval_score:+.1f}`)",
+        f"- **Điểm Tự tin Hiệu chuẩn ($C$)**: `{conf:.2f}` (Ngưỡng $\\tau^* = {tau:.2f}$)",
+    ]
+    if dev.get("is_applicable"):
+        lines.append(f"- **Sai số số học**: Tuyệt đối = `{dev.get('abs_diff')}` | Phần trăm = `{dev.get('pct_diff')}%`")
+        if dev.get("diagnostic_hypothesis"):
+            lines.append(f"- **Chẩn đoán nguyên nhân sai lệch**: {dev.get('diagnostic_hypothesis')}")
+
+    lines.extend([
+        "",
+        "## 3. Phân tích Nguyên nhân & Khuyến nghị Cải tiến",
+    ])
+    for r in recs:
+        lines.append(f"- {r}")
+
+    if traces:
+        lines.extend(["", "## 4. Lịch sử Tự sửa lỗi (Self-Correction Trace)"])
+        for tr in traces:
+            lines.append(f"- {tr}")
+
+    lines.extend([
+        "",
+        "## 5. Mã nguồn Python Sinh ra (`solution(data)`)",
+        "```python",
+        code_text.strip() if code_text else "# Không có code",
+        "```",
+        "",
+    ])
+    md_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def render_markdown_evaluation_report(
+    metrics: Dict[str, Any],
+    eval_qids: List[str],
+    log_dir: Path,
+    gold_map: Dict[str, Any],
+    written_records: Dict[str, Any],
+    md_path: Path,
+    model_id: str = "",
+):
+    """
+    Xuất Báo cáo Đánh giá Toàn diện định dạng Markdown (.md) cho Batch Evaluation:
+    - Tổng hợp điểm PA, Accuracy, Coverage, phân rã theo kiểu đáp án.
+    - Thống kê nguyên nhân lỗi (Error & Abstention Taxonomy).
+    - Báo cáo chi tiết từng câu hỏi: Dự đoán vs Chuẩn, điểm tự tin, nguyên nhân lỗi, chẩn đoán sai lệch và code.
+    """
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    eval_total = metrics.get("total", len(eval_qids))
+    correct = metrics.get("correct", 0)
+    wrong = metrics.get("wrong", 0)
+    abstain = metrics.get("abstain", 0)
+    pa_score = metrics.get("pa", 0.0)
+    acc_score = metrics.get("accuracy", 0.0)
+    coverage = metrics.get("coverage", 0.0)
+    total_time = metrics.get("total_time_sec", 0.0)
+    breakdown = metrics.get("breakdown", {})
+
+    lines = [
+        "# 📊 Báo cáo Đánh giá Toàn diện Hệ thống DataMate (Batch Evaluation Report)",
+        "",
+        f"- **Mô hình sử dụng (`model_id`)**: `{model_id}`",
+        f"- **Tổng số câu hỏi đánh giá**: `{eval_total}` câu",
+        f"- **Tổng thời gian thực thi**: `{total_time:.2f}s` (Trung bình `{total_time/max(1, eval_total):.2f}s/câu`)",
+        "",
+        "## 1. Tổng hợp Điểm Penalized Accuracy (PA)",
+        "",
+        "| Chỉ số Đánh giá | Giá trị | Tỷ lệ / Ghi chú |",
+        "| :--- | :---: | :--- |",
+        f"| **Penalized Accuracy (PA)** | **`{pa_score:+.4f}`** | Công thức: $(Correct - Wrong) / N$ |",
+        f"| **Số câu Đúng (+1 điểm)** | `{correct}` | `{100*correct/max(1, eval_total):.1f}%` |",
+        f"| **Số câu Sai (-1 điểm)** | `{wrong}` | `{100*wrong/max(1, eval_total):.1f}%` |",
+        f"| **Số câu Từ chối / Abstain (0 điểm)** | `{abstain}` | `{100*abstain/max(1, eval_total):.1f}%` |",
+        f"| **Accuracy (khi trả lời)** | `{acc_score*100:.1f}%` | $Correct / (Correct + Wrong)$ |",
+        f"| **Coverage (Độ bao phủ trả lời)** | `{coverage*100:.1f}%` | $(Correct + Wrong) / N$ |",
+        "",
+        "## 2. Phân rã Kết quả theo Kiểu Đáp án (Answer Type Breakdown)",
+        "",
+        "| Kiểu đáp án (`type`) | Tổng số câu | Đúng (+1) | Sai (-1) | Abstain (0) | Điểm PA | Độ trễ TB (ms) |",
+        "| :--- | :---: | :---: | :---: | :---: | :---: | :---: |",
+    ]
+
+    for t in sorted(breakdown.keys()):
+        st = breakdown[t]
+        lines.append(
+            f"| `{t}` | {st['total']} | {st['correct']} | {st['wrong']} | {st['abstain']} | **`{st['pa']:+.3f}`** | {st.get('avg_latency_ms', 0.0):.1f} |"
+        )
+
+    # Đọc log chi tiết từng câu để thống kê nguyên nhân lỗi & lập báo cáo từng câu
+    per_question_logs: List[Dict[str, Any]] = []
+    error_reasons: Dict[str, int] = defaultdict(int)
+
+    for qid in eval_qids:
+        log_file = log_dir / f"{qid}.json"
+        if log_file.exists():
+            try:
+                log_data = json.loads(log_file.read_text(encoding="utf-8"))
+                per_question_logs.append(log_data)
+                err_str = log_data.get("error") or (log_data.get("extra_log") or {}).get("error")
+                ans_obj = log_data.get("answer") or {}
+                reason_str = ans_obj.get("reason")
+                if err_str:
+                    short_err = str(err_str).split("\n")[0][:90]
+                    error_reasons[f"Runtime/Sanity Error: {short_err}"] += 1
+                elif ans_obj.get("type") == "abstain" and reason_str:
+                    error_reasons[f"Abstention Gate: {reason_str}"] += 1
+                elif (log_data.get("extra_log") or {}).get("match_result", {}).get("eval_score") == -1.0:
+                    hyp = ((log_data.get("extra_log") or {}).get("deviation_analysis") or {}).get("diagnostic_hypothesis")
+                    error_reasons[f"Sai lệch logic/số học: {hyp or 'Chưa khớp đáp án chuẩn'}"] += 1
+            except Exception:
+                pass
+
+    if error_reasons:
+        lines.extend([
+            "",
+            "## 3. Thống kê Nguyên nhân Lỗi & Lý do Từ chối (Error & Abstention Taxonomy)",
+            "",
+            "| Nguyên nhân / Chẩn đoán | Số lượng câu |",
+            "| :--- | :---: |",
+        ])
+        for r_key, r_cnt in sorted(error_reasons.items(), key=lambda x: x[1], reverse=True):
+            lines.append(f"| {r_key} | `{r_cnt}` |")
+
+    lines.extend([
+        "",
+        "---",
+        "",
+        "## 4. Báo cáo Phân tích Chi tiết Từng Câu hỏi (Per-Question Analysis)",
+        "",
+    ])
+
+    for idx, qid in enumerate(eval_qids, 1):
+        log_file = log_dir / f"{qid}.json"
+        log_obj = {}
+        if log_file.exists():
+            try:
+                log_obj = json.loads(log_file.read_text(encoding="utf-8"))
+            except Exception:
+                log_obj = {}
+
+        extra = log_obj.get("extra_log") or {}
+        biz_id = extra.get("business_id", "unknown")
+        as_of = extra.get("as_of_date", "")
+        orig_q = extra.get("original_question", "")
+        norm_q = extra.get("normalized_question", orig_q)
+        intent = extra.get("intent", "")
+        temp_info = extra.get("temporal_info") or {}
+        entities = extra.get("entity_matches") or []
+        sel_tables = extra.get("selected_tables") or log_obj.get("selected_tables") or []
+        sel_cols = extra.get("selected_columns") or log_obj.get("selected_columns") or []
+        conf = log_obj.get("confidence", extra.get("confidence", 0.0))
+        sc_count = log_obj.get("self_correction_count", extra.get("self_correction_count", 0))
+        sc_trace = extra.get("self_correction_trace") or []
+        err_msg = log_obj.get("error") or extra.get("error")
+        code_str = log_obj.get("code") or extra.get("code") or ""
+        dev = extra.get("deviation_analysis") or {}
+        g_eval = extra.get("grounding_eval") or {}
+
+        pred_item = written_records.get(qid, log_obj.get("answer") or {"type": "abstain", "answer": None})
+        gold_item = gold_map.get(qid, extra.get("gold_answer") or {})
+        p_type = pred_item.get("type", "abstain")
+        p_val = pred_item.get("answer")
+        g_type = gold_item.get("type", "unknown")
+        g_val = gold_item.get("answer")
+
+        match_res = extra.get("match_result") or {}
+        status_label = match_res.get("eval_status_label", "")
+        score_val = match_res.get("eval_score")
+        if score_val is None and gold_item:
+            if p_type == "abstain":
+                score_val = 0.0
+                status_label = "TỪ CHỐI TRẢ LỜI (ABSTAIN - 0.0)"
+            elif compare_single_answer(pred_item, gold_item):
+                score_val = 1.0
+                status_label = "HOÀN TOÀN TRÙNG KHỚP (CORRECT - +1.0)"
+            else:
+                score_val = -1.0
+                status_label = "SAI LỆCH ĐÁP ÁN (WRONG - -1.0)"
+
+        icon = "✅" if score_val == 1.0 else ("🛡️" if score_val == 0.0 else "❌")
+        score_str = f"{score_val:+.1f}" if isinstance(score_val, (int, float)) else "N/A"
+
+        lines.extend([
+            f"### {icon} Câu {idx}: `{qid}` (`{biz_id}`) — Điểm PA: `{score_str}` ({status_label})",
+            f"- **Câu hỏi gốc**: {orig_q}",
+        ])
+        if norm_q and norm_q != orig_q:
+            lines.append(f"- **Câu hỏi mở rộng viết tắt**: {norm_q}")
+        lines.extend([
+            f"- **Ngữ cảnh**: `as_of_date = {as_of}` | `intent = {intent}` | Khoảng ngày: `{temp_info.get('start_date')} -> {temp_info.get('end_date')}` ({temp_info.get('description', '')})",
+            f"- **Thực thể khớp (Entity Linking)**: {', '.join(f'`{e}`' for e in entities) if entities else '*(Không có)*'}",
+            f"- **Bảng & Cột truy vấn**: Bảng={sel_tables if sel_tables else '[]'} | Cột={sel_cols[:8] if sel_cols else '[]'}",
+            f"- **Dự đoán (Pred)**: `{p_val}` (Kiểu: `{p_type}`) | **Đáp án Chuẩn (Gold)**: `{g_val}` (Kiểu: `{g_type}`)",
+            f"- **Độ tin cậy ($C$)**: `{conf:.2f}` | **Số vòng tự sửa lỗi (Self-Correction)**: `{sc_count}`",
+        ])
+
+        if g_eval:
+            lines.append(
+                f"- **Độ bám dữ liệu (Grounding)**: Entity Coverage=`{g_eval.get('entity_coverage', 1.0)*100:.0f}%` (Phạt `-{g_eval.get('entity_penalty', 0.0):.2f}`), "
+                f"Temporal Coverage=`{g_eval.get('temporal_coverage', 1.0)*100:.0f}%` (Phạt `-{g_eval.get('temporal_penalty', 0.0):.2f}`)"
+            )
+
+        if err_msg:
+            lines.append(f"- **⚠️ Nguyên nhân Lỗi / Lý do chặn**: `{err_msg}`")
+        if pred_item.get("reason"):
+            lines.append(f"- **🛡️ Lý do Cổng Abstention**: `{pred_item.get('reason')}`")
+        if dev.get("is_applicable") and score_val == -1.0:
+            lines.append(
+                f"- **🔍 Phân tích Độ lệch Số học**: Lệch tuyệt đối = `{dev.get('abs_diff')}` ({dev.get('pct_diff')}%) — "
+                f"**Chẩn đoán**: *{dev.get('diagnostic_hypothesis') or 'Sai lệch logic lọc hoặc cột tính toán'}*"
+            )
+
+        if sc_trace:
+            lines.append("- **🔄 Nhật ký Tự sửa lỗi (Self-Correction)**:")
+            for tr in sc_trace:
+                if isinstance(tr, dict):
+                    lines.append(
+                        f"  - Vòng {tr.get('round')}: Lỗi đầu vào `{tr.get('input_error')}` -> "
+                        f"Kết quả thử lại: `{'Thành công' if tr.get('success') else (tr.get('retry_error') or tr.get('sanity_error'))}`"
+                    )
+                else:
+                    lines.append(f"  - {tr}")
+
+        lines.extend([
+            "",
+            "<details><summary><b>Xem mã nguồn Python sinh ra (Code)</b></summary>",
+            "",
+            "```python",
+            code_str.strip() if code_str else "# Không có mã nguồn",
+            "```",
+            "</details>",
+            "",
+        ])
+
+    md_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 # ==============================================================================
@@ -1337,7 +1748,13 @@ def run_batch_evaluation(args: argparse.Namespace):
     cfg = load_config(args.config) if args.config else load_config()
 
     data_dir = Path(args.data_dir)
-    questions_path = Path(args.questions_file) if args.questions_file else (data_dir / "questions.jsonl")
+    if getattr(args, "batch_file", None):
+        questions_path = Path(args.batch_file)
+        args.no_fill_abstain = True
+    elif args.questions_file:
+        questions_path = Path(args.questions_file)
+    else:
+        questions_path = data_dir / "questions.jsonl"
     data_root = data_dir / "data"
 
     if not questions_path.exists():
@@ -1361,6 +1778,13 @@ def run_batch_evaluation(args: argparse.Namespace):
     rulebook_content = load_rulebook(str(data_dir))
 
     target_questions = all_questions
+    if getattr(args, "batch_index", None) is not None and 1 <= args.batch_index <= 6:
+        bs = getattr(args, "batch_size", None) or 20
+        start_idx = (args.batch_index - 1) * bs
+        end_idx = start_idx + bs
+        target_questions = all_questions[start_idx:end_idx]
+        args.no_fill_abstain = True
+
     if args.biz:
         target_questions = [q for q in target_questions if q.get("business_id") == args.biz]
     if args.id:
@@ -1415,51 +1839,147 @@ def run_batch_evaluation(args: argparse.Namespace):
     t_start_all = time.time()
 
     try:
+        current_biz_id: Optional[str] = None
         for idx, q in enumerate(active_questions, start=1):
             qid = q["id"]
             biz_id = q["business_id"]
             question_text = q["question"]
             as_of_date = q["as_of_date"]
 
+            # Giải phóng RAM của shop cũ khi chuyển sang shop tiếp theo (do câu hỏi đã được group_by_business)
+            if current_biz_id is not None and biz_id != current_biz_id:
+                old_entry = _BUSINESS_CACHE.pop(current_biz_id, None)
+                if old_entry and old_entry[1] is not None:
+                    try:
+                        old_entry[1].close()
+                    except Exception:
+                        pass
+            current_biz_id = biz_id
+
             print(f"\n[{idx}/{len(active_questions)}] Câu hỏi ID: {qid} (Shop: {biz_id})")
             print(f"Nội dung: \"{question_text}\" | as_of_date: {as_of_date}")
 
+            # Bộ theo dõi độ trễ từng module (Telemetry Latency Breakdown)
+            mod_latencies: Dict[str, float] = {}
+
+            # Bước 1: Nạp & Cache Dữ liệu Shop
+            t_ingest = time.perf_counter()
             data_dict, con, schema_str, bd, shop_meta, candidates, is_cache = get_cached_business_data(biz_id, data_root)
+            mod_latencies["ingest_schema"] = round((time.perf_counter() - t_ingest) * 1000, 2)
+
             if not data_dict:
                 sub_ans = make_abstain(f"Data Not Found: {schema_str}")
-                writer.write(question_id=qid, answer=sub_ans, code="", raw_result=None, error=schema_str, elapsed_ms=0, confidence=0.0)
+                gold_record = gold_map.get(qid) if has_gold else None
+                is_match = False
+                dev_analysis = {"is_applicable": False, "abs_diff": None, "pct_diff": None, "diagnostic_hypothesis": None}
+                early_telemetry = {
+                    "question_id": qid,
+                    "business_id": biz_id,
+                    "as_of_date": as_of_date,
+                    "original_question": question_text,
+                    "normalized_question": question_text,
+                    "expanded_abbreviations": {},
+                    "intent": "unknown",
+                    "temporal_info": {},
+                    "entity_matches": [],
+                    "pruned_schema": "",
+                    "code": "",
+                    "raw_result": None,
+                    "answer": {"id": qid, **sub_ans},
+                    "gold_answer": {"answer": gold_record.get("answer"), "type": gold_record.get("type"), "alias": gold_record.get("alias", [])} if gold_record else None,
+                    "match_result": {"is_match": is_match, "eval_score": 0.0, "eval_status_label": "TỪ CHỐI TRẢ LỜI (ABSTAIN - 0.0)"},
+                    "deviation_analysis": dev_analysis,
+                    "confidence": 0.0,
+                    "threshold_tau_star": args.tau_star,
+                    "unanswerable_source": "none",
+                    "selected_tables": [],
+                    "selected_columns": [],
+                    "grounding_eval": {},
+                    "elapsed_ms": int(mod_latencies["ingest_schema"]),
+                    "latency_breakdown_ms": mod_latencies,
+                    "self_correction_count": 0,
+                    "self_correction_trace": [],
+                    "error": str(schema_str),
+                }
+                writer.write(
+                    question_id=qid,
+                    answer=sub_ans,
+                    code="",
+                    raw_result=None,
+                    error=schema_str,
+                    elapsed_ms=int(mod_latencies["ingest_schema"]),
+                    confidence=0.0,
+                    extra_log=early_telemetry,
+                    write_log=True,
+                )
                 written_records[qid] = {"id": qid, **sub_ans}
-                latencies[qid] = 0
+                latencies[qid] = int(mod_latencies["ingest_schema"])
                 continue
 
-            # Lá chắn 1: Feasibility Gate
+            # Bước 2: Lá chắn Feasibility Gate
+            t_feas = time.perf_counter()
             is_feasible, unans_reason = check_feasibility(question_text, as_of_date, shop_meta)
+            mod_latencies["feasibility"] = round((time.perf_counter() - t_feas) * 1000, 2)
+
             if not is_feasible:
                 print(f"  🛡️ [Feasibility Gate] Bất khả thi ({unans_reason}) -> Trả về 'unanswerable'")
                 sub_ans = {"type": "unanswerable", "answer": None}
+                gold_record = gold_map.get(qid) if has_gold else None
+                is_match = compare_single_answer(sub_ans, gold_record) if gold_record else None
+                eval_score = 1.0 if is_match else (-1.0 if gold_record else None)
+                eval_label = "HOÀN TOÀN TRÙNG KHỚP (CORRECT - +1.0)" if is_match else ("SAI LỆCH ĐÁP ÁN (WRONG - -1.0)" if gold_record else "CHƯA CÓ ĐÁP ÁN CHUẨN")
+                dev_analysis = analyze_numerical_deviation(None, gold_record.get("answer") if gold_record else None, "unanswerable", gold_record.get("type", "unknown") if gold_record else "unknown")
+                total_lat = int(mod_latencies["ingest_schema"] + mod_latencies["feasibility"])
+
+                gate_telemetry = {
+                    "question_id": qid,
+                    "business_id": biz_id,
+                    "as_of_date": as_of_date,
+                    "original_question": question_text,
+                    "normalized_question": question_text,
+                    "expanded_abbreviations": {},
+                    "intent": "unanswerable_gate",
+                    "temporal_info": {},
+                    "entity_matches": [],
+                    "pruned_schema": "",
+                    "code": "# Feasibility Gate: Unanswerable detected deterministically",
+                    "raw_result": "unanswerable",
+                    "answer": {"id": qid, **sub_ans},
+                    "gold_answer": {"answer": gold_record.get("answer"), "type": gold_record.get("type"), "alias": gold_record.get("alias", [])} if gold_record else None,
+                    "match_result": {"is_match": is_match, "eval_score": eval_score, "eval_status_label": eval_label},
+                    "deviation_analysis": dev_analysis,
+                    "confidence": 1.0,
+                    "threshold_tau_star": args.tau_star,
+                    "unanswerable_source": "gate",
+                    "unanswerable_reason": unans_reason,
+                    "selected_tables": [],
+                    "selected_columns": [],
+                    "grounding_eval": {},
+                    "elapsed_ms": total_lat,
+                    "latency_breakdown_ms": mod_latencies,
+                    "self_correction_count": 0,
+                    "self_correction_trace": [],
+                    "error": None,
+                }
                 writer.write(
                     question_id=qid,
                     answer=sub_ans,
                     code="# Feasibility Gate: Unanswerable detected deterministically",
                     raw_result="unanswerable",
                     error=None,
-                    elapsed_ms=0,
+                    elapsed_ms=total_lat,
                     confidence=1.0,
                     unanswerable_source="gate",
+                    extra_log=gate_telemetry,
+                    write_log=True,
                 )
                 written_records[qid] = {"id": qid, **sub_ans}
-                latencies[qid] = 0
+                latencies[qid] = total_lat
                 continue
 
-            if args.dry_run or (not args.with_llm and llm is None):
-                sub_ans = make_abstain("Dry Run Mode")
-                writer.write(question_id=qid, answer=sub_ans, code="", raw_result=None, error=None, elapsed_ms=0, confidence=0.0)
-                written_records[qid] = {"id": qid, **sub_ans}
-                latencies[qid] = 0
-                continue
-
-            # Tiền xử lý & Entity Linking
-            normalized_q, _ = explain_and_expand_abbreviations(question_text)
+            # Bước 3: Tiền xử lý & Entity Linking
+            t_ground = time.perf_counter()
+            normalized_q, replaced_abbr = explain_and_expand_abbreviations(question_text)
             intent = classify_intent(normalized_q)
             cal_str = str(data_dir / "calendar.csv") if (data_dir / "calendar.csv").exists() else None
             temp_info = resolve_temporal_context(normalized_q, as_of_date, calendar_path=cal_str)
@@ -1471,7 +1991,10 @@ def run_batch_evaluation(args: argparse.Namespace):
                 question=normalized_q,
                 entity_matches=entity_matches,
             )
+            mod_latencies["grounding"] = round((time.perf_counter() - t_ground) * 1000, 2)
 
+            # Bước 4: Lắp ráp Prompt
+            t_prompt = time.perf_counter()
             sys_prompt, user_prompt = build_prompt(
                 schema_str=pruned_schema,
                 as_of_date=as_of_date,
@@ -1482,12 +2005,86 @@ def run_batch_evaluation(args: argparse.Namespace):
                 entity_matches=entity_matches,
                 return_messages=True,
             )
+            mod_latencies["prompt_build"] = round((time.perf_counter() - t_prompt) * 1000, 2)
 
-            t0 = time.time()
+            # Chế độ Dry-Run hoặc không có LLM
+            if args.dry_run or (not args.with_llm and llm is None):
+                sub_ans = make_abstain("Dry Run Mode")
+                mod_latencies["llm_gen"] = 0.0
+                mod_latencies["sandbox_exec"] = 0.0
+                mod_latencies["normalizer"] = 0.0
+                total_lat = int(sum(mod_latencies.values()))
+
+                gold_record = gold_map.get(qid) if has_gold else None
+                is_match = False
+                eval_score = 0.0
+                eval_label = "TỪ CHỐI TRẢ LỜI (ABSTAIN - 0.0)"
+                dev_analysis = {"is_applicable": False, "abs_diff": None, "pct_diff": None, "diagnostic_hypothesis": None}
+
+                dry_telemetry = {
+                    "question_id": qid,
+                    "business_id": biz_id,
+                    "as_of_date": as_of_date,
+                    "original_question": question_text,
+                    "normalized_question": normalized_q,
+                    "expanded_abbreviations": replaced_abbr,
+                    "intent": intent,
+                    "temporal_info": {
+                        "description": temp_info.get("description", ""),
+                        "start_date": temp_info.get("start_date"),
+                        "end_date": temp_info.get("end_date"),
+                    },
+                    "entity_matches": [getattr(m, "matched_value", str(m)) for m in entity_matches],
+                    "pruned_schema": pruned_schema,
+                    "code": "def solution(data):\n    # Dry run mock code\n    return 'abstain'",
+                    "raw_result": "abstain",
+                    "answer": {"id": qid, **sub_ans},
+                    "gold_answer": {
+                        "answer": gold_record.get("answer") if gold_record else None,
+                        "type": gold_record.get("type") if gold_record else None,
+                        "alias": gold_record.get("alias", []) if gold_record else [],
+                    } if gold_record else None,
+                    "match_result": {
+                        "is_match": is_match,
+                        "eval_score": eval_score,
+                        "eval_status_label": eval_label,
+                    },
+                    "deviation_analysis": dev_analysis,
+                    "confidence": 0.0,
+                    "threshold_tau_star": args.tau_star,
+                    "unanswerable_source": "none",
+                    "selected_tables": [],
+                    "selected_columns": [],
+                    "grounding_eval": {},
+                    "elapsed_ms": total_lat,
+                    "latency_breakdown_ms": mod_latencies,
+                    "self_correction_count": 0,
+                    "self_correction_trace": [],
+                    "error": None,
+                }
+                writer.write(
+                    question_id=qid,
+                    answer=sub_ans,
+                    code="def solution(data):\n    # Dry run mock code\n    return 'abstain'",
+                    raw_result=None,
+                    error=None,
+                    elapsed_ms=total_lat,
+                    confidence=0.0,
+                    extra_log=dry_telemetry,
+                    write_log=True,
+                )
+                written_records[qid] = {"id": qid, **sub_ans}
+                latencies[qid] = total_lat
+                continue
+
+            # Bước 5: LLM Sinh mã
+            t_llm = time.perf_counter()
             assert llm is not None
-            code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=1024)
-            gen_sec = round(time.time() - t0, 2)
+            code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=getattr(args, "max_new_tokens", 1536))
+            mod_latencies["llm_gen"] = round((time.perf_counter() - t_llm) * 1000, 2)
 
+            # Bước 6: Thực thi Sandbox & Self-Correction tối đa 2 vòng
+            t_exec = time.perf_counter()
             biz_dir = data_root / biz_id
             raw_result, exec_err, exec_ms, err_type, unans_source = execute_solution(
                 code_text=code_text,
@@ -1500,9 +2097,9 @@ def run_batch_evaluation(args: argparse.Namespace):
                 return_details=True,
             )
 
-            # Self-Correction tối đa 2 vòng
             max_self_corrections = 2
             self_correction_count = 0
+            self_correction_trace: List[Dict[str, Any]] = []
             sanity_err = None
 
             if not exec_err:
@@ -1512,11 +2109,16 @@ def run_batch_evaluation(args: argparse.Namespace):
                     sanity_err = "Dữ liệu shop CÓ ĐỦ số liệu (KHÔNG ĐƯỢC trả về unanswerable). Hãy tính toán cụ thể."
                 elif not is_sane:
                     sanity_err = sanity_reason
+                else:
+                    sem_eval1 = evaluate_semantic_rule_compliance(code_text=code_text, question=normalized_q, sub_ans=sub_ans_cand)
+                    if not sem_eval1.get("is_compliant", True):
+                        sanity_err = "; ".join(sem_eval1.get("violations", []))
 
             while (exec_err or sanity_err) and self_correction_count < max_self_corrections:
                 self_correction_count += 1
-                print(f"  🔄 [Self-Correction Vòng {self_correction_count}/{max_self_corrections}] Đang sửa...")
-                err_feedback = f"Lỗi: {exec_err or sanity_err}"
+                current_err = exec_err or sanity_err
+                print(f"  🔄 [Self-Correction Vòng {self_correction_count}/{max_self_corrections}] Đang sửa: {current_err}")
+                err_feedback = f"Lỗi: {current_err}"
                 retry_sys, retry_user = build_retry_prompt(
                     question=normalized_q,
                     failed_code=code_text,
@@ -1524,10 +2126,12 @@ def run_batch_evaluation(args: argparse.Namespace):
                     schema_str=pruned_schema,
                     as_of_date=as_of_date,
                     retry_round=self_correction_count,
+                    temporal_text=format_temporal_for_prompt(temp_info),
                 )
-                t_retry = time.time()
-                retry_code = llm.generate_code(prompt=retry_user, system_prompt=retry_sys, max_new_tokens=1024)
-                gen_sec = round(gen_sec + (time.time() - t_retry), 2)
+                t_retry_gen = time.perf_counter()
+                retry_code = llm.generate_code(prompt=retry_user, system_prompt=retry_sys, max_new_tokens=getattr(args, "max_new_tokens", 1536))
+                mod_latencies["llm_gen"] = round(mod_latencies["llm_gen"] + (time.perf_counter() - t_retry_gen) * 1000, 2)
+
                 raw_retry, err_retry, ms_retry, type_retry, src_retry = execute_solution(
                     code_text=retry_code,
                     biz_dir=biz_dir,
@@ -1539,25 +2143,45 @@ def run_batch_evaluation(args: argparse.Namespace):
                     return_details=True,
                 )
                 exec_ms += ms_retry
+
+                round_record = {
+                    "round": self_correction_count,
+                    "input_error": str(current_err),
+                    "retry_code": retry_code,
+                    "retry_error": str(err_retry) if err_retry else None,
+                    "retry_raw_result": _clean_for_json(raw_retry),
+                    "execution_ms": round(ms_retry, 2),
+                    "success": False,
+                }
+
                 if not err_retry:
                     sub_ans_cand2 = normalize_output(raw_retry, question=normalized_q, code_text=retry_code)
                     is_sane2, sanity_reason2 = check_result_sanity(sub_ans_cand2, question=normalized_q, code_text=retry_code)
                     if not is_sane2 or raw_retry == "unanswerable":
                         sanity_err = sanity_reason2 or "Vẫn trả về unanswerable"
                         code_text = retry_code
+                        round_record["sanity_error"] = str(sanity_err)
                     else:
                         code_text = retry_code
                         raw_result = raw_retry
                         exec_err = None
                         sanity_err = None
+                        round_record["success"] = True
+                        self_correction_trace.append(round_record)
                         print(f"  ✅ [Self-Correction] Vòng {self_correction_count} thành công!")
                         break
                 else:
                     code_text = retry_code
                     exec_err = err_retry
 
-            # Chuẩn hóa & Cổng Abstention
+                self_correction_trace.append(round_record)
+
+            mod_latencies["sandbox_exec"] = round((time.perf_counter() - t_exec) * 1000, 2)
+
+            # Bước 7: Chuẩn hóa & Cổng Abstention
+            t_norm = time.perf_counter()
             confidence = 0.0
+            grounding_eval_res = {}
             if exec_err:
                 sub_ans = make_abstain(f"Runtime Error: {exec_err}")
             elif sanity_err:
@@ -1589,8 +2213,80 @@ def run_batch_evaluation(args: argparse.Namespace):
                     unanswerable_source=unans_source,
                 )
 
-            total_lat = int(gen_sec * 1000 + exec_ms)
+            mod_latencies["normalizer"] = round((time.perf_counter() - t_norm) * 1000, 2)
+            total_lat = int(sum(mod_latencies.values()))
+
+            # Bước 8: Đối chiếu Đáp án Chuẩn (Gold Comparison) & Phân tích Sai lệch
+            gold_record = gold_map.get(qid) if has_gold else None
+            is_match = None
+            eval_score = None
+            eval_label = "CHƯA CÓ ĐÁP ÁN CHUẨN"
+            dev_analysis = {"is_applicable": False, "abs_diff": None, "pct_diff": None, "diagnostic_hypothesis": None}
+
+            if gold_record:
+                is_match = compare_single_answer(sub_ans, gold_record)
+                if sub_ans.get("type") == "abstain":
+                    eval_score = 0.0
+                    eval_label = "TỪ CHỐI TRẢ LỜI (ABSTAIN - 0.0)"
+                elif is_match:
+                    eval_score = 1.0
+                    eval_label = "HOÀN TOÀN TRÙNG KHỚP (CORRECT - +1.0)"
+                else:
+                    eval_score = -1.0
+                    eval_label = "SAI LỆCH ĐÁP ÁN (WRONG - -1.0)"
+
+                dev_analysis = analyze_numerical_deviation(
+                    pred_ans=sub_ans.get("answer"),
+                    gold_ans=gold_record.get("answer"),
+                    pred_type=sub_ans.get("type", "unknown"),
+                    gold_type=gold_record.get("type", "unknown"),
+                )
+
             sel_tables, sel_cols, _ = extract_referenced_tables_and_columns(code_text, list(data_dict.keys()))
+
+            # Lắp ráp Payload Telemetry Đầy đủ theo Yêu cầu R2
+            enriched_telemetry = {
+                "question_id": qid,
+                "business_id": biz_id,
+                "as_of_date": as_of_date,
+                "original_question": question_text,
+                "normalized_question": normalized_q,
+                "expanded_abbreviations": replaced_abbr,
+                "intent": intent,
+                "temporal_info": {
+                    "description": temp_info.get("description", ""),
+                    "start_date": temp_info.get("start_date"),
+                    "end_date": temp_info.get("end_date"),
+                },
+                "entity_matches": [getattr(m, "matched_value", str(m)) for m in entity_matches],
+                "pruned_schema": pruned_schema,
+                "code": code_text,
+                "raw_result": _clean_for_json(raw_result),
+                "answer": {"id": qid, **sub_ans},
+                "gold_answer": {
+                    "answer": gold_record.get("answer") if gold_record else None,
+                    "type": gold_record.get("type") if gold_record else None,
+                    "alias": gold_record.get("alias", []) if gold_record else [],
+                } if gold_record else None,
+                "match_result": {
+                    "is_match": is_match,
+                    "eval_score": eval_score,
+                    "eval_status_label": eval_label,
+                },
+                "deviation_analysis": dev_analysis,
+                "confidence": confidence,
+                "threshold_tau_star": args.tau_star,
+                "unanswerable_source": unans_source,
+                "selected_tables": sel_tables,
+                "selected_columns": sel_cols,
+                "grounding_eval": grounding_eval_res,
+                "elapsed_ms": total_lat,
+                "latency_breakdown_ms": mod_latencies,
+                "self_correction_count": self_correction_count,
+                "self_correction_trace": self_correction_trace,
+                "error": str(exec_err or sanity_err) if (exec_err or sanity_err) else None,
+            }
+
             writer.write(
                 question_id=qid,
                 answer=sub_ans,
@@ -1603,17 +2299,30 @@ def run_batch_evaluation(args: argparse.Namespace):
                 selected_tables=sel_tables,
                 selected_columns=sel_cols,
                 self_correction_count=self_correction_count,
+                extra_log=enriched_telemetry,
+                write_log=True,
             )
             written_records[qid] = {"id": qid, **sub_ans}
             latencies[qid] = total_lat
             print(f"  👉 Đáp án: {sub_ans.get('answer')} (Type: {sub_ans.get('type')}, C={confidence:.2f})")
+            if gold_record:
+                print(f"  👉 Đánh giá: {eval_label} (Gold: {gold_record.get('answer')})")
 
         # Điền abstain cho các câu còn lại nếu không dùng --no_fill_abstain
         if not args.no_fill_abstain:
             for q in all_questions:
                 if q["id"] not in active_qids:
                     abstain_ans = make_abstain("Default Abstain")
-                    writer.write(question_id=q["id"], answer=abstain_ans, code="", raw_result=None, error=None, elapsed_ms=0, confidence=0.0)
+                    writer.write(
+                        question_id=q["id"],
+                        answer=abstain_ans,
+                        code="",
+                        raw_result=None,
+                        error=None,
+                        elapsed_ms=0,
+                        confidence=0.0,
+                        write_log=False,
+                    )
                     written_records[q["id"]] = {"id": q["id"], **abstain_ans}
                     latencies[q["id"]] = 0
 
@@ -1715,6 +2424,22 @@ def run_batch_evaluation(args: argparse.Namespace):
         render_batch_evaluation_dashboard(metrics, chart_file)
         print(f"🎉 ĐÃ XUẤT THÀNH CÔNG BIỂU ĐỒ BATCH DASHBOARD TẠI: {chart_file.resolve()}")
 
+        # Xuất Báo cáo Markdown (.md) tổng hợp & phân tích từng câu hỏi
+        if getattr(args, "md_file", None):
+            md_file = Path(args.md_file)
+        else:
+            md_file = rep_file.with_suffix(".md")
+        render_markdown_evaluation_report(
+            metrics=metrics,
+            eval_qids=eval_qids,
+            log_dir=Path(args.log_dir),
+            gold_map=gold_map,
+            written_records=written_records,
+            md_path=md_file,
+            model_id=args.model_id,
+        )
+        print(f"📝 ĐÃ XUẤT BÁO CÁO PHÂN TÍCH MARKDOWN (.MD) CHI TIẾT TỪNG CÂU TẠI: {md_file.resolve()}")
+
 
 # ==============================================================================
 # HÀM CHÍNH (MAIN CLI ROUTER)
@@ -1737,13 +2462,17 @@ def main():
 
     # Tùy chọn đánh giá hàng loạt (Batch Evaluation Mode)
     parser.add_argument("--batch", action="store_true", help="Kích hoạt chế độ đánh giá hàng loạt nhiều câu hỏi")
+    parser.add_argument("--batch_file", type=str, default=None, help="Đường dẫn file batch JSONL (ví dụ: batch_1_questions.jsonl)")
+    parser.add_argument("--batch_index", type=int, default=None, help="Chỉ định đợt kiểm thử từ 1 đến 6 (mỗi đợt 20 câu)")
+    parser.add_argument("--batch_size", type=int, default=20, help="Số lượng câu hỏi trong mỗi đợt (mặc định: 20)")
     parser.add_argument("--limit", type=int, default=None, help="Giới hạn số lượng câu hỏi cần chạy trong batch")
     parser.add_argument("--sample", type=int, default=None, help="Lấy ngẫu nhiên N câu hỏi để đánh giá")
     parser.add_argument("--seed", type=int, default=42, help="Seed ngẫu nhiên khi lấy mẫu")
     parser.add_argument("--output_file", type=str, default="results/predictions.jsonl", help="File xuất kết quả dự đoán JSONL")
     parser.add_argument("--log_dir", type=str, default="results/logs", help="Thư mục lưu log chi tiết từng câu")
-    parser.add_argument("--report_file", type=str, default="results/evaluation_report.json", help="File xuất báo cáo chi tiết JSON")
-    parser.add_argument("--gold", type=str, default=None, help="Đường dẫn file đáp án chuẩn answers.jsonl")
+    parser.add_argument("--report_file", "--output", type=str, default="results/evaluation_report.json", help="File xuất báo cáo chi tiết JSON")
+    parser.add_argument("--md_file", type=str, default=None, help="File xuất báo cáo chi tiết Markdown (.md) cho từng câu")
+    parser.add_argument("--gold", "--answers", type=str, default=None, help="Đường dẫn file đáp án chuẩn answers.jsonl")
     parser.add_argument("--questions_file", type=str, default=None, help="Đường dẫn file câu hỏi questions.jsonl cụ thể")
     parser.add_argument("--dry_run", action="store_true", help="Chế độ chạy thử: không nạp GPU")
     parser.add_argument("--no_fill_abstain", action="store_true", help="Không tự động điền abstain cho các câu còn lại")
@@ -1751,11 +2480,18 @@ def main():
     parser.add_argument("--tau_star", type=float, default=0.50, help="Ngưỡng độ tin cậy tối ưu để từ chối trả lời (mặc định: 0.50)")
     parser.add_argument("--timeout", type=int, default=30, help="Thời gian chờ tối đa khi chạy code trong sandbox (giây)")
     parser.add_argument("--in_process", action="store_true", help="Chạy code trực tiếp trong tiến trình thay vì sandbox")
+    parser.add_argument("--max_new_tokens", type=int, default=1536, help="Số token tối đa sinh ra từ LLM (mặc định: 1536)")
 
     args = parser.parse_args()
 
-    # Nhận diện chế độ: Nếu có cờ --batch hoặc (limit > 1 mà không chỉ định --id cụ thể)
-    is_batch_mode = args.batch or (args.limit is not None and args.limit > 1 and not args.id) or (args.sample is not None and not args.id)
+    # Nhận diện chế độ: Nếu có cờ --batch, --batch_file, --batch_index hoặc (limit > 1 mà không chỉ định --id cụ thể)
+    is_batch_mode = (
+        args.batch
+        or (args.batch_file is not None)
+        or (args.batch_index is not None)
+        or (args.limit is not None and args.limit > 1 and not args.id)
+        or (args.sample is not None and not args.id)
+    )
 
     if is_batch_mode:
         run_batch_evaluation(args)

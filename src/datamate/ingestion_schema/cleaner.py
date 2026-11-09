@@ -213,6 +213,11 @@ SUMMARY_ROW_PATTERNS = [
     r"^sum$",
 ]
 
+EMBEDDED_SUBTOTAL_PATTERN = re.compile(
+    r"^\s*(?:t[oổ]ng\s*(?:ng[aà]y|th[aá]ng|c[oộ]ng|h[oợ]p|k[eế]t)?|c[oộ]ng|b[aá]o\s*c[aá]o|subtotal|grand\s*total)\b",
+    re.IGNORECASE
+)
+
 
 def strip_summary_rows(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -246,24 +251,179 @@ def strip_summary_rows(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def strip_embedded_subtotal_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Tự động phát hiện và loại bỏ các dòng tổng ngày / tổng tháng / subtotal
+    do hệ thống POS chèn vào giữa bảng chi tiết bán hàng (như biz_130).
+    """
+    if df.empty or len(df) <= 1:
+        return df
+
+    target_cols = [
+        c for c in df.columns
+        if any(k in str(c).lower() for k in [
+            'hàng', 'món', 'sản phẩm', 'item', 'product', 'diễn giải', 'nội dung', 'tên', 'mặt hàng'
+        ])
+    ]
+    if not target_cols:
+        target_cols = [c for c in df.columns[:3] if df[c].dtype == object or str(df[c].dtype) == "string"]
+
+    if not target_cols:
+        return df
+
+    drop_mask = pd.Series(False, index=df.index)
+    for col in target_cols:
+        s_norm = df[col].astype(str)
+        drop_mask |= s_norm.str.contains(EMBEDDED_SUBTOTAL_PATTERN, na=False)
+
+    if drop_mask.any():
+        return df[~drop_mask].reset_index(drop=True)
+    return df
+
+
+def propagate_partial_return_status(
+    df: pd.DataFrame,
+    order_id_col: Optional[str] = None,
+) -> pd.DataFrame:
+    """
+    Thực thi Luật §1 Rulebook tại tầng dữ liệu:
+    "Đơn có trả hàng, kể cả chỉ trả một phần, là đơn trả hàng: bỏ cả đơn."
+    Nếu trong cùng một bảng đơn hàng/chi tiết đơn hàng (không có cột ngày trả riêng),
+    một mã đơn có bất kỳ dòng nào mang trạng thái trả hàng / trả một phần / hoàn hàng,
+    lan truyền trạng thái 'Trả hàng (bỏ cả đơn)' cho toàn bộ các dòng của mã đơn đó.
+    """
+    if df.empty or len(df) <= 1:
+        return df
+
+    if order_id_col is None or order_id_col not in df.columns:
+        order_id_col = find_order_id_col(list(df.columns))
+    if not order_id_col or order_id_col not in df.columns:
+        return df
+
+    # Nếu bảng có cột ngày trả hàng riêng biệt thì việc coi đơn đã trả hay chưa
+    # phụ thuộc vào as_of_date lúc truy vấn (do filter_valid_sales xử lý).
+    has_separate_return_date = any(
+        any(k in _normalize_str(str(c)) for k in ["ngay tra", "ngày trả", "ngay hoan", "ngày hoàn", "return date"])
+        for c in df.columns
+    )
+    if has_separate_return_date:
+        return df
+
+    status_cols = [
+        c for c in df.columns
+        if any(k in _normalize_str(str(c)) for k in [
+            "trang thai", "trạng thái", "tinh trang", "tình trạng", "status", "ghi chu tt", "xử lý", "xu ly"
+        ])
+    ]
+    if not status_cols:
+        return df
+
+    out = df.copy()
+    partial_return_pat = re.compile(
+        r"tr[aả]\s*(?:1|m[oộ]t)\s*ph[aầ]n|tr[aả]\s*h[aà]ng|ho[aà]n\s*h[aà]ng|đ[aã]\s*tr[aả]|\breturn(?:ed)?\b",
+        re.IGNORECASE,
+    )
+
+    for st_col in status_cols:
+        s_str = out[st_col].astype(str)
+        is_ret_row = s_str.str.contains(partial_return_pat, na=False)
+        if is_ret_row.any() and not is_ret_row.all():
+            ret_order_ids = set(out.loc[is_ret_row, order_id_col].dropna().astype(str).str.strip())
+            ret_order_ids.discard("")
+            ret_order_ids.discard("nan")
+            if ret_order_ids:
+                same_order_mask = out[order_id_col].astype(str).str.strip().isin(ret_order_ids)
+                # Những dòng cùng mã đơn nhưng chưa gắn nhãn trả hàng -> cập nhật thành 'Trả hàng (đơn trả 1 phần)'
+                needs_update = same_order_mask & (~is_ret_row)
+                if needs_update.any():
+                    out.loc[needs_update, st_col] = "Trả hàng"
+
+    return out
+
+
+def extract_unit_conversion_map(business: BusinessData) -> dict:
+    """
+    Trích xuất bảng ánh xạ quy đổi đơn vị cơ sở (Luật §3 & §10 Rulebook) từ các bảng
+    QuyĐổiĐơnVị / DanhSachQuyDoi / DanhMuc.
+    Trả về dict: {(key_norm, unit_norm): float_multiplier}
+    """
+    conv_map = {}
+    if not business or not getattr(business, "tables", None):
+        return conv_map
+
+    for t in business.tables:
+        df = t.df
+        if df is None or df.empty:
+            continue
+        cols = list(df.columns)
+        cols_norm = {_normalize_str(str(c)): c for c in cols}
+
+        # Tìm cột hệ số quy đổi
+        factor_col = next(
+            (orig for norm, orig in cols_norm.items() if any(k in norm for k in [
+                "he so", "hệ số", "ty le quy doi", "tỷ lệ quy đổi", "quy cach", "quy cách", "so luong quy doi", "sl quy doi"
+            ])),
+            None,
+        )
+        if not factor_col:
+            continue
+
+        unit_big_col = next(
+            (orig for norm, orig in cols_norm.items() if any(k in norm for k in [
+                "don vi lon", "đơn vị lớn", "dvt lon", "đơn vị quy đổi", "don vi quy doi", "don vi ban", "đơn vị tính", "dvt"
+            ])),
+            None,
+        )
+        item_col = next(
+            (orig for norm, orig in cols_norm.items() if any(k in norm for k in [
+                "ma hang", "mã hàng", "ma sp", "mã sp", "ten hang", "tên hàng", "san pham", "sản phẩm", "sku"
+            ])),
+            None,
+        )
+
+        for _, row in df.iterrows():
+            try:
+                raw_f = row[factor_col]
+                if pd.isna(raw_f):
+                    continue
+                f_val = float(re.sub(r"[^\d.]", "", str(raw_f)))
+                if f_val <= 0:
+                    continue
+                u_key = _normalize_str(str(row[unit_big_col])) if unit_big_col and not pd.isna(row[unit_big_col]) else ""
+                i_key = _normalize_str(str(row[item_col])) if item_col and not pd.isna(row[item_col]) else ""
+                if i_key and u_key:
+                    conv_map[(i_key, u_key)] = f_val
+                elif u_key:
+                    conv_map[("*", u_key)] = f_val
+            except Exception:
+                continue
+
+    return conv_map
+
+
 def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """Pipeline làm sạch đầy đủ cho một DataFrame (Cắt dòng tổng + Quy tắc 8)."""
+    """Pipeline làm sạch đầy đủ cho một DataFrame (Cắt dòng tổng đáy + Cắt dòng subtotal nhúng + Quy tắc 8 + Luật §1 Trả 1 phần)."""
     if df.empty:
         return df.copy()
 
-    # 0. Loại bỏ dòng tổng kết ở đáy bảng (nếu có)
+    # 0a. Loại bỏ dòng tổng kết ở đáy bảng (nếu có)
     df_no_summary = strip_summary_rows(df)
 
-    order_col = find_order_id_col(list(df_no_summary.columns))
+    # 0b. Loại bỏ các dòng tổng ngày / tổng tháng / subtotal chèn giữa bảng POS
+    df_no_subtotals = strip_embedded_subtotal_rows(df_no_summary)
+
+    order_col = find_order_id_col(list(df_no_subtotals.columns))
     if order_col is None:
         # Không có cấu trúc đơn -> không can thiệp Rule 8
-        return df_no_summary.copy()
+        return df_no_subtotals.copy()
 
     # 1. Forward-fill các cột cấp đơn
-    df_ffilled = apply_group_forward_fill(df_no_summary, order_id_col=order_col)
+    df_ffilled = apply_group_forward_fill(df_no_subtotals, order_id_col=order_col)
     # 2. Khử trùng lặp dòng lỗi xuất file POS
     df_cleaned = deduplicate_order_rows(df_ffilled, order_id_col=order_col)
-    return df_cleaned
+    # 3. Lan truyền trạng thái đơn trả hàng 1 phần sang toàn bộ đơn (Luật §1)
+    df_final = propagate_partial_return_status(df_cleaned, order_id_col=order_col)
+    return df_final
 
 
 def clean_table(table: TableInfo) -> TableInfo:

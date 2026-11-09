@@ -9,7 +9,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 # Đảm bảo console Windows hiển thị đúng tiếng Việt có dấu
 if sys.platform == "win32":
@@ -204,6 +204,38 @@ def solution(data):
         self.assertIn("def solution(data):", code)
         self.assertTrue("return None" in code or 'return "unanswerable"' in code)
         self.assertEqual(client._generate_raw.call_count, 2)
+
+    @patch("datamate.llm_execution.client.torch")
+    @patch("datamate.llm_execution.client.AutoTokenizer")
+    @patch("datamate.llm_execution.client.AutoModelForCausalLM")
+    def test_load_model_fallback_on_4bit_error(self, mock_auto_model, mock_tokenizer, mock_torch):
+        """Kiểm tra fallback khi nạp 4-bit bị lỗi (WinError 4551/DLL) sang unquantized CUDA."""
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.is_bf16_supported.return_value = True
+        mock_torch.bfloat16 = "bfloat16"
+
+        mock_tok_inst = MagicMock()
+        mock_tok_inst.pad_token = None
+        mock_tok_inst.eos_token = "<eos>"
+        mock_tokenizer.from_pretrained.return_value = mock_tok_inst
+
+        # Lần 1 nạp 4-bit lỗi (DLL bị chặn), lần 2 nạp unquantized thành công
+        mock_model_inst = MagicMock()
+        mock_auto_model.from_pretrained.side_effect = [
+            OSError("[WinError 4551] An Application Control policy has blocked this file"),
+            mock_model_inst,
+        ]
+
+        client = LLMClient(auto_load=False)
+        client.load_model()
+
+        self.assertTrue(client.is_loaded)
+        self.assertEqual(mock_auto_model.from_pretrained.call_count, 2)
+        # Lần 2 phải dùng device_map={"": 0} và torch_dtype=bfloat16, không có quantization_config
+        second_call_kwargs = mock_auto_model.from_pretrained.call_args_list[1][1]
+        self.assertNotIn("quantization_config", second_call_kwargs)
+        self.assertEqual(second_call_kwargs["device_map"], {"": 0})
+        self.assertEqual(second_call_kwargs["torch_dtype"], "bfloat16")
 
 
 if __name__ == "__main__":

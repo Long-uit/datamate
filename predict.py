@@ -87,10 +87,20 @@ class DualLogger:
 
 
 # Nhập các thành phần cốt lõi của package datamate
-from datamate.grounding_feasibility.temporal import filter_future_data
+from datamate.grounding_feasibility.temporal import (
+    filter_future_data,
+    resolve_temporal_context,
+    format_temporal_for_prompt,
+)
 from datamate.llm_execution.sandbox import clean_num, clean_date, run_code, RunResult
 from datamate.llm_execution.client import LLMClient
-from datamate.llm_execution.prompt import build_prompt, load_rulebook, resolve_temporal_context, build_retry_prompt
+from datamate.llm_execution.prompt import (
+    build_prompt,
+    load_rulebook,
+    build_retry_prompt,
+    classify_intent,
+    prune_schema_by_intent,
+)
 from datamate.grounding_feasibility.feasibility import check_feasibility, extract_shop_metadata
 from datamate.ingestion_schema.loader import load_business, to_sqlite
 from datamate.ingestion_schema.schema_profiler import profile_business_schema
@@ -107,6 +117,7 @@ from datamate.output_abstention.abstention import (
     compute_confidence_score,
     apply_abstention_gate,
     evaluate_grounding_coverage,
+    evaluate_semantic_rule_compliance,
 )
 
 
@@ -349,12 +360,23 @@ def main():
     t_pipeline_start = time.time()
 
     try:
-        # VÒNG LẶP SUY LUẬN TỪNG CÂU HỎI
+        current_biz_id: Optional[str] = None
+        # VÒNG LẶP SUY LUẬN TỪNG CÂU HỎI (ĐÃ ĐƯỢC GROUP BY BUSINESS_ID)
         for idx, q in enumerate(active_questions, start=1):
             qid = q["id"]
             biz_id = q["business_id"]
             question_text = q["question"]
             as_of_date = q["as_of_date"]
+
+            # Giải phóng RAM của shop cũ khi đã xử lý xong toàn bộ câu hỏi của shop đó
+            if current_biz_id is not None and biz_id != current_biz_id:
+                old_entry = _BUSINESS_CACHE.pop(current_biz_id, None)
+                if old_entry and old_entry[1] is not None:
+                    try:
+                        old_entry[1].close()
+                    except Exception:
+                        pass
+            current_biz_id = biz_id
 
             print(f"\n[{idx}/{len(active_questions)}] Câu hỏi ID: {qid} (Shop: {biz_id})")
             print(f"Nội dung: \"{question_text}\" | as_of_date: {as_of_date}")
@@ -398,14 +420,26 @@ def main():
 
             # 3. Entity Linking & Prompt Building (Module 2)
             biz_dir = data_root / biz_id
+            normalized_q = expand_abbreviations(question_text)
+            intent = classify_intent(normalized_q)
+            temporal_res = resolve_temporal_context(normalized_q, as_of_date, calendar_path=calendar_str)
+            temporal_text = format_temporal_for_prompt(temporal_res)
             entity_matches = link_entities(question_text, candidates=candidates, threshold=0.55) if candidates else []
+            pruned_schema = prune_schema_by_intent(
+                schema_str=schema_str,
+                intent=intent,
+                question=normalized_q,
+                entity_matches=entity_matches,
+            )
             if entity_matches:
                 matched_names = [getattr(m, 'matched_value', str(m)) for m in entity_matches[:3]]
                 print(f"  🔍 [Entity Linking] Khớp {len(entity_matches)} thực thể trong CSDL: {matched_names}")
+            if temporal_res.get("start_date") or temporal_res.get("end_date"):
+                print(f"  ⏳ [Temporal Grounding] Mốc: {temporal_res.get('description', '')}")
 
             biz_readme = getattr(bd, "readme_text", None) if bd is not None else None
             sys_prompt, user_prompt = build_prompt(
-                schema_str=schema_str,
+                schema_str=pruned_schema,
                 as_of_date=as_of_date,
                 question=question_text,
                 rulebook_content=rulebook_content,
@@ -418,7 +452,7 @@ def main():
             # 4. Sinh mã phân tích Python qua LLM (Lượt 1)
             t0 = time.time()
             assert llm is not None
-            code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=1024)
+            code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=1536)
             gen_sec = round(time.time() - t0, 2)
 
             # 5. Thực thi mã nguồn (Lượt 1) qua Sandbox / Subprocess
@@ -444,6 +478,11 @@ def main():
                 elif not is_sane:
                     sanity_err = sanity_reason
                     print(f"  ⚠️ [Sanity Check] Lượt 1 vi phạm ({sanity_reason}) -> Kích hoạt Self-Correction...")
+                else:
+                    sem_eval1 = evaluate_semantic_rule_compliance(code_text=code_text, question=question_text, sub_ans=sub_ans_cand)
+                    if not sem_eval1.get("is_compliant", True):
+                        sanity_err = "; ".join(sem_eval1.get("violations", []))
+                        print(f"  ⚠️ [Semantic Rule Check] Lượt 1 vi phạm ({sanity_err}) -> Kích hoạt Self-Correction...")
 
             # Đánh giá độ phủ thực thể & thời gian (Grounding Coverage) ở Lượt 1
             grounding_eval = evaluate_grounding_coverage(
@@ -472,13 +511,14 @@ def main():
                     question=question_text,
                     failed_code=code_text,
                     error_message=err_feedback,
-                    schema_str=schema_str,
+                    schema_str=pruned_schema,
                     as_of_date=as_of_date,
                     retry_round=1,
+                    temporal_text=temporal_text,
                     missed_mentions=missed_mentions,
                 )
                 t_retry = time.time()
-                retry_code = llm.generate_code(prompt=retry_user_prompt, system_prompt=retry_sys_prompt, max_new_tokens=1024)
+                retry_code = llm.generate_code(prompt=retry_user_prompt, system_prompt=retry_sys_prompt, max_new_tokens=1536)
                 gen_sec = round(gen_sec + (time.time() - t_retry), 2)
                 raw_retry, err_retry, ms_retry = execute_solution(
                     code_text=retry_code,

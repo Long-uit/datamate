@@ -248,6 +248,103 @@ def evaluate_grounding_coverage(
 
 
 # ==============================================================================
+# CỔNG KIỂM CHỨNG NGỮ NGHĨA & ĐỒNG THUẬN HAI NHÁNH (GENERATION-2 VERIFICATION)
+# ==============================================================================
+
+def evaluate_semantic_rule_compliance(
+    code_text: str,
+    question: str = "",
+    sub_ans: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Kiểm tra tính tuân thủ ngữ nghĩa Rulebook của đoạn mã Python sinh ra:
+    - Phát hiện nhầm lẫn giữa 'ưa chuộng nhất' (đếm số đơn nunique) và 'bán chạy nhất' (tổng số lượng).
+    - Phát hiện nhầm lẫn giữa đếm số đơn ('bao nhiêu đơn') và cộng tiền ('.sum()').
+    - Phát hiện thiếu điều kiện lọc khách có >= 3 đơn khi hỏi 'khách sộp nhất'.
+    """
+    violations: List[str] = []
+    semantic_penalty = 0.0
+    if not code_text or not question:
+        return {"is_compliant": True, "semantic_penalty": 0.0, "violations": []}
+
+    q_low = question.lower()
+    clean_c = re.sub(r"#.*", "", code_text).lower()
+
+    # 1. 'Ưa chuộng nhất' bắt buộc dùng nunique() trên mã đơn, không phải sum() doanh thu
+    if "ưa chuộng" in q_low or "ua chuong" in _strip_diacritics(q_low):
+        if "nunique" not in clean_c and "drop_duplicates" not in clean_c:
+            violations.append("Câu hỏi 'ưa chuộng nhất' (Điều 3) yêu cầu đếm số đơn khác nhau (.nunique()), nhưng code chưa dùng .nunique()")
+            semantic_penalty += 0.25
+
+    # 2. 'Khách sộp nhất' bắt buộc lọc >= 3 đơn
+    if "khách sộp" in q_low or "sộp nhất" in q_low:
+        if not re.search(r">=\s*3|>\s*2", clean_c):
+            violations.append("Câu hỏi 'khách sộp nhất' (Điều 3) yêu cầu lọc khách có tối thiểu 3 đơn hợp lệ (>= 3)")
+            semantic_penalty += 0.25
+
+    # 3. Hỏi đếm số đơn nhưng code chỉ gọi .sum() trên cột tiền mà không có nunique/count/len
+    asks_order_count = bool(re.search(r"(?:bao\s*nhi[eê]u|m[aấ]y|đ[eế]m\s*s[oố])\s*(?:đ[oơ]n|h[oó]a\s*đ[oơ]n|bill)", q_low))
+    asks_money = bool(re.search(r"ti[eề]n|doanh\s*thu|doanh\s*s[oố]|gi[aá]\s*tr[iị]", q_low))
+    if asks_order_count and not asks_money:
+        has_count_op = any(k in clean_c for k in ["nunique", "len(", ".count(", "shape[0]", "value_counts"])
+        if not has_count_op and ".sum()" in clean_c:
+            violations.append("Câu hỏi đếm số đơn nhưng code chỉ gọi .sum() mà không đếm mã đơn (.nunique())")
+            semantic_penalty += 0.30
+
+    semantic_penalty = round(min(0.45, semantic_penalty), 4)
+    return {
+        "is_compliant": len(violations) == 0,
+        "semantic_penalty": semantic_penalty,
+        "violations": violations,
+    }
+
+
+def cross_verify_dual_execution(
+    primary_ans: Dict[str, Any],
+    secondary_ans: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Kiểm chứng chéo (Dual-Execution Cross-Verification) giữa 2 kết quả thực thi độc lập:
+    - Nếu 2 nhánh ra cùng đáp án: tăng độ tin cậy (+0.10).
+    - Nếu 2 nhánh ra kết quả mâu thuẫn: phạt độ tin cậy (-0.35) để cảnh báo rủi ro -1 điểm.
+    """
+    if not secondary_ans or secondary_ans.get("type") in ("abstain", "unanswerable", None):
+        return {"verified": None, "confidence_delta": 0.0, "reason": "Single execution path"}
+
+    p_type = primary_ans.get("type")
+    s_type = secondary_ans.get("type")
+    p_val = primary_ans.get("answer")
+    s_val = secondary_ans.get("answer")
+
+    if p_type != s_type:
+        return {
+            "verified": False,
+            "confidence_delta": -0.35,
+            "reason": f"Bất đồng kiểu đáp án giữa 2 nhánh ({p_type} vs {s_type})",
+        }
+
+    if p_type in ("number", "percent") and isinstance(p_val, (int, float)) and isinstance(s_val, (int, float)):
+        diff = abs(float(p_val) - float(s_val))
+        denom = max(abs(float(p_val)), abs(float(s_val)), 1.0)
+        if diff <= 1e-2 or (diff / denom) <= 1e-4:
+            return {"verified": True, "confidence_delta": 0.10, "reason": "Hai nhánh tính toán khớp số học"}
+        return {
+            "verified": False,
+            "confidence_delta": -0.35,
+            "reason": f"Bất đồng giá trị số giữa 2 nhánh ({p_val} vs {s_val})",
+        }
+
+    if str(p_val).strip().lower() == str(s_val).strip().lower():
+        return {"verified": True, "confidence_delta": 0.10, "reason": "Hai nhánh khớp kết quả"}
+
+    return {
+        "verified": False,
+        "confidence_delta": -0.35,
+        "reason": f"Bất đồng kết quả giữa 2 nhánh ({p_val} vs {s_val})",
+    }
+
+
+# ==============================================================================
 # HÀM TÍNH ĐIỂM ĐỘ TIN CẬY CÓ HIỆU CHUẨN (CALIBRATED CONFIDENCE SCORE)
 # ==============================================================================
 
@@ -353,8 +450,10 @@ def compute_confidence_score(
         )
 
     total_penalty = grounding_eval.get("total_penalty", 0.0) if grounding_eval else 0.0
+    sem_eval = evaluate_semantic_rule_compliance(code_text=code_text, question=question, sub_ans=sub_ans)
+    sem_penalty = sem_eval.get("semantic_penalty", 0.0)
 
-    raw_confidence = exec_score + plausibility_score + code_score - total_penalty
+    raw_confidence = exec_score + plausibility_score + code_score - total_penalty - sem_penalty
     total_confidence = round(min(1.0, max(0.0, raw_confidence)), 4)
     return total_confidence
 
@@ -473,6 +572,8 @@ def find_optimal_threshold(
 
 __all__ = [
     "evaluate_grounding_coverage",
+    "evaluate_semantic_rule_compliance",
+    "cross_verify_dual_execution",
     "compute_confidence_score",
     "apply_abstention_gate",
     "find_optimal_threshold",

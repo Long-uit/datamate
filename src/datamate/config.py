@@ -21,7 +21,7 @@ except ImportError:
 class ModelConfig:
     model_id: str = "Qwen/Qwen2.5-Coder-3B-Instruct"
     backend: str = "transformers"  # "transformers" hoặc "vllm"
-    max_new_tokens: int = 512
+    max_new_tokens: int = 1536
     temperature: float = 0.0
     device: str = "auto"
 

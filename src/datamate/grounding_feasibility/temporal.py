@@ -232,6 +232,28 @@ def resolve_temporal(
     if calendar is None:
         calendar = get_calendar()
 
+    # 0. Ngày cụ thể: ví dụ "vào ngày 01/12/2025", "ngay 01/12/2025", "ngày 01/12/2025"
+    m_exact_date = re.search(r"(?:vào\s+ngày|vao\s+ngay|ngay|ngày)\s+(\d{1,2}[/-]\d{1,2}[/-]\d{4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})", q)
+    if m_exact_date:
+        d_str = m_exact_date.group(1)
+        try:
+            if "/" in d_str:
+                parts = d_str.split("/")
+            else:
+                parts = d_str.split("-")
+            if len(parts[0]) == 4:  # YYYY-MM-DD
+                exact_d = date(int(parts[0]), int(parts[1]), int(parts[2]))
+            else:  # DD-MM-YYYY
+                exact_d = date(int(parts[2]), int(parts[1]), int(parts[0]))
+            windows.append(TimeWindow(
+                start_date=exact_d.isoformat(),
+                end_date=exact_d.isoformat(),
+                label=f"exact_date_{exact_d.isoformat()}",
+                description=f"Ngày {exact_d.strftime('%d/%m/%Y')} ({exact_d.isoformat()})",
+            ))
+        except Exception:
+            pass
+
     # 1. Hôm nay / ngày mốc
     if re.search(r"\bh[oô]m nay\b|\bng[aà]y m[oố]c\b|\bhnay\b|\bb[uữ]a nay\b", q):
         windows.append(TimeWindow(

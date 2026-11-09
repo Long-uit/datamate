@@ -7,11 +7,24 @@ Tác giả: Long (AI Architect & Model Lead)
 """
 
 import os
+import sys
 import re
 import ast
 import time
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any, List
+
+# Đảm bảo console UTF-8 an toàn trên Windows
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 # Nhập torch và transformers có xử lý ngoại lệ an toàn
 try:
@@ -185,19 +198,37 @@ class LLMClient:
     Tích hợp kiểm tra cú pháp AST và cơ chế tự sửa lỗi (Self-Correction).
     """
 
-    def __init__(self, model_id: Optional[str] = None, auto_load: bool = True):
+    def __init__(
+        self,
+        model_id: Optional[str] = None,
+        auto_load: bool = True,
+        backend: Optional[str] = None,
+    ):
         """
         Khởi tạo client quản lý mô hình.
         
         Args:
             model_id (str, optional): Đường dẫn repo HuggingFace hoặc thư mục model local (mặc định: Qwen/Qwen2.5-Coder-3B-Instruct).
             auto_load (bool): Tự động nạp trọng số mô hình khi khởi tạo.
+            backend (str, optional): Động cơ suy luận ('transformers' hoặc 'vllm'). Khi dùng 'vllm', tự động bật Prefix Caching.
         """
+        cfg_model_id = None
+        cfg_backend = None
+        try:
+            from datamate.config import load_config
+            _cfg = load_config()
+            cfg_model_id = _cfg.model.model_id
+            cfg_backend = _cfg.model.backend
+        except Exception:
+            pass
+
         if model_id is None:
-            model_id = os.environ.get("DATAMATE_MODEL_ID") or os.environ.get("MODEL_ID") or "Qwen/Qwen2.5-Coder-3B-Instruct"
+            model_id = os.environ.get("DATAMATE_MODEL_ID") or os.environ.get("MODEL_ID") or cfg_model_id or "Qwen/Qwen2.5-Coder-3B-Instruct"
         self.model_id = model_id
+        self.backend = (backend or os.environ.get("DATAMATE_BACKEND") or cfg_backend or "transformers").lower()
         self.model = None
         self.tokenizer = None
+        self.vllm_engine = None
         self.is_loaded = False
         self.device = "cpu"
         self.last_latency_ms: int = 0
@@ -211,7 +242,29 @@ class LLMClient:
             print("[Cảnh báo] PyTorch/Transformers chưa được cài đặt. LLMClient chạy ở chế độ giả lập.")
             return
 
-        print(f"[LLMClient] Bắt đầu nạp mô hình: {self.model_id}...")
+        print(f"[LLMClient] Bắt đầu nạp mô hình: {self.model_id} (backend={self.backend})...")
+
+        # Hỗ trợ động cơ vLLM tốc độ cao với Prefix Caching (enable_prefix_caching=True)
+        if self.backend == "vllm":
+            try:
+                from vllm import LLM as VLLMEngine  # type: ignore
+                tp_size = max(1, torch.cuda.device_count()) if torch.cuda.is_available() else 1
+                self.tokenizer = AutoTokenizer.from_pretrained(self.model_id, trust_remote_code=True)
+                self.vllm_engine = VLLMEngine(
+                    model=self.model_id,
+                    trust_remote_code=True,
+                    tensor_parallel_size=tp_size,
+                    enable_prefix_caching=True,
+                    gpu_memory_utilization=0.90,
+                    max_model_len=8192,
+                )
+                self.device = "cuda"
+                self.is_loaded = True
+                print(f"[LLMClient] Đã nạp vLLM Engine (enable_prefix_caching=True, TP={tp_size}) thành công!")
+                return
+            except Exception as vllm_err:
+                print(f"[LLMClient] Không thể khởi tạo vLLM ({vllm_err}), tự động chuyển về HuggingFace Transformers...")
+                self.backend = "transformers"
 
         # 1. Cấu hình kiểu dữ liệu tính toán (compute_dtype)
         # Ưu tiên bfloat16 nếu GPU hỗ trợ, fallback về float16
@@ -260,7 +313,61 @@ class LLMClient:
             )
             self.model.eval()
             self.is_loaded = True
+        except Exception as e:
+            # Fallback nếu 4-bit nạp thất bại do DLL bitsandbytes, thiếu VRAM, v.v.
+            if has_cuda and "quantization_config" in load_kwargs:
+                print(f"[LLMClient] Cảnh báo nạp 4-bit thất bại ({e}). Thử fallback không lượng tử hóa (torch_dtype={compute_dtype}) trên CUDA...")
+                try:
+                    fallback_kwargs = {
+                        "device_map": {"": 0},
+                        "torch_dtype": compute_dtype,
+                        "low_cpu_mem_usage": True,
+                        "trust_remote_code": True,
+                    }
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        self.model_id,
+                        **fallback_kwargs
+                    )
+                    self.model.eval()
+                    self.is_loaded = True
+                    print(f"[LLMClient] Nạp mô hình thành công (fallback không lượng tử hóa trên CUDA): {self.device}")
+                except Exception as e_cuda:
+                    if "out of memory" in str(e_cuda).lower() or "cuda" in str(e_cuda).lower():
+                        print(f"[LLMClient] Cảnh báo VRAM ({e_cuda}), thử fallback auto offload...")
+                        try:
+                            fallback_kwargs["device_map"] = "auto"
+                            self.model = AutoModelForCausalLM.from_pretrained(
+                                self.model_id,
+                                **fallback_kwargs
+                            )
+                            self.model.eval()
+                            self.is_loaded = True
+                            print(f"[LLMClient] Nạp mô hình thành công (fallback auto offload): {self.device}")
+                        except Exception as e_offload:
+                            print(f"[Lỗi] Nạp mô hình thất bại: {e_offload}")
+                            self.is_loaded = False
+                    else:
+                        print(f"[Lỗi] Nạp mô hình thất bại: {e_cuda}")
+                        self.is_loaded = False
+            elif has_cuda and ("out of memory" in str(e).lower() or "cuda" in str(e).lower()):
+                print(f"[LLMClient] Cảnh báo VRAM ({e}), thử fallback sang auto offload...")
+                try:
+                    load_kwargs["device_map"] = "auto"
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        self.model_id,
+                        **load_kwargs
+                    )
+                    self.model.eval()
+                    self.is_loaded = True
+                    print(f"[LLMClient] Nạp mô hình thành công (fallback auto offload): {self.device}")
+                except Exception as e2:
+                    print(f"[Lỗi] Nạp mô hình thất bại: {e2}")
+                    self.is_loaded = False
+            else:
+                print(f"[Lỗi] Nạp mô hình thất bại: {e}")
+                self.is_loaded = False
 
+        if self.is_loaded:
             # Tự động nạp QLoRA Adapter nếu đã fine-tune
             adapter_path = Path("models/qwen2.5_coder_qlora_adapter")
             if adapter_path.exists() and (adapter_path / "adapter_config.json").exists():
@@ -275,26 +382,6 @@ class LLMClient:
 
             print(f"[LLMClient] Nạp mô hình thành công trên thiết bị: {self.device}")
             self.print_gpu_stats()
-        except Exception as e:
-            if has_cuda and ("out of memory" in str(e).lower() or "cuda" in str(e).lower()):
-                print(f"[LLMClient] Cảnh báo VRAM ({e}), thử fallback sang auto offload...")
-                try:
-                    load_kwargs["device_map"] = "auto"
-                    self.model = AutoModelForCausalLM.from_pretrained(
-                        self.model_id,
-                        **load_kwargs
-                    )
-                    self.model.eval()
-                    self.is_loaded = True
-                    print(f"[LLMClient] Nạp mô hình thành công (fallback auto offload): {self.device}")
-                    self.print_gpu_stats()
-                    return
-                except Exception as e2:
-                    print(f"[Lỗi] Nạp mô hình thất bại: {e2}")
-                    self.is_loaded = False
-            else:
-                print(f"[Lỗi] Nạp mô hình thất bại: {e}")
-            self.is_loaded = False
 
     def get_gpu_memory_stats(self) -> Dict[str, float]:
         """Trả về thông số dung lượng VRAM GPU đã sử dụng (đơn vị: GB)."""
@@ -307,14 +394,17 @@ class LLMClient:
     def print_gpu_stats(self) -> None:
         """In thông số bộ nhớ GPU ra console."""
         stats = self.get_gpu_memory_stats()
-        if stats["allocated_gb"] > 0:
-            print(f"[GPU Memory] Đã cấp phát: {stats['allocated_gb']} GB | Dự trữ: {stats['reserved_gb']} GB")
-        else:
+        try:
+            if float(stats.get("allocated_gb", 0)) > 0:
+                print(f"[GPU Memory] Đã cấp phát: {stats['allocated_gb']} GB | Dự trữ: {stats['reserved_gb']} GB")
+            else:
+                print(f"[GPU Memory] Thiết bị hiện tại: {self.device}")
+        except Exception:
             print(f"[GPU Memory] Thiết bị hiện tại: {self.device}")
 
-    def _generate_raw(self, messages: List[Dict[str, str]], max_new_tokens: int = 1024) -> str:
-        """Thực hiện một lần suy luận thô với cơ chế Greedy Decoding."""
-        if not self.is_loaded or self.model is None or self.tokenizer is None:
+    def _generate_raw(self, messages: List[Dict[str, str]], max_new_tokens: int = 1536) -> str:
+        """Thực hiện một lần suy luận thô với cơ chế Greedy Decoding (hỗ trợ cả vLLM Prefix Caching và Transformers)."""
+        if not self.is_loaded or self.tokenizer is None:
             return ""
 
         chat_text = self.tokenizer.apply_chat_template(
@@ -322,6 +412,21 @@ class LLMClient:
             tokenize=False,
             add_generation_prompt=True
         )
+
+        if self.backend == "vllm" and self.vllm_engine is not None:
+            from vllm import SamplingParams  # type: ignore
+            sampling_params = SamplingParams(
+                temperature=0.0,
+                max_tokens=max_new_tokens,
+                repetition_penalty=1.05,
+            )
+            outputs = self.vllm_engine.generate([chat_text], sampling_params, use_tqdm=False)
+            if outputs and outputs[0].outputs:
+                return outputs[0].outputs[0].text
+            return ""
+
+        if self.model is None:
+            return ""
 
         inputs = self.tokenizer([chat_text], return_tensors="pt").to(self.model.device)
 
@@ -348,7 +453,7 @@ class LLMClient:
     def generate_code(
         self,
         prompt: str,
-        max_new_tokens: int = 1024,
+        max_new_tokens: int = 1536,
         system_prompt: Optional[str] = None,
         max_retries: int = 1
     ) -> str:
@@ -414,6 +519,39 @@ class LLMClient:
 
         self.last_latency_ms = int((time.time() - start_time) * 1000)
         return code
+
+    def generate_solution(
+        self,
+        prompt: str,
+        max_new_tokens: int = 1536,
+        system_prompt: Optional[str] = None,
+        max_retries: int = 1,
+        **kwargs: Any,
+    ) -> str:
+        """Alias cho generate_code với default max_new_tokens=1536."""
+        return self.generate_code(
+            prompt=prompt,
+            max_new_tokens=max_new_tokens,
+            system_prompt=system_prompt,
+            max_retries=max_retries,
+        )
+
+    async def generate_solution_async(
+        self,
+        prompt: str,
+        max_new_tokens: int = 1536,
+        system_prompt: Optional[str] = None,
+        max_retries: int = 1,
+        **kwargs: Any,
+    ) -> str:
+        """Phiên bản async của generate_solution."""
+        return self.generate_code(
+            prompt=prompt,
+            max_new_tokens=max_new_tokens,
+            system_prompt=system_prompt,
+            max_retries=max_retries,
+        )
+
 
 
 # Kiểm tra nhanh khi chạy file trực tiếp

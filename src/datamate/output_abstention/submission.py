@@ -253,9 +253,11 @@ class SubmissionWriter:
         selected_tables: list | None = None,
         selected_columns: list | None = None,
         self_correction_count: int = 0,
+        extra_log: dict | None = None,
+        write_log: bool = True,
     ) -> None:
         """
-        Ghi 1 dòng vào submission.jsonl (flush + fsync ngay) và xuất file log chi tiết.
+        Ghi 1 dòng vào submission.jsonl (flush + fsync ngay) và xuất file log chi tiết (nếu write_log=True).
         """
         if self._file is None or self._file.closed:
             self.open()
@@ -292,6 +294,10 @@ class SubmissionWriter:
         self._file.flush()
         os.fsync(self._file.fileno())
 
+        # Nếu cờ write_log=False (ví dụ: các câu đệm Default Abstain), bỏ qua tạo tệp log
+        if not write_log:
+            return
+
         # Ghi log chi tiết ra log_dir/<question_id>.json
         safe_qid = _sanitize_filename(question_id)
         log_file = self.log_dir / f"{safe_qid}.json"
@@ -309,6 +315,11 @@ class SubmissionWriter:
             "selected_columns": selected_columns or [],
             "self_correction_count": int(self_correction_count),
         }
+
+        # Hợp nhất telemetry phong phú nếu có
+        if extra_log and isinstance(extra_log, dict):
+            for k, v in extra_log.items():
+                log_payload[k] = _clean_for_json(v)
 
         try:
             log_file.write_text(
