@@ -256,7 +256,7 @@ def main():
     parser.add_argument("--output_file", type=str, default=default_output_file, help=f"Đường dẫn file xuất kết quả (mặc định: {default_output_file})")
     parser.add_argument("--log_dir", type=str, default=default_log_dir, help=f"Thư mục lưu log chi tiết từng câu hỏi (mặc định: {default_log_dir})")
     parser.add_argument("--log_file", type=str, default=None, help="Đường dẫn tệp để tự động ghi toàn bộ nhật ký console UTF-8 (thay thế cho Tee-Object)")
-    parser.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Coder-3B-Instruct", help="Tên hoặc đường dẫn mô hình (mặc định: Qwen/Qwen2.5-Coder-3B-Instruct)")
+    parser.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Coder-7B-Instruct", help="Tên hoặc đường dẫn mô hình (mặc định: Qwen/Qwen2.5-Coder-7B-Instruct)")
     parser.add_argument("--limit", type=int, default=None, help="Giới hạn số lượng câu hỏi cần chạy suy luận bằng LLM (mặc định: toàn bộ)")
     parser.add_argument("--biz", type=str, default=None, help="Chỉ chạy câu hỏi thuộc doanh nghiệp cụ thể (ví dụ: biz_201)")
     parser.add_argument("--id", type=str, default=None, help="Chỉ chạy câu hỏi theo ID cụ thể")

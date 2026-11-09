@@ -19,7 +19,7 @@ except ImportError:
 
 @dataclass
 class ModelConfig:
-    model_id: str = "Qwen/Qwen2.5-Coder-3B-Instruct"
+    model_id: str = "Qwen/Qwen2.5-Coder-7B-Instruct"
     backend: str = "transformers"  # "transformers" hoặc "vllm"
     max_new_tokens: int = 1536
     temperature: float = 0.0

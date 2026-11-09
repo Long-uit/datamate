@@ -2456,7 +2456,7 @@ def main():
     parser.add_argument("--id", type=str, default=None, help="Chỉ định ID câu hỏi (ví dụ: q_8d076e8b04fa)")
     parser.add_argument("--random", action="store_true", help="Chọn ngẫu nhiên 1 câu hỏi từ tập dữ liệu")
     parser.add_argument("--with_llm", action="store_true", help="Kích hoạt nạp mô hình LLM GPU thật để sinh mã")
-    parser.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Coder-3B-Instruct", help="Tên model LLM")
+    parser.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Coder-7B-Instruct", help="Tên model LLM")
     parser.add_argument("--chart_file", type=str, default=None, help="Đường dẫn file ảnh dashboard PNG")
     parser.add_argument("--telemetry_file", type=str, default=None, help="Đường dẫn file telemetry JSON")
 
