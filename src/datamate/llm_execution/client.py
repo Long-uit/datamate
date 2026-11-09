@@ -11,8 +11,12 @@ import sys
 import re
 import ast
 import time
+import warnings
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any, List
+
+# Tắt cảnh báo deprecation về torch_dtype của Transformers mới
+warnings.filterwarnings("ignore", message=".*torch_dtype.*")
 
 # Đảm bảo console UTF-8 an toàn trên Windows
 if hasattr(sys.stdout, "reconfigure"):
