@@ -745,6 +745,27 @@ def filter_future_data(
     return df[mask].copy().reset_index(drop=True)
 
 
+def format_temporal_for_prompt(temporal_res: dict) -> str:
+    """Định dạng thông tin thời gian đã giải mã thành chuỗi đưa vào prompt."""
+    if not temporal_res or not isinstance(temporal_res, dict):
+        return ""
+    lines = []
+    as_of = temporal_res.get("as_of_date")
+    if as_of:
+        lines.append(f"- Mốc tham chiếu (as_of_date): {as_of}")
+    s_d = temporal_res.get("start_date")
+    e_d = temporal_res.get("end_date")
+    desc = temporal_res.get("description", "")
+    if s_d or e_d:
+        lines.append(f"- Khoảng ngày: từ '{s_d}' đến '{e_d}' ({desc})")
+    elif desc:
+        lines.append(f"- Thời gian: {desc}")
+    hint = temporal_res.get("code_hint")
+    if hint:
+        lines.append(f"- Gợi ý lọc code: {hint}")
+    return "\n".join(lines)
+
+
 __all__ = [
     "TET_SOLAR_RANGES",
     "get_tet_dates_from_calendar",
@@ -752,6 +773,7 @@ __all__ = [
     "get_month_end",
     "resolve_temporal",
     "resolve_temporal_context",
+    "format_temporal_for_prompt",
     "extract_query_date_range",
     "extract_comparison_date_range",
     "filter_future_data",
