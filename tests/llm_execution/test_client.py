@@ -205,10 +205,12 @@ def solution(data):
         self.assertTrue("return None" in code or 'return "unanswerable"' in code)
         self.assertEqual(client._generate_raw.call_count, 2)
 
+    @patch("datamate.llm_execution.client.TORCH_AVAILABLE", True)
+    @patch("datamate.llm_execution.client.BitsAndBytesConfig")
     @patch("datamate.llm_execution.client.torch")
     @patch("datamate.llm_execution.client.AutoTokenizer")
     @patch("datamate.llm_execution.client.AutoModelForCausalLM")
-    def test_load_model_fallback_on_4bit_error(self, mock_auto_model, mock_tokenizer, mock_torch):
+    def test_load_model_fallback_on_4bit_error(self, mock_auto_model, mock_tokenizer, mock_torch, mock_bnb):
         """Kiểm tra fallback khi nạp 4-bit bị lỗi (WinError 4551/DLL) sang unquantized CUDA."""
         mock_torch.cuda.is_available.return_value = True
         mock_torch.cuda.is_bf16_supported.return_value = True

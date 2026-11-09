@@ -98,7 +98,7 @@ def load_config(config_path: Optional[str | Path] = None) -> AppConfig:
 
     cfg = AppConfig(
         model=ModelConfig(
-            model_id=m_data.get("model_id", "Qwen/Qwen2.5-Coder-3B-Instruct"),
+            model_id=m_data.get("model_id", "Qwen/Qwen2.5-Coder-7B-Instruct"),
             backend=m_data.get("backend", "transformers"),
             max_new_tokens=m_data.get("max_new_tokens", 512),
             temperature=float(m_data.get("temperature", 0.0)),

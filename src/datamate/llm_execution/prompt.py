@@ -1835,11 +1835,7 @@ def build_prompt(
 
     return_format_instruction = get_return_format_instruction(question, for_retry=False)
 
-    user_prompt = f"""==================== DỮ LIỆU ĐẦU VÀO CHO BÀI TOÁN CẦN GIẢI ====================
-DANH SÁCH BẢNG VÀ CỘT DỮ LIỆU TRONG `data`:
-{active_schema}
-{biz_context}
-==================== CÂU HỎI & RÀNG BUỘC CỐT LÕI ====================
+    user_prompt = f"""==================== CÂU HỎI & RÀNG BUỘC CỐT LÕI ====================
 CÂU HỎI CỦA NGƯỜI DÙNG:
 "{question}"
 
@@ -1847,7 +1843,7 @@ RÀNG BUỘC MỐC THỜI GIAN & THỰC THỂ:
 {temporal_text}
 {entity_block}
 YÊU CẦU THỰC HIỆN:
-1. Quan sát danh sách bảng và cột ở trên để chọn đúng bảng và cột. Không đoán tên bảng có ký tự lạ.
+1. Quan sát danh sách bảng và cột ở System Prompt để chọn đúng bảng và cột. Không đoán tên bảng có ký tự lạ.
 2. Áp dụng khoảng thời gian đã được giải mã và mốc as_of_date để lọc dữ liệu.
 {req_3}
 {return_format_instruction}

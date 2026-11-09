@@ -26,6 +26,10 @@ if hasattr(sys.stderr, "reconfigure"):
     except Exception:
         pass
 
+# Cấu hình chống phân mảnh VRAM PyTorch CUDA (ngăn lỗi OOM do cấp phát khối liên tục lớn)
+if "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 # Nhập torch và transformers có xử lý ngoại lệ an toàn
 try:
     import torch
@@ -277,7 +281,6 @@ class LLMClient:
             bnb_4bit_quant_type="nf4",
             bnb_4bit_use_double_quant=True,
             bnb_4bit_compute_dtype=compute_dtype,
-            llm_int8_enable_fp32_cpu_offload=True,
         )
 
         # 2. Nạp Tokenizer
@@ -292,7 +295,8 @@ class LLMClient:
         if has_cuda:
             self.device = "cuda"
             load_kwargs = {
-                "device_map": {"": 0},
+                "device_map": "auto",
+                "torch_dtype": compute_dtype,
                 "low_cpu_mem_usage": True,
                 "quantization_config": quant_config,
                 "trust_remote_code": True,
@@ -314,7 +318,7 @@ class LLMClient:
             self.model.eval()
             self.is_loaded = True
         except Exception as e:
-            # Fallback nếu 4-bit nạp thất bại do DLL bitsandbytes, thiếu VRAM, v.v.
+            # Fallback nếu 4-bit nạp thất bại do DLL bitsandbytes
             if has_cuda and "quantization_config" in load_kwargs:
                 print(f"[LLMClient] Cảnh báo nạp 4-bit thất bại ({e}). Thử fallback không lượng tử hóa (torch_dtype={compute_dtype}) trên CUDA...")
                 try:
@@ -330,25 +334,10 @@ class LLMClient:
                     )
                     self.model.eval()
                     self.is_loaded = True
-                    print(f"[LLMClient] Nạp mô hình thành công (fallback không lượng tử hóa trên CUDA): {self.device}")
+                    print(f"[LLMClient] Nạp mô hình thành công (fallback auto device_map): {self.device}")
                 except Exception as e_cuda:
-                    if "out of memory" in str(e_cuda).lower() or "cuda" in str(e_cuda).lower():
-                        print(f"[LLMClient] Cảnh báo VRAM ({e_cuda}), thử fallback auto offload...")
-                        try:
-                            fallback_kwargs["device_map"] = "auto"
-                            self.model = AutoModelForCausalLM.from_pretrained(
-                                self.model_id,
-                                **fallback_kwargs
-                            )
-                            self.model.eval()
-                            self.is_loaded = True
-                            print(f"[LLMClient] Nạp mô hình thành công (fallback auto offload): {self.device}")
-                        except Exception as e_offload:
-                            print(f"[Lỗi] Nạp mô hình thất bại: {e_offload}")
-                            self.is_loaded = False
-                    else:
-                        print(f"[Lỗi] Nạp mô hình thất bại: {e_cuda}")
-                        self.is_loaded = False
+                    print(f"[Lỗi] Nạp mô hình thất bại: {e_cuda}")
+                    self.is_loaded = False
             elif has_cuda and ("out of memory" in str(e).lower() or "cuda" in str(e).lower()):
                 print(f"[LLMClient] Cảnh báo VRAM ({e}), thử fallback sang auto offload...")
                 try:
@@ -428,15 +417,20 @@ class LLMClient:
         if self.model is None:
             return ""
 
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         inputs = self.tokenizer([chat_text], return_tensors="pt").to(self.model.device)
 
         # Cấu hình Greedy Decoding (T=0) chuẩn:
         # Tắt top_k và top_p để tránh cảnh báo UserWarning
         # Bật repetition_penalty=1.05 để chống lặp code
+        # Giới hạn max_new_tokens tối đa 768 để tiết kiệm VRAM KV-cache
+        gen_tokens = min(max_new_tokens, 768) if max_new_tokens > 0 else 512
         with torch.inference_mode():
             output_tokens = self.model.generate(
                 **inputs,
-                max_new_tokens=max_new_tokens,
+                max_new_tokens=gen_tokens,
                 do_sample=False,
                 temperature=None,
                 top_p=None,
@@ -448,7 +442,13 @@ class LLMClient:
             )
 
         generated_token_ids = output_tokens[0][len(inputs.input_ids[0]):]
-        return self.tokenizer.decode(generated_token_ids, skip_special_tokens=True)
+        result_text = self.tokenizer.decode(generated_token_ids, skip_special_tokens=True)
+
+        del inputs, output_tokens
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        return result_text
 
     def generate_code(
         self,
