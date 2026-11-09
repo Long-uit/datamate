@@ -20,9 +20,9 @@ except ImportError:
 
 @dataclass
 class ModelConfig:
-    model_id: str = "Qwen/Qwen2.5-Coder-3B-Instruct"
+    model_id: str = "Qwen/Qwen2.5-Coder-7B-Instruct"
     backend: str = "transformers"  # "transformers" hoặc "vllm"
-    max_new_tokens: int = 512
+    max_new_tokens: int = 1536
     temperature: float = 0.0
     device: str = "auto"
     seed: int = 42
@@ -119,7 +119,7 @@ def load_config(config_path: Optional[str | Path] = None) -> AppConfig:
         model=ModelConfig(
             model_id=m_data.get("model_id", "Qwen/Qwen2.5-Coder-7B-Instruct"),
             backend=m_data.get("backend", "transformers"),
-            max_new_tokens=int(m_data.get("max_new_tokens", 512)),
+            max_new_tokens=int(m_data.get("max_new_tokens", 1536)),
             temperature=float(m_data.get("temperature", 0.0)),
             device=m_data.get("device", "auto"),
             seed=int(m_data.get("seed", 42)),
