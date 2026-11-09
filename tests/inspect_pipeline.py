@@ -1797,20 +1797,27 @@ def run_batch_evaluation(args: argparse.Namespace):
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_mode = "w"
     existing_completed_ids = set()
+    preloaded_records: Dict[str, dict] = {}
+
+    planned_questions = target_questions[: args.limit] if args.limit is not None else list(target_questions)
+    planned_eval_qids = [q["id"] for q in sorted(planned_questions, key=lambda q: (q.get("business_id", ""), q.get("id", "")))]
 
     if args.resume and output_path.exists():
         try:
             with open(output_path, "r", encoding="utf-8") as f_ex:
                 for line in f_ex:
                     if line.strip():
-                        existing_completed_ids.add(json.loads(line).get("id"))
+                        obj = json.loads(line)
+                        if obj.get("id"):
+                            existing_completed_ids.add(obj["id"])
+                            preloaded_records[obj["id"]] = obj
             if existing_completed_ids:
                 write_mode = "a"
-                target_questions = [q for q in target_questions if q["id"] not in existing_completed_ids]
+                target_questions = [q for q in planned_questions if q["id"] not in existing_completed_ids]
         except Exception:
             pass
 
-    active_limit = args.limit if args.limit is not None else len(target_questions)
+    active_limit = args.limit if (args.limit is not None and not existing_completed_ids) else len(target_questions)
     active_questions = target_questions[:active_limit]
     active_questions = sorted(active_questions, key=lambda q: (q.get("business_id", ""), q.get("id", "")))
     active_qids = {q["id"] for q in active_questions} | existing_completed_ids
@@ -1834,7 +1841,7 @@ def run_batch_evaluation(args: argparse.Namespace):
         llm = LLMClient(model_id=args.model_id)
 
     writer = SubmissionWriter(output_file=str(output_path), log_dir=args.log_dir, mode=write_mode).open()
-    written_records: Dict[str, dict] = {}
+    written_records: Dict[str, dict] = dict(preloaded_records)
     latencies: Dict[str, int] = {}
     t_start_all = time.time()
 
@@ -2343,7 +2350,7 @@ def run_batch_evaluation(args: argparse.Namespace):
     # Chấm điểm Penalized Accuracy nếu có file đáp án chuẩn
     if has_gold:
         print("\n[ĐÁNH GIÁ & SO KHỚP ĐÁP ÁN] Đang chấm điểm theo Rulebook...")
-        eval_qids = [q["id"] for q in active_questions]
+        eval_qids = planned_eval_qids if planned_eval_qids else [q["id"] for q in active_questions]
         correct = 0
         wrong = 0
         abstain = 0
