@@ -38,3 +38,6 @@ results/
 
 scripts/
 reports/
+.agents/
+.vscode
+.pytest_cache

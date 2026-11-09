@@ -183,6 +183,17 @@ def execute_code_in_env(
         compiled = compile(code_str, "<submitted_code>", "exec")
         exec(compiled, namespace)
 
+        # Bảo vệ tuyệt đối các hàm chuẩn của DataMate: không để mã mô hình shadow
+        namespace["clean_date"] = clean_date
+        namespace["clean_num"] = clean_num
+        namespace["DataNotFoundError"] = DataNotFoundError
+        if "solution" in namespace and callable(namespace["solution"]):
+            sol_fn = namespace["solution"]
+            if hasattr(sol_fn, "__globals__"):
+                sol_fn.__globals__["clean_date"] = clean_date
+                sol_fn.__globals__["clean_num"] = clean_num
+                sol_fn.__globals__["DataNotFoundError"] = DataNotFoundError
+
         if "FINAL_RESULT" not in namespace:
             if "solution" in namespace and callable(namespace["solution"]):
                 _raw = namespace["solution"](isolated_data)
