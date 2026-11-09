@@ -30,9 +30,9 @@ if hasattr(sys.stderr, "reconfigure"):
     except Exception:
         pass
 
-# Cấu hình chống phân mảnh VRAM PyTorch CUDA (ngăn lỗi OOM do cấp phát khối liên tục lớn)
+# Cấu hình chống phân mảnh VRAM PyTorch CUDA (tránh lỗi OOM khi cấp phát khối liên tục)
 if "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
-    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
 
 # Nhập torch và transformers có xử lý ngoại lệ an toàn
 try:
@@ -422,6 +422,8 @@ class LLMClient:
             return ""
 
         if torch.cuda.is_available():
+            import gc
+            gc.collect()
             torch.cuda.empty_cache()
 
         inputs = self.tokenizer([chat_text], return_tensors="pt").to(self.model.device)
@@ -450,6 +452,8 @@ class LLMClient:
 
         del inputs, output_tokens
         if torch.cuda.is_available():
+            import gc
+            gc.collect()
             torch.cuda.empty_cache()
 
         return result_text
