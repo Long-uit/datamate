@@ -47,4 +47,7 @@ reports/Agents/*.jsonl
 .agents/
 .vscode
 .pytest_cache
+benchmark/
+data_synth/
+datamate_runs/
 
