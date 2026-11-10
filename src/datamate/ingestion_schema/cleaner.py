@@ -1286,6 +1286,31 @@ def build_unified_relational_views(business: BusinessData) -> BusinessData:
                     t.df = df_merged
                     t.columns = list(df_merged.columns)
 
+            # Join bổ sung Nhóm hàng (Category) từ product_table qua Tên hàng nếu bảng giao dịch đã có Tên hàng nhưng thiếu Nhóm hàng
+            if p_cat_col:
+                cat_lookup = p_df[[p_name_col, p_cat_col]].dropna(subset=[p_name_col]).drop_duplicates(subset=[p_name_col], keep="first").copy()
+                cat_lookup["_prod_name_key"] = cat_lookup[p_name_col].astype(str).str.strip().str.lower()
+                for t in tables:
+                    if t is product_table or t.df is None or t.df.empty:
+                        continue
+                    df = t.df
+                    t_pname_col = _find_col_by_norm(
+                        list(df.columns),
+                        ["ten hang", "ten sp", "ten san pham", "ten mat hang", "ten mon", "san pham", "noi dung"],
+                    )
+                    t_pcat_col = _find_col_by_norm(list(df.columns), ["nhom hang", "loai hang", "danh muc", "nhom sp"])
+                    if t_pname_col and not t_pcat_col:
+                        df_with_cat = df.copy()
+                        df_with_cat["_prod_name_key"] = df_with_cat[t_pname_col].astype(str).str.strip().str.lower()
+                        df_with_cat = df_with_cat.merge(
+                            cat_lookup[["_prod_name_key", p_cat_col]],
+                            on="_prod_name_key",
+                            how="left",
+                        )
+                        df_with_cat.drop(columns=["_prod_name_key"], inplace=True)
+                        t.df = df_with_cat
+                        t.columns = list(df_with_cat.columns)
+
     # --- 3. Gắn cột alias chuẩn tiếng Việt có dấu cho các bảng bán hàng / giao dịch ---
     max_shop_date_str: Optional[str] = None
     for t in tables:

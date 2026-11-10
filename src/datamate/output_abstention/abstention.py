@@ -574,6 +574,13 @@ def compute_confidence_score(
             code_score = 0.15
 
     # 4. Trừ điểm phạt Grounding (Grounding Penalties)
+    # Bước 6: Nếu câu hỏi hỏi đích danh thực thể cụ thể mà không tìm thấy thực thể trong CSDL (entity_matches rỗng) -> hạ C để abstain
+    if entity_matches is not None and len(entity_matches) == 0 and question:
+        is_named_entity_q = bool(re.search(r"\b(?:ti[eề]n\s*b[aá]n|b[aá]n\s*m[aặ]t\s*h[aà]ng|m[aặ]t\s*h[aà]ng|s[aả]n\s*ph[aẩ]m|m[oó]n|thu[oố]c|gas)\s+([a-zà-ỹ0-9\s]+)", q_low))
+        is_generic = any(k in q_low for k in ["tổng", "toàn bộ", "mỗi đơn", "trung bình", "nào", "gì", "nhất", "hôm nay", "hôm qua", "bữa qua"])
+        if is_named_entity_q and not is_generic and (ans_val in (0, 0.0, None) or not sanity_passed):
+            return 0.20
+
     if grounding_eval is None and (entity_matches or temporal_info or allowed_tables):
         grounding_eval = evaluate_grounding_coverage(
             code_text=code_text,

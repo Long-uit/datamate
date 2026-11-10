@@ -68,9 +68,26 @@ VIETNAMESE_ABBREVIATIONS: dict[str, str] = {
     "tt": "thành tiền",
     "nowj": "nợ",
     "cuwar": "cửa",
+    "cuwa": "cửa",
+    "cuar": "của",
     "nhaf": "nhà",
     "vaayj": "vậy",
     "đươc": "được",
+    "giumf": "giùm",
+    "tieenf": "tiền",
+    "hangf": "hàng",
+}
+
+# Các từ dừng / thuật ngữ kinh doanh chung tuyệt đối không được gán nhầm là tên thực thể (khách/món/NCC)
+BUSINESS_ENTITY_STOPWORDS: set[str] = {
+    "bình quân", "binh quan", "trung bình", "trung binh",
+    "hàng hóa", "hang hoa", "hàng hoá", "hàng", "hang", "sản phẩm", "san pham", "mặt hàng", "mat hang",
+    "bị hủy", "bi huy", "bị huỷ", "hủy", "huỷ", "huy", "đơn hủy", "don huy",
+    "tháng", "thang", "năm", "nam", "tiền", "tien", "doanh thu", "dthu", "doanh so",
+    "chi tiết", "chi tiet", "đơn hàng", "don hang", "đơn", "don", "hóa đơn", "hoa don", "bill",
+    "khách hàng", "khach hang", "số lượng", "so luong", "giá trị", "gia tri", "giá bán", "gia ban",
+    "ngày", "ngay", "quý", "quy", "tuần", "tuan", "hôm nay", "hom nay", "hôm qua", "hom qua", "bữa qua", "bua qua",
+    "cửa hàng", "cua hang", "tổng cộng", "tong cong", "bao nhiêu", "bao nhieu", "tỉ trọng", "ti trong", "phần trăm", "phan tram",
 }
 
 # Các cột tiềm năng chứa thực thể (Mở rộng toàn diện các trường nghiệp vụ)
@@ -289,16 +306,82 @@ def extract_candidates_from_business(business: BusinessData) -> list[Candidate]:
     return candidates
 
 
+GENERIC_PRODUCT_PREFIXES: set[str] = {
+    "trà", "tra", "cà phê", "ca phe", "cf", "cafe", "bánh", "banh",
+    "nước", "nuoc", "sinh tố", "sinh to", "kem", "sữa", "sua", "chè", "che",
+    "gà", "ga", "bò", "bo", "heo", "cá", "ca", "mì", "mi", "cơm", "com",
+    "bún", "bun", "phở", "pho", "gạch", "gach", "xi măng", "xi mang", "ống", "ong",
+}
+
+
+def fuzzy_entity_match_score(query: str, target: str) -> float:
+    """
+    Tính điểm tương đồng khớp mờ giữa query và target (thực thể).
+    Kết hợp chuẩn hóa Unicode NFC, bỏ dấu tiếng Việt, biến thể số/khoảng trắng và Jaro-Winkler ratio.
+    """
+    if not query or not target:
+        return 0.0
+
+    q_norm = normalize_entity_text(query)
+    t_norm = normalize_entity_text(target)
+    q_unacc = remove_accents(q_norm)
+    t_unacc = remove_accents(t_norm)
+
+    if t_norm == q_norm:
+        return 1.0
+    if t_unacc == q_unacc:
+        return 0.98
+
+    pat_norm = r"(?<!\w)" + re.escape(t_norm) + r"(?!\w)"
+    pat_unacc = r"(?<!\w)" + re.escape(t_unacc) + r"(?!\w)"
+    if re.search(pat_norm, q_norm):
+        return 1.0
+    if len(t_unacc) >= 3 and re.search(pat_unacc, q_unacc):
+        return 0.95
+
+    def _clean_spacing(s: str) -> str:
+        s = re.sub(r"(\d+)\s*([a-zA-Z]+)", r"\1 \2", s)
+        return re.sub(r"\s+", " ", s).strip()
+
+    t_clean = _clean_spacing(t_unacc)
+    q_clean = _clean_spacing(q_unacc)
+    if t_clean == q_clean:
+        return 0.96
+    pat_clean = r"(?<!\w)" + re.escape(t_clean) + r"(?!\w)"
+    if len(t_clean) >= 3 and re.search(pat_clean, q_clean):
+        return 0.95
+
+    t_tokens = set(t_clean.split())
+    q_tokens = set(q_clean.split())
+    if not t_tokens or not q_tokens:
+        return 0.0
+
+    common = t_tokens.intersection(q_tokens)
+    # Ngăn chặn khớp nhầm khi chỉ trùng tiền tố chung (ví dụ 'Trà đào' chỉ trùng 'trà' với 'Trà sữa...')
+    distinguishing_tokens = t_tokens - GENERIC_PRODUCT_PREFIXES
+    if distinguishing_tokens and not distinguishing_tokens.intersection(q_tokens):
+        return 0.0
+
+    token_score = len(common) / len(t_tokens)
+    phrase_sim = best_phrase_similarity(t_clean, q_clean)
+
+    if token_score >= 0.5:
+        return round(0.5 * token_score + 0.5 * phrase_sim, 3)
+
+    return round(phrase_sim if phrase_sim >= 0.85 else 0.0, 3)
+
+
 def link_entities(
     question: str,
     candidates: list[Candidate] | list[str],
     entity_type: str = "product",
-    threshold: float = 0.6,
+    threshold: float = 0.55,
 ) -> list[EntityMatch]:
     """
     Tìm kiếm và ánh xạ các thực thể xuất hiện trong câu hỏi tới danh mục candidates.
     - Hỗ trợ truyền danh sách Candidate hoặc danh sách chuỗi thô.
-    - Kết hợp Exact Word Boundary Match, Token Overlap và Sliding Window Phrase Similarity.
+    - Áp dụng khớp mờ (NFC, bỏ dấu, BM25 + Jaro-Winkler).
+    - Ngăn chặn triệt để false positive từ các từ dừng kinh doanh và tên khách lẻ tẻ.
     """
     norm_q = normalize_entity_text(question)
     expanded_q = expand_abbreviations(norm_q)
@@ -324,29 +407,25 @@ def link_entities(
         target_norm = cand.norm_value
         target_unaccented = remove_accents(target_norm)
 
-        score = 0.0
-        matched_term = ""
+        # 1. Bỏ qua nếu giá trị thực thể trùng hoàn toàn với từ dừng kinh doanh
+        if target_norm in BUSINESS_ENTITY_STOPWORDS or target_unaccented in BUSINESS_ENTITY_STOPWORDS:
+            continue
 
-        # 1. Exact Word-Boundary Match (Ưu tiên cao nhất: ngăn chặn triệt để false positive chuỗi con)
-        pattern_norm = r"(?<!\w)" + re.escape(target_norm) + r"(?!\w)"
-        pattern_unacc = r"(?<!\w)" + re.escape(target_unaccented) + r"(?!\w)"
+        # 2. Khách hàng/nhân viên/nhà cung cấp: ngăn chặn false positive từ từ đơn lẻ khi câu hỏi không hỏi người
+        if cand.entity_type in ("customer", "staff", "supplier"):
+            is_about_person = bool(re.search(r"\b(?:khach|nhan\s*vien|nguoi\s*ban|ncc|nha\s*cung\s*cap|ong|ba|anh|chi|doi\s*tac)\b", unaccented_q))
+            c_tokens = target_unaccented.split()
+            if not is_about_person:
+                # Nếu câu hỏi không hỏi người, bắt buộc toàn bộ các từ trong tên phải xuất hiện chính xác
+                if len(c_tokens) < 2 or not all(re.search(r"(?<!\w)" + re.escape(tk) + r"(?!\w)", unaccented_q) for tk in c_tokens):
+                    continue
+            else:
+                # Dù có hỏi người, không cho phép chỉ khớp 1 từ đơn lẻ
+                if len(c_tokens) >= 2 and sum(bool(re.search(r"(?<!\w)" + re.escape(tk) + r"(?!\w)", unaccented_q)) for tk in c_tokens) < 2:
+                    continue
 
-        if re.search(pattern_norm, expanded_q):
-            score = 1.0
-            matched_term = target_norm
-        elif len(target_unaccented) > 2 and re.search(pattern_unacc, unaccented_q):
-            score = 0.95
-            matched_term = target_unaccented
-        else:
-            # 2. Token Overlap & Sliding Window Phrase Similarity (Chống pha loãng câu dài)
-            overlap = token_overlap_score(target_norm, expanded_q)
-            overlap_unaccented = token_overlap_score(target_unaccented, unaccented_q)
-            best_overlap = max(overlap, overlap_unaccented)
-
-            if best_overlap >= 0.5:
-                sim = best_phrase_similarity(target_unaccented, unaccented_q)
-                score = 0.6 * best_overlap + 0.4 * sim
-                matched_term = cand.value
+        score = fuzzy_entity_match_score(expanded_q, cand.value)
+        matched_term = cand.value
 
         if score >= threshold:
             matches.append(EntityMatch(

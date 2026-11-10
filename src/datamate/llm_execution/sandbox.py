@@ -1291,8 +1291,23 @@ def revenue(
             (c for c in cols if any(k in _norm(c) for k in ["ten hang", "ten san pham", "ten mon", "san pham", "mat hang", "hang hoa", "hang"])),
             None,
         )
+        cat_col = next(
+            (c for c in cols if any(k in _norm(c) for k in ["nhom hang", "loai hang", "danh muc", "nhom sp", "category"])),
+            None,
+        )
+        p_clean = _norm(product)
+        masks = []
         if prod_col:
-            df = df[df[prod_col].astype(str).str.contains(str(product), case=False, na=False)]
+            p_norm_series = df[prod_col].astype(str).apply(_norm)
+            masks.append(p_norm_series.str.contains(p_clean, regex=False, na=False) | df[prod_col].astype(str).str.contains(str(product), case=False, na=False))
+        if cat_col:
+            c_norm_series = df[cat_col].astype(str).apply(_norm)
+            masks.append(c_norm_series.str.contains(p_clean, regex=False, na=False) | df[cat_col].astype(str).str.contains(str(product), case=False, na=False))
+        if masks:
+            final_m = masks[0]
+            for m in masks[1:]:
+                final_m = final_m | m
+            df = df[final_m]
     if customer:
         cust_col = next(
             (c for c in cols if any(k in _norm(c) for k in ["khach hang", "ten khach", "khach", "so kh", "ma kh"])),

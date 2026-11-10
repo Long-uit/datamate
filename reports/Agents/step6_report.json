@@ -1,0 +1,252 @@
+{
+  "total": 30,
+  "correct": 16,
+  "wrong": 0,
+  "abstain": 14,
+  "pa": 0.5333,
+  "accuracy": 1.0,
+  "coverage": 0.5333,
+  "total_time_sec": 579.28,
+  "status_changes_count": 18,
+  "status_changes": [
+    {
+      "question_id": "q_23401b31d098",
+      "old_state": "WRONG",
+      "new_state": "ABSTAIN",
+      "old_answer": 2932,
+      "new_answer": null,
+      "reason": "Sanity Error: Câu hỏi đếm đơn bị hủy nhưng code không lọc điều kiện trạng thái hủy"
+    },
+    {
+      "question_id": "q_e0bed6042dfe",
+      "old_state": "WRONG",
+      "new_state": "CORRECT",
+      "old_answer": 6501500,
+      "new_answer": 6405500,
+      "reason": ""
+    },
+    {
+      "question_id": "q_20cfa482235e",
+      "old_state": "WRONG",
+      "new_state": "CORRECT",
+      "old_answer": "Cty Vũ Sơn",
+      "new_answer": "Cty Thân Ngọc",
+      "reason": ""
+    },
+    {
+      "question_id": "q_0794a9a26cef",
+      "old_state": "ABSTAIN",
+      "new_state": "CORRECT",
+      "old_answer": null,
+      "new_answer": [
+        13,
+        2
+      ],
+      "reason": ""
+    },
+    {
+      "question_id": "q_30d639b40362",
+      "old_state": "ABSTAIN",
+      "new_state": "CORRECT",
+      "old_answer": null,
+      "new_answer": 4064300,
+      "reason": ""
+    },
+    {
+      "question_id": "q_cea1b708d80a",
+      "old_state": "ABSTAIN",
+      "new_state": "CORRECT",
+      "old_answer": null,
+      "new_answer": 3,
+      "reason": ""
+    },
+    {
+      "question_id": "q_4d7fc53fcc41",
+      "old_state": "WRONG",
+      "new_state": "ABSTAIN",
+      "old_answer": 7426334,
+      "new_answer": null,
+      "reason": "Sanity Error: Câu hỏi hỏi về công nợ / tiền trả nợ nhưng code chỉ tính doanh thu bán hàng chung mà không xét bảng/cột thanh toán hoặc công nợ"
+    },
+    {
+      "question_id": "q_e390c3cb0b3b",
+      "old_state": "WRONG",
+      "new_state": "CORRECT",
+      "old_answer": 18748333,
+      "new_answer": 10792500,
+      "reason": ""
+    },
+    {
+      "question_id": "q_f3d30bcd1487",
+      "old_state": "WRONG",
+      "new_state": "ABSTAIN",
+      "old_answer": 0,
+      "new_answer": null,
+      "reason": "Sanity Error: Câu hỏi yêu cầu tính phần trăm (percent) nhưng code không thực hiện phép chia tỷ lệ"
+    },
+    {
+      "question_id": "q_083211e2c80c",
+      "old_state": "ABSTAIN",
+      "new_state": "CORRECT",
+      "old_answer": null,
+      "new_answer": 2496270800,
+      "reason": ""
+    },
+    {
+      "question_id": "q_4befa8de665c",
+      "old_state": "WRONG",
+      "new_state": "ABSTAIN",
+      "old_answer": 1219,
+      "new_answer": null,
+      "reason": "Sanity Error: Câu hỏi đếm đơn bị hủy nhưng code không lọc điều kiện trạng thái hủy"
+    },
+    {
+      "question_id": "q_94fd5882870e",
+      "old_state": "WRONG",
+      "new_state": "ABSTAIN",
+      "old_answer": 0,
+      "new_answer": null,
+      "reason": "Sanity Error: Silent Zero: Kết quả phần trăm bằng 0 bất thường"
+    },
+    {
+      "question_id": "q_9602e7257869",
+      "old_state": "WRONG",
+      "new_state": "ABSTAIN",
+      "old_answer": 0,
+      "new_answer": null,
+      "reason": "Sanity Error: Silent Zero: Kết quả tính toán bằng 0 bất thường cho câu hỏi doanh thu / số lượng / trung bình"
+    },
+    {
+      "question_id": "q_5412252566a0",
+      "old_state": "WRONG",
+      "new_state": "ABSTAIN",
+      "old_answer": 8807500,
+      "new_answer": null,
+      "reason": "Sanity Error: Câu hỏi hỏi số lượng món/sản phẩm bán được nhưng code lại cộng cột tiền mà không dùng cột số lượng"
+    },
+    {
+      "question_id": "q_260318057077",
+      "old_state": "WRONG",
+      "new_state": "CORRECT",
+      "old_answer": 803177000,
+      "new_answer": 797461200,
+      "reason": ""
+    },
+    {
+      "question_id": "q_f95fc735e3bc",
+      "old_state": "WRONG",
+      "new_state": "ABSTAIN",
+      "old_answer": 0,
+      "new_answer": null,
+      "reason": "Sanity Error: Câu hỏi yêu cầu tính phần trăm (percent) nhưng code không thực hiện phép chia tỷ lệ"
+    },
+    {
+      "question_id": "q_9de78b7e6230",
+      "old_state": "ABSTAIN",
+      "new_state": "CORRECT",
+      "old_answer": null,
+      "new_answer": 532524,
+      "reason": ""
+    },
+    {
+      "question_id": "q_4cb3efa8bd01",
+      "old_state": "WRONG",
+      "new_state": "ABSTAIN",
+      "old_answer": -94,
+      "new_answer": null,
+      "reason": "Sanity Error: Câu hỏi yêu cầu tính 'từ đầu tháng' (as_of_date=2025-03-15) nhưng code chỉ lọc duy nhất 1 ngày hôm nay (so sánh một ngày với nửa tháng)"
+    }
+  ],
+  "breakdown": {
+    "number": {
+      "total": 22,
+      "correct": 12,
+      "wrong": 0,
+      "abstain": 10,
+      "latencies": [
+        23575,
+        1487,
+        549,
+        6709,
+        30039,
+        8636,
+        1494,
+        1336,
+        10576,
+        13714,
+        2789,
+        42007,
+        929,
+        56854,
+        34884,
+        7525,
+        16584,
+        15861,
+        2014,
+        40797,
+        713,
+        13251
+      ],
+      "pa": 0.5455,
+      "avg_latency_ms": 15105.6
+    },
+    "string": {
+      "total": 1,
+      "correct": 1,
+      "wrong": 0,
+      "abstain": 0,
+      "latencies": [
+        30641
+      ],
+      "pa": 1.0,
+      "avg_latency_ms": 30641.0
+    },
+    "boolean": {
+      "total": 1,
+      "correct": 1,
+      "wrong": 0,
+      "abstain": 0,
+      "latencies": [
+        4305
+      ],
+      "pa": 1.0,
+      "avg_latency_ms": 4305.0
+    },
+    "list": {
+      "total": 1,
+      "correct": 1,
+      "wrong": 0,
+      "abstain": 0,
+      "latencies": [
+        47923
+      ],
+      "pa": 1.0,
+      "avg_latency_ms": 47923.0
+    },
+    "unanswerable": {
+      "total": 1,
+      "correct": 1,
+      "wrong": 0,
+      "abstain": 0,
+      "latencies": [
+        19359
+      ],
+      "pa": 1.0,
+      "avg_latency_ms": 19359.0
+    },
+    "percent": {
+      "total": 4,
+      "correct": 0,
+      "wrong": 0,
+      "abstain": 4,
+      "latencies": [
+        5890,
+        26773,
+        51206,
+        60116
+      ],
+      "pa": 0.0,
+      "avg_latency_ms": 35996.2
+    }
+  }
+}
