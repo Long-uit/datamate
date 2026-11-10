@@ -1789,6 +1789,7 @@ def build_prompt(
     entity_matches: Optional[List[Any]] = None,
     return_messages: bool = False,
     force_full_schema: bool = False,
+    calendar_path: Optional[str] = None,
 ) -> Any:
     """Ráp nối toàn bộ thông tin thành Prompt tinh gọn cho mô hình Qwen2.5-Coder-3B."""
     intent = classify_intent(question)
@@ -1804,7 +1805,7 @@ def build_prompt(
             entity_matches=entity_matches,
         )
 
-    temporal_info = resolve_temporal_context(question, as_of_date)
+    temporal_info = resolve_temporal_context(question, as_of_date, calendar_path=calendar_path)
     temporal_lines = [f"- Mốc tham chiếu (as_of_date / hôm nay): {temporal_info['as_of_date']}"]
     if temporal_info.get("comparison_start") and temporal_info.get("comparison_end"):
         temporal_lines.append(f"- Kỳ chính: từ '{temporal_info.get('start_date')}' đến '{temporal_info.get('end_date')}'")

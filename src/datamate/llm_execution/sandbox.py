@@ -762,30 +762,38 @@ def clean_date(series_or_val: Any, dayfirst: Optional[bool] = None, **kwargs) ->
         s_str = s_str.str.replace(r"\b(?:thg|tháng|thg\.)\s*", "/", regex=True, case=False)
 
         # Kiểm tra nếu chuỗi định dạng ISO bắt đầu bằng năm (YYYY-MM-DD...), không dùng dayfirst
-        valid_s = s_str[~s_str.isin(["nan", "None", "null", "NaT", ""])]
-        is_iso = valid_s.str.match(r"^\d{4}[-/]").fillna(False) if len(valid_s) > 0 else pd.Series(dtype=bool)
-        eff_dayfirst = False if (len(is_iso) > 0 and is_iso.all()) else use_df
+        is_null = s.isna() | s_str.isin(["nan", "None", "null", "NaT", ""])
+        is_iso = (~is_null) & s_str.str.match(r"^\d{4}[-/]").fillna(False)
 
         # Kiểm tra Excel serials
         s_num = pd.to_numeric(s_str, errors="coerce")
-        is_serial = (s_num >= 30000) & (s_num <= 60000)
+        is_serial = (~is_null) & (s_num >= 30000) & (s_num <= 60000)
 
         if is_serial.all():
             return pd.to_datetime(s_num.astype(int), unit="D", origin="1899-12-30", errors="coerce")
-        elif is_serial.any():
-            serials_dt = pd.to_datetime(s_num[is_serial].astype(int), unit="D", origin="1899-12-30")
-            rem = ~is_serial & ~s.isna() & ~s_str.isin(["nan", "None", "null", "NaT", ""])
-            others_dt = pd.to_datetime(s_str[rem], dayfirst=eff_dayfirst, format="mixed", errors="coerce")
 
-            res = pd.Series(pd.NaT, index=s.index, dtype="datetime64[us]")
+        res = pd.Series(pd.NaT, index=s.index, dtype="datetime64[us]")
+        if is_serial.any():
+            serials_dt = pd.to_datetime(s_num[is_serial].astype(int), unit="D", origin="1899-12-30")
             res.update(serials_dt)
-            res.update(others_dt)
-            return res
-        else:
+
+        rem_iso = is_iso & (~is_serial)
+        if rem_iso.any():
             try:
-                return pd.to_datetime(s_str, dayfirst=eff_dayfirst, format="mixed", errors="coerce")
+                iso_dt = pd.to_datetime(s_str[rem_iso], dayfirst=False, format="mixed", errors="coerce")
             except Exception:
-                return pd.to_datetime(s_str, dayfirst=eff_dayfirst, errors="coerce")
+                iso_dt = pd.to_datetime(s_str[rem_iso], dayfirst=False, errors="coerce")
+            res.update(iso_dt)
+
+        rem_other = (~is_null) & (~is_serial) & (~is_iso)
+        if rem_other.any():
+            try:
+                other_dt = pd.to_datetime(s_str[rem_other], dayfirst=use_df, format="mixed", errors="coerce")
+            except Exception:
+                other_dt = pd.to_datetime(s_str[rem_other], dayfirst=use_df, errors="coerce")
+            res.update(other_dt)
+
+        return res
 
     elif isinstance(series_or_val, (list, tuple)):
         return [_parse_scalar(x) for x in series_or_val]

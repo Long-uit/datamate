@@ -206,37 +206,29 @@ if 'FINAL_RESULT' not in globals() and 'solution' in globals() and callable(solu
         else:
             return None, res.error or "Lỗi không xác định trong sandbox", res.elapsed_ms
 
-    # Fallback chạy in-process: tạo bản sao tham chiếu để không làm bẩn DataFrame gốc trong cache
+    # Fallback chạy in-process: ủy quyền trực tiếp cho execute_code_in_env để đồng nhất 100% với sandbox worker
+    from datamate.llm_execution.worker import execute_code_in_env
+    from datamate.exceptions import DataNotFoundError
+
     t_start = time.perf_counter()
-    isolated_data = {k: v.copy(deep=False) for k, v in data_dict.items()}
-    exec_globals = {
-        "__builtins__": __builtins__,
-        "pd": pd,
-        "np": np,
-        "data": isolated_data,
-        "dfs": isolated_data,
-        "con": con,
-        "business": business_obj,
-        "apply_tie_breaker": apply_tie_breaker,
-        "filter_future_data": filter_future_data,
-        "clean_num": clean_num,
-        "clean_date": clean_date,
-    }
-
-    try:
-        exec(executable_code, exec_globals)
-        elapsed_ms = int((time.perf_counter() - t_start) * 1000)
-
-        if "FINAL_RESULT" in exec_globals:
-            return exec_globals["FINAL_RESULT"], None, elapsed_ms
-        elif "solution" in exec_globals and callable(exec_globals["solution"]):
-            return exec_globals["solution"](isolated_data), None, elapsed_ms
-        else:
-            return None, "NO_RESULT: Không tìm thấy kết quả từ hàm solution", elapsed_ms
-
-    except Exception as exc:
-        elapsed_ms = int((time.perf_counter() - t_start) * 1000)
-        return None, f"{type(exc).__name__}: {exc}", elapsed_ms
+    res_payload = execute_code_in_env(
+        code_str=executable_code,
+        data_dict=data_dict,
+        business=business_obj,
+        con=con,
+        pd=pd,
+        np=np,
+        apply_tie_breaker=apply_tie_breaker,
+        filter_future_data=filter_future_data,
+        clean_num=clean_num,
+        clean_date=clean_date,
+        DataNotFoundError=DataNotFoundError,
+    )
+    elapsed_ms = int((time.perf_counter() - t_start) * 1000)
+    if res_payload.get("ok"):
+        return res_payload.get("final_result"), None, elapsed_ms
+    else:
+        return None, res_payload.get("error") or "Lỗi thực thi", elapsed_ms
 
 
 # ==============================================================================
@@ -459,7 +451,8 @@ def main():
                 business_note=biz_readme,
                 candidates=candidates,
                 entity_matches=entity_matches,
-                return_messages=True
+                return_messages=True,
+                calendar_path=calendar_str,
             )
 
             # 4. Sinh mã phân tích Python qua LLM (Lượt 1)

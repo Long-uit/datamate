@@ -249,51 +249,38 @@ if 'FINAL_RESULT' not in globals() and 'solution' in globals() and callable(solu
             return None, err_msg, res.elapsed_ms, res.error_type, unans_src
         return None, err_msg, res.elapsed_ms
 
-    # In-process fallback
+    # In-process fallback: ủy quyền trực tiếp cho execute_code_in_env để đồng nhất 100% với sandbox worker
+    from datamate.llm_execution.worker import execute_code_in_env
+
     t_start = time.perf_counter()
-    isolated_data = {k: v.copy(deep=False) for k, v in data_dict.items()}
-    exec_globals = {
-        "__builtins__": __builtins__,
-        "pd": pd,
-        "np": np,
-        "data": isolated_data,
-        "dfs": isolated_data,
-        "con": con,
-        "business": business_obj,
-        "apply_tie_breaker": apply_tie_breaker,
-        "filter_future_data": filter_future_data,
-        "clean_num": clean_num,
-        "clean_date": clean_date,
-        "DataNotFoundError": DataNotFoundError,
-    }
-    if isinstance(exec_globals.get("__builtins__"), dict):
-        exec_globals["__builtins__"]["DataNotFoundError"] = DataNotFoundError
+    res_payload = execute_code_in_env(
+        code_str=executable_code,
+        data_dict=data_dict,
+        business=business_obj,
+        con=con,
+        pd=pd,
+        np=np,
+        apply_tie_breaker=apply_tie_breaker,
+        filter_future_data=filter_future_data,
+        clean_num=clean_num,
+        clean_date=clean_date,
+        DataNotFoundError=DataNotFoundError,
+    )
+    elapsed_ms = int((time.perf_counter() - t_start) * 1000)
+    unans_src = res_payload.get("unanswerable_source", "none")
+    fin = res_payload.get("final_result")
+    if isinstance(fin, dict):
+        unans_src = fin.get("unanswerable_source", unans_src)
 
-    try:
-        exec(executable_code, exec_globals)
-        elapsed_ms = int((time.perf_counter() - t_start) * 1000)
-        fin = exec_globals.get("FINAL_RESULT")
-        if fin is None and "solution" in exec_globals and callable(exec_globals["solution"]):
-            fin = exec_globals["solution"](isolated_data)
-        
-        unans_src = "none"
-        if isinstance(fin, dict):
-            unans_src = fin.get("unanswerable_source", "none")
-
+    if res_payload.get("ok"):
         if return_details:
             return fin, None, elapsed_ms, None, unans_src
         return fin, None, elapsed_ms
-    except DataNotFoundError as dne:
-        elapsed_ms = int((time.perf_counter() - t_start) * 1000)
+    else:
+        err_msg = res_payload.get("error") or "Lỗi thực thi"
+        err_type = res_payload.get("error_type") or ("DataNotFoundError" if "DataNotFoundError" in str(err_msg) else "RuntimeError")
         if return_details:
-            return None, str(dne), elapsed_ms, "DataNotFoundError", "none"
-        return None, str(dne), elapsed_ms
-    except Exception as exc:
-        elapsed_ms = int((time.perf_counter() - t_start) * 1000)
-        err_msg = f"{type(exc).__name__}: {exc}"
-        err_type = "DataNotFoundError" if "DataNotFoundError" in err_msg else type(exc).__name__
-        if return_details:
-            return None, err_msg, elapsed_ms, err_type, "none"
+            return None, err_msg, elapsed_ms, err_type, unans_src
         return None, err_msg, elapsed_ms
 
 
@@ -1603,7 +1590,8 @@ def render_markdown_evaluation_report(
             try:
                 log_data = json.loads(log_file.read_text(encoding="utf-8"))
                 per_question_logs.append(log_data)
-                err_str = log_data.get("error") or (log_data.get("extra_log") or {}).get("error")
+                extra_d = log_data.get("extra_log") or {}
+                err_str = log_data.get("error") or extra_d.get("error")
                 ans_obj = log_data.get("answer") or {}
                 reason_str = ans_obj.get("reason")
                 if err_str:
@@ -1611,8 +1599,8 @@ def render_markdown_evaluation_report(
                     error_reasons[f"Runtime/Sanity Error: {short_err}"] += 1
                 elif ans_obj.get("type") == "abstain" and reason_str:
                     error_reasons[f"Abstention Gate: {reason_str}"] += 1
-                elif (log_data.get("extra_log") or {}).get("match_result", {}).get("eval_score") == -1.0:
-                    hyp = ((log_data.get("extra_log") or {}).get("deviation_analysis") or {}).get("diagnostic_hypothesis")
+                elif (log_data.get("match_result") or extra_d.get("match_result") or {}).get("eval_score") == -1.0:
+                    hyp = ((log_data.get("deviation_analysis") or extra_d.get("deviation_analysis") or {}).get("diagnostic_hypothesis"))
                     error_reasons[f"Sai lệch logic/số học: {hyp or 'Chưa khớp đáp án chuẩn'}"] += 1
             except Exception:
                 pass
@@ -1646,31 +1634,32 @@ def render_markdown_evaluation_report(
                 log_obj = {}
 
         extra = log_obj.get("extra_log") or {}
-        biz_id = extra.get("business_id", "unknown")
-        as_of = extra.get("as_of_date", "")
-        orig_q = extra.get("original_question", "")
-        norm_q = extra.get("normalized_question", orig_q)
-        intent = extra.get("intent", "")
-        temp_info = extra.get("temporal_info") or {}
-        entities = extra.get("entity_matches") or []
-        sel_tables = extra.get("selected_tables") or log_obj.get("selected_tables") or []
-        sel_cols = extra.get("selected_columns") or log_obj.get("selected_columns") or []
+        biz_id = log_obj.get("business_id") or extra.get("business_id") or "unknown"
+        as_of = log_obj.get("as_of_date") or extra.get("as_of_date") or ""
+        orig_q = log_obj.get("original_question") or extra.get("original_question") or ""
+        norm_q = log_obj.get("normalized_question") or extra.get("normalized_question") or orig_q
+        intent = log_obj.get("intent") or extra.get("intent") or ""
+        temp_info = log_obj.get("temporal_info") or extra.get("temporal_info") or {}
+        entities = log_obj.get("entity_matches") or extra.get("entity_matches") or []
+        sel_tables = log_obj.get("selected_tables") or extra.get("selected_tables") or []
+        sel_cols = log_obj.get("selected_columns") or extra.get("selected_columns") or []
         conf = log_obj.get("confidence", extra.get("confidence", 0.0))
         sc_count = log_obj.get("self_correction_count", extra.get("self_correction_count", 0))
-        sc_trace = extra.get("self_correction_trace") or []
+        sc_trace = log_obj.get("self_correction_trace") or extra.get("self_correction_trace") or []
         err_msg = log_obj.get("error") or extra.get("error")
         code_str = log_obj.get("code") or extra.get("code") or ""
-        dev = extra.get("deviation_analysis") or {}
-        g_eval = extra.get("grounding_eval") or {}
+        dev = log_obj.get("deviation_analysis") or extra.get("deviation_analysis") or {}
+        g_eval = log_obj.get("grounding_eval") or extra.get("grounding_eval") or {}
+        lat_bd = log_obj.get("latency_breakdown_ms") or extra.get("latency_breakdown_ms") or {}
 
         pred_item = written_records.get(qid, log_obj.get("answer") or {"type": "abstain", "answer": None})
-        gold_item = gold_map.get(qid, extra.get("gold_answer") or {})
+        gold_item = gold_map.get(qid, log_obj.get("gold_answer") or extra.get("gold_answer") or {})
         p_type = pred_item.get("type", "abstain")
         p_val = pred_item.get("answer")
         g_type = gold_item.get("type", "unknown")
         g_val = gold_item.get("answer")
 
-        match_res = extra.get("match_result") or {}
+        match_res = log_obj.get("match_result") or extra.get("match_result") or {}
         status_label = match_res.get("eval_status_label", "")
         score_val = match_res.get("eval_score")
         if score_val is None and gold_item:
@@ -1693,13 +1682,25 @@ def render_markdown_evaluation_report(
         ])
         if norm_q and norm_q != orig_q:
             lines.append(f"- **Câu hỏi mở rộng viết tắt**: {norm_q}")
+        comp_str = ""
+        if temp_info.get("comparison_start") or temp_info.get("comparison_end"):
+            comp_str = f" | Kỳ so sánh: `{temp_info.get('comparison_start')} -> {temp_info.get('comparison_end')}` ({temp_info.get('comparison_desc', '')})"
         lines.extend([
-            f"- **Ngữ cảnh**: `as_of_date = {as_of}` | `intent = {intent}` | Khoảng ngày: `{temp_info.get('start_date')} -> {temp_info.get('end_date')}` ({temp_info.get('description', '')})",
+            f"- **Ngữ cảnh**: `as_of_date = {as_of}` | `intent = {intent}` | Khoảng ngày: `{temp_info.get('start_date')} -> {temp_info.get('end_date')}` ({temp_info.get('description', '')}){comp_str}",
             f"- **Thực thể khớp (Entity Linking)**: {', '.join(f'`{e}`' for e in entities) if entities else '*(Không có)*'}",
             f"- **Bảng & Cột truy vấn**: Bảng={sel_tables if sel_tables else '[]'} | Cột={sel_cols[:8] if sel_cols else '[]'}",
             f"- **Dự đoán (Pred)**: `{p_val}` (Kiểu: `{p_type}`) | **Đáp án Chuẩn (Gold)**: `{g_val}` (Kiểu: `{g_type}`)",
             f"- **Độ tin cậy ($C$)**: `{conf:.2f}` | **Số vòng tự sửa lỗi (Self-Correction)**: `{sc_count}`",
         ])
+        if lat_bd:
+            lines.append(
+                f"- **Thời gian từng pha (ms)**: Nạp dữ liệu=`{lat_bd.get('ingest_schema', 0.0):.1f}ms` | "
+                f"Grounding=`{lat_bd.get('grounding', 0.0):.1f}ms` | "
+                f"LLM=`{lat_bd.get('llm_gen', 0.0):.1f}ms` | "
+                f"Thực thi=`{lat_bd.get('sandbox_exec', 0.0):.1f}ms` | "
+                f"Normalizer=`{lat_bd.get('normalizer', 0.0):.1f}ms` | "
+                f"Retry=`{sc_count}`"
+            )
 
         if g_eval:
             lines.append(
@@ -1780,7 +1781,22 @@ def run_batch_evaluation(args: argparse.Namespace):
 
     rulebook_content = load_rulebook(str(data_dir))
 
+    replay_logs_dir: Optional[Path] = Path(args.replay_logs) if getattr(args, "replay_logs", None) else None
+    replay_map: Dict[str, dict] = {}
+    if replay_logs_dir and replay_logs_dir.exists():
+        args.no_fill_abstain = True
+        for lf in sorted(replay_logs_dir.glob("*.json")):
+            try:
+                lobj = json.loads(lf.read_text(encoding="utf-8"))
+                qid_k = lobj.get("question_id") or lf.stem
+                replay_map[qid_k] = lobj
+            except Exception:
+                pass
+
     target_questions = all_questions
+    if replay_map and not args.sample and getattr(args, "batch_index", None) is None and not getattr(args, "batch_file", None):
+        target_questions = [q for q in target_questions if q.get("id") in replay_map]
+
     if getattr(args, "batch_index", None) is not None and 1 <= args.batch_index <= 6:
         bs = getattr(args, "batch_size", None) or 20
         start_idx = (args.batch_index - 1) * bs
@@ -1839,9 +1855,11 @@ def run_batch_evaluation(args: argparse.Namespace):
     print("=" * 80)
 
     llm: Optional[LLMClient] = None
-    if args.with_llm or not args.dry_run:
+    if (args.with_llm or not args.dry_run) and not replay_logs_dir:
         print(f"[Khởi tạo] Đang nạp mô hình {args.model_id} (4-bit NF4)...")
         llm = LLMClient(model_id=args.model_id)
+    elif replay_logs_dir:
+        print(f"[Replay Mode] Nạp {len(replay_map)} file log từ {replay_logs_dir.resolve()} (bỏ qua LLM)...")
 
     writer = SubmissionWriter(output_file=str(output_path), log_dir=args.log_dir, mode=write_mode).open()
     written_records: Dict[str, dict] = dict(preloaded_records)
@@ -2014,11 +2032,12 @@ def run_batch_evaluation(args: argparse.Namespace):
                 candidates=candidates,
                 entity_matches=entity_matches,
                 return_messages=True,
+                calendar_path=cal_str,
             )
             mod_latencies["prompt_build"] = round((time.perf_counter() - t_prompt) * 1000, 2)
 
-            # Chế độ Dry-Run hoặc không có LLM
-            if args.dry_run or (not args.with_llm and llm is None):
+            # Chế độ Dry-Run hoặc không có LLM (và không phải replay_logs)
+            if (args.dry_run or (not args.with_llm and llm is None)) and not replay_logs_dir:
                 sub_ans = make_abstain("Dry Run Mode")
                 mod_latencies["llm_gen"] = 0.0
                 mod_latencies["sandbox_exec"] = 0.0
@@ -2087,11 +2106,26 @@ def run_batch_evaluation(args: argparse.Namespace):
                 latencies[qid] = total_lat
                 continue
 
-            # Bước 5: LLM Sinh mã
-            t_llm = time.perf_counter()
-            assert llm is not None
-            code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=getattr(args, "max_new_tokens", 1536))
-            mod_latencies["llm_gen"] = round((time.perf_counter() - t_llm) * 1000, 2)
+            # Bước 5: LLM Sinh mã hoặc Replay từ Log
+            prev_log = replay_map.get(qid) if replay_logs_dir else None
+            if replay_logs_dir:
+                if not prev_log:
+                    sub_ans = make_abstain("Replay Log Not Found")
+                    written_records[qid] = {"id": qid, **sub_ans}
+                    latencies[qid] = 0
+                    continue
+                extra_prev = prev_log.get("extra_log") or {}
+                code_text = prev_log.get("code") or extra_prev.get("code") or ""
+                mod_latencies["llm_gen"] = 0.0
+                self_correction_count = prev_log.get("self_correction_count", extra_prev.get("self_correction_count", 0))
+                self_correction_trace = prev_log.get("self_correction_trace") or extra_prev.get("self_correction_trace") or []
+            else:
+                t_llm = time.perf_counter()
+                assert llm is not None
+                code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=getattr(args, "max_new_tokens", 1536))
+                mod_latencies["llm_gen"] = round((time.perf_counter() - t_llm) * 1000, 2)
+                self_correction_count = 0
+                self_correction_trace = []
 
             # Bước 6: Thực thi Sandbox & Self-Correction tối đa 2 vòng
             t_exec = time.perf_counter()
@@ -2107,9 +2141,7 @@ def run_batch_evaluation(args: argparse.Namespace):
                 return_details=True,
             )
 
-            max_self_corrections = 2
-            self_correction_count = 0
-            self_correction_trace: List[Dict[str, Any]] = []
+            max_self_corrections = 0 if replay_logs_dir else 2
             sanity_err = None
 
             if not exec_err:
@@ -2124,7 +2156,7 @@ def run_batch_evaluation(args: argparse.Namespace):
                     if not sem_eval1.get("is_compliant", True):
                         sanity_err = "; ".join(sem_eval1.get("violations", []))
 
-            while (exec_err or sanity_err) and self_correction_count < max_self_corrections:
+            while (exec_err or sanity_err) and self_correction_count < max_self_corrections and err_type != "DataNotFoundError":
                 self_correction_count += 1
                 current_err = exec_err or sanity_err
                 print(f"  🔄 [Self-Correction Vòng {self_correction_count}/{max_self_corrections}] Đang sửa: {current_err}")
@@ -2267,6 +2299,9 @@ def run_batch_evaluation(args: argparse.Namespace):
                     "description": temp_info.get("description", ""),
                     "start_date": temp_info.get("start_date"),
                     "end_date": temp_info.get("end_date"),
+                    "comparison_start": temp_info.get("comparison_start"),
+                    "comparison_end": temp_info.get("comparison_end"),
+                    "comparison_desc": temp_info.get("comparison_desc", ""),
                 },
                 "entity_matches": [getattr(m, "matched_value", str(m)) for m in entity_matches],
                 "pruned_schema": pruned_schema,
@@ -2357,6 +2392,7 @@ def run_batch_evaluation(args: argparse.Namespace):
         correct = 0
         wrong = 0
         abstain = 0
+        status_changes: List[Dict[str, Any]] = []
         breakdown: Dict[str, dict] = defaultdict(lambda: {"total": 0, "correct": 0, "wrong": 0, "abstain": 0, "latencies": []})
 
         for qid in eval_qids:
@@ -2373,14 +2409,36 @@ def run_batch_evaluation(args: argparse.Namespace):
             if p_type == "abstain":
                 abstain += 1
                 breakdown[g_type]["abstain"] += 1
+                new_state = "ABSTAIN"
             else:
                 is_correct = compare_single_answer(pred_item, gold_item)
                 if is_correct:
                     correct += 1
                     breakdown[g_type]["correct"] += 1
+                    new_state = "CORRECT"
                 else:
                     wrong += 1
                     breakdown[g_type]["wrong"] += 1
+                    new_state = "WRONG"
+
+            if replay_logs_dir and qid in replay_map:
+                old_log = replay_map[qid]
+                old_ans = old_log.get("answer") or (old_log.get("extra_log") or {}).get("answer") or {"type": "abstain", "answer": None}
+                if old_ans.get("type") == "abstain":
+                    old_state = "ABSTAIN"
+                elif compare_single_answer(old_ans, gold_item):
+                    old_state = "CORRECT"
+                else:
+                    old_state = "WRONG"
+                if old_state != new_state:
+                    status_changes.append({
+                        "question_id": qid,
+                        "old_state": old_state,
+                        "new_state": new_state,
+                        "old_answer": old_ans.get("answer"),
+                        "new_answer": pred_item.get("answer"),
+                        "reason": pred_item.get("reason") or "",
+                    })
 
         eval_total = len(eval_qids)
         pa_score = round((correct - wrong) / eval_total, 4) if eval_total else 0.0
@@ -2401,6 +2459,8 @@ def run_batch_evaluation(args: argparse.Namespace):
             "accuracy": acc_score,
             "coverage": coverage,
             "total_time_sec": total_time,
+            "status_changes_count": len(status_changes),
+            "status_changes": status_changes,
             "breakdown": dict(breakdown),
         }
 
@@ -2414,6 +2474,10 @@ def run_batch_evaluation(args: argparse.Namespace):
         print(f"Penalized Accuracy (PA): {pa_score:+.4f}")
         print(f"Accuracy (khi trả lời): {acc_score*100:.1f}%")
         print(f"Coverage (Độ bao phủ) : {coverage*100:.1f}%")
+        if replay_logs_dir:
+            print(f"Số câu đổi trạng thái : {len(status_changes)} câu")
+            for sc in status_changes:
+                print(f"  • {sc['question_id']}: {sc['old_state']} ({sc['old_answer']}) -> {sc['new_state']} ({sc['new_answer']}) [{sc['reason']}]")
         print("-" * 76)
         print(f"{'Kiểu đáp án':<16} | {'Tổng':>6} | {'Đúng':>6} | {'Sai':>6} | {'Abstain':>7} | {'Điểm PA':>8}")
         print("-" * 76)
@@ -2491,12 +2555,14 @@ def main():
     parser.add_argument("--timeout", type=int, default=30, help="Thời gian chờ tối đa khi chạy code trong sandbox (giây)")
     parser.add_argument("--in_process", action="store_true", help="Chạy code trực tiếp trong tiến trình thay vì sandbox")
     parser.add_argument("--max_new_tokens", type=int, default=1536, help="Số token tối đa sinh ra từ LLM (mặc định: 1536)")
+    parser.add_argument("--replay_logs", type=str, default=None, help="Thư mục logs đã sinh để chạy lại sandbox + cổng abstention + format (bỏ qua LLM)")
 
     args = parser.parse_args()
 
-    # Nhận diện chế độ: Nếu có cờ --batch, --batch_file, --batch_index hoặc (limit > 1 mà không chỉ định --id cụ thể)
+    # Nhận diện chế độ: Nếu có cờ --batch, --batch_file, --batch_index, --replay_logs hoặc (limit > 1 mà không chỉ định --id cụ thể)
     is_batch_mode = (
         args.batch
+        or (args.replay_logs is not None)
         or (args.batch_file is not None)
         or (args.batch_index is not None)
         or (args.limit is not None and args.limit > 1 and not args.id)
