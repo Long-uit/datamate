@@ -361,6 +361,26 @@ class _ProtectedDefsTransformer(ast.NodeTransformer):
             )
         return node
 
+    def visit_Return(self, node: ast.Return):
+        self.generic_visit(node)
+        # Nếu câu lệnh return bọc int(round(X)) hoặc round(X) (không có ndigits),
+        # gỡ bỏ lớp bọc làm tròn thành số nguyên để Format Normalizer quyết định làm tròn
+        # theo đúng kiểu câu hỏi (number tiền tệ -> int, percent / số trung bình -> float 2 chữ số thập phân).
+        if isinstance(node.value, ast.Call):
+            call = node.value
+            if isinstance(call.func, ast.Name) and call.func.id == "int" and len(call.args) == 1:
+                inner = call.args[0]
+                if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name) and inner.func.id == "round":
+                    if len(inner.args) == 1 and not inner.keywords:
+                        node.value = inner.args[0]
+                else:
+                    inner_str = ast.unparse(inner).lower() if hasattr(ast, "unparse") else ""
+                    if any(k in inner_str for k in ("ratio", "pct", "percent", "ty_le", "ti_le", "ty_trong", "ti_trong", "increase", "change", "rate")):
+                        node.value = inner
+            elif isinstance(call.func, ast.Name) and call.func.id == "round" and len(call.args) == 1 and not call.keywords:
+                node.value = call.args[0]
+        return node
+
     def visit_Call(self, node: ast.Call):
         self.generic_visit(node)
 

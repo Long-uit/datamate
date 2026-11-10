@@ -504,6 +504,11 @@ def get_return_format_instruction(question: str, for_retry: bool = False) -> str
             return "- BẮT BUỘC trả về một chuỗi ký tự đơn lẻ (scalar string: ví dụ 'Tên hàng' hoặc 'Tên NCC' hoặc 'Tên khách') là tên đối tượng đứng đầu. TUYỆT ĐỐI KHÔNG trả về dạng list hay dict hay số tiền!"
         return "4. BẮT BUỘC trả về một chuỗi ký tự đơn lẻ (scalar string: ví dụ 'Tên hàng' hoặc 'Tên NCC' hoặc 'Tên khách') là tên đối tượng đứng đầu. TUYỆT ĐỐI KHÔNG trả về dạng list hay dict hay số tiền!"
 
+    if re.search(r"(?<!\d)%|ph[ầa]n\s*tr(?:[ăa]m|awm)|\bt[ỉỷi]\s*l[ệe]\b|\bty\s*le\b|\bt[ỉỷi]\s*tr[ọo]ng\b|\bty\s*trong\b", question.lower()):
+        if for_retry:
+            return "- BẮT BUỘC trả về một số thực phần trăm trong thang 0-100 làm tròn 2 chữ số thập phân: float(round(val, 2)). TUYỆT ĐỐI KHÔNG ép kiểu số nguyên và KHÔNG kèm ký hiệu '%'!"
+        return "4. BẮT BUỘC trả về một số thực phần trăm trong thang 0-100 làm tròn 2 chữ số thập phân: float(round(val, 2)). TUYỆT ĐỐI KHÔNG ép kiểu số nguyên và KHÔNG kèm ký hiệu '%'!"
+
     # Mặc định: câu hỏi AOV, doanh thu, đơn giá, số lượng, số đơn
     if for_retry:
         return "- BẮT BUỘC trả về một số duy nhất (scalar number: int/float), làm tròn theo quy tắc làm tròn về đồng (int(round(...))). TUYỆT ĐỐI KHÔNG trả về dictionary hay list!"

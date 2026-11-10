@@ -331,8 +331,9 @@ def _numeric_equal(pred: Any, gold: Any) -> bool:
 
 
 def _norm_str(s: Any) -> str:
-    val = unicodedata.normalize("NFC", str(s)).strip().casefold()
-    return re.sub(r"\s+", " ", val)
+    val = unicodedata.normalize("NFC", str(s)).lower()
+    out_chars = [ch if (ch.isalnum() or ch.isspace()) else " " for ch in val]
+    return re.sub(r"\s+", " ", "".join(out_chars)).strip()
 
 
 def _split_aliases(cell: Any) -> list[str]:

@@ -124,6 +124,27 @@ def normalize_string(val: Any) -> Optional[str]:
     return s
 
 
+def canonicalize_string_for_eval(val: Any) -> str:
+    """
+    Chuẩn hóa chuỗi phục vụ đối chiếu theo Mục 3.2 tài liệu cuộc thi:
+    1. Chuẩn hóa Unicode NFC.
+    2. Chuyển chữ thành chữ thường (lowercase).
+    3. Thay mọi ký tự không phải chữ cái, chữ số hoặc khoảng trắng bằng một khoảng trắng (giữ nguyên dấu tiếng Việt).
+    4. Xóa khoảng trắng ở đầu và cuối.
+    5. Gộp các chuỗi nhiều khoảng trắng liên tiếp thành một khoảng trắng.
+    """
+    if is_nan_or_null(val):
+        return ""
+    s = _nfc(str(val)).lower()
+    out_chars = []
+    for ch in s:
+        if ch.isalnum() or ch.isspace():
+            out_chars.append(ch)
+        else:
+            out_chars.append(" ")
+    return re.sub(r"\s+", " ", "".join(out_chars)).strip()
+
+
 def normalize_boolean(val: Any) -> Optional[bool]:
     """
     Chuẩn hóa boolean về True/False chuẩn.
@@ -233,14 +254,14 @@ def normalize_number(
     return round(f_val, 4)
 
 
-def normalize_percent(val: Any, code_text: Optional[str] = None) -> Optional[Union[int, float]]:
+def normalize_percent(val: Any, code_text: Optional[str] = None) -> Optional[float]:
     """
-    Chuẩn hóa percent theo Điều 9 Rulebook:
-    - Là số phần trăm trong khoảng 0-100 (ví dụ: 12.4% ghi là 12.4, không kèm ký hiệu %).
+    Chuẩn hóa percent theo Điều 9 Rulebook & Mục 3.2:
+    - Là số phần trăm kiểu float trong khoảng 0-100 (ví dụ: 12.4% ghi là 12.4, không kèm ký hiệu %).
     - Nếu giá trị trả về dạng tỉ lệ nhỏ (ví dụ 0.124 thay vì 12.4) VÀ trong code_text chưa nhân 100,
       tự động nhân 100. Ngược lại nếu code_text đã có phép nhân 100 (ví dụ tỉ lệ hủy đơn thực sự là 0.91%),
       giữ nguyên 0.91 để không bị nhân 100 lần thứ hai.
-    - Làm tròn chính xác 2 chữ số thập phân (ROUND_HALF_UP).
+    - Làm tròn chính xác 2 chữ số thập phân (ROUND_HALF_UP), luôn trả về float.
     """
     if is_nan_or_null(val) or is_bool_instance(val):
         return None
@@ -271,11 +292,7 @@ def normalize_percent(val: Any, code_text: Optional[str] = None) -> Optional[Uni
 
     d_val = Decimal(str(f_val))
     rounded = d_val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    res_float = float(rounded)
-
-    if abs(res_float - round(res_float)) < 1e-6:
-        return int(round(res_float))
-    return res_float
+    return float(rounded)
 
 
 def normalize_date(val: Any) -> Optional[str]:
