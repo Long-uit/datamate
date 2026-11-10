@@ -1,0 +1,91 @@
+{
+  "question_id": "q_d2b32a2c57d8",
+  "answer": {
+    "id": "q_d2b32a2c57d8",
+    "type": "abstain",
+    "answer": null,
+    "reason": "Sanity Error: Silent Zero: Kết quả tính toán bằng 0 bất thường cho câu hỏi doanh thu / số lượng"
+  },
+  "elapsed_ms": 425029,
+  "confidence": 0.0,
+  "code": "def solution(data):\n    df_sales = None\n    for name, df in data.items():\n        if 'Bảng kê phiếu giao hàng' in name:\n            df_sales = df.copy()\n            break\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền\")\n\n    cols_s = df_sales.columns.tolist()\n    date_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    amt_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower()), None)\n    item_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['hàng', 'tên món', 'tên hàng', 'sản phẩm', 'mặt hàng'])), None)\n\n    df_sales['clean_date'] = clean_date(df_sales[date_col])\n    mask = (df_sales['clean_date'].dt.year == 2026) & (df_sales['clean_date'].dt.month == 2)\n    df_sales = df_sales[mask]\n\n    if item_col:\n        mask_prod = df_sales[item_col].astype(str).str.contains('gas petrolimex 12kg', case=False, na=False)\n        df_sales = df_sales[mask_prod]\n\n    if df_sales.empty:\n        return 0\n    return int(round(clean_num(df_sales[amt_col]).sum()))",
+  "raw_result": 0,
+  "error": "Silent Zero: Kết quả tính toán bằng 0 bất thường cho câu hỏi doanh thu / số lượng",
+  "unanswerable_source": "none",
+  "selected_tables": [
+    "Bảng kê phiếu giao hàng"
+  ],
+  "selected_columns": [
+    "clean_date"
+  ],
+  "self_correction_count": 2,
+  "business_id": "biz_115",
+  "as_of_date": "2026-05-16",
+  "original_question": "tiền bán gas petrolimex 12kg tháng 2/2026 là bn",
+  "normalized_question": "tiền bán gas petrolimex 12kg tháng 2/2026 là bao nhiêu",
+  "expanded_abbreviations": {
+    "bn": "bao nhiêu"
+  },
+  "intent": "aggregation",
+  "temporal_info": {
+    "description": "Tháng 2/2026",
+    "start_date": "2026-02-01",
+    "end_date": "2026-02-28"
+  },
+  "entity_matches": [
+    "Gas Petrolimex 12kg",
+    "La Linh Bảo",
+    "La Dũng Bảo",
+    "Gas Saigon Petro 12kg"
+  ],
+  "pruned_schema": "### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):\n- Bảng 'Bảng kê phiếu giao hàng' (alias: 't_01'): Sổ giao hàng / Vận chuyển (đợt giao, lượt giao, ngày chở/giao, mã vận đơn, biển số xe)\n- Bảng 'Chi tiết công nợ theo hạn' (alias: 't_02'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n- Bảng 'Danh sách hàng hóa' (alias: 't_03'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'So_chi_tiet_ban_hang_[gộp: 02.2025, 03.2025, 04.2025...]' (alias: 't_04'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n- Bảng 'Bảng kê phiếu giao hàng' [Vai trò: Sổ giao hàng / Vận chuyển (đợt giao, lượt giao, ngày chở/giao, mã vận đơn, biển số xe)] (24877 dòng):\n  Cột (8): ['Ngày giao hàng' (ngày: '2025-02-01' -> '2026-05-16'), 'Mã đơn hàng' (vd: 'ORD000001'), 'Lần giao' (phân loại: ['1', '2', '3']), 'Tên hàng hóa' (vd: 'Thép Pomina D10 cây...'), 'Đơn vị tính' (vd: 'cây'), 'Số lượng giao' (số/tiền, vd: '1'), 'Biển số xe' (phân loại: ['61C-750.95', '51D-663.78', '51C-410.47']), 'Người giao hàng' (phân loại: ['Hồ Linh', 'Vương Dũng', 'Kiều Thắng'])]\n\n- Bảng 'Chi tiết công nợ theo hạn' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (2304 dòng):\n  Cột (3): ['Mã đơn hàng' (vd: 'ORD000001'), 'Số ngày được nợ' (số/tiền, vd: '30'), 'Hạn thanh toán' (vd: '03/03/2025')]\n\n- Bảng 'Danh sách hàng hóa' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (60 dòng):\n  Cột (8): ['Mã hàng hóa' (vd: 'SP0001'), 'Được bán trực tiếp' (phân loại: ['1']), 'Tên hàng hóa' (vd: 'Xi măng Hà Tiên PCB...'), 'Nhóm hàng hóa' (vd: 'xi măng'), 'Loại hàng hóa' (phân loại: ['Hàng hóa']), 'Đơn vị tính' (vd: 'bao'), 'Giá vốn' (số/tiền, vd: '92,286.0000'), 'Định mức tồn tối thiểu' (số/tiền, vd: '0')]\n\n- Bảng 'So_chi_tiet_ban_hang_[gộp: 02.2025, 03.2025, 04.2025...]' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (28721 dòng):\n  Cột (11): ['Ngày' (ngày: '2025-02-01' -> '2026-05-16'), 'Mã đơn hàng' (vd: 'ORD000001'), 'Tên hàng hóa' (vd: 'Thép Pomina D10 cây...'), 'Đơn vị tính' (vd: 'cây'), 'Số lượng' (số/tiền, vd: '1 cây'), 'Đơn giá' (số/tiền, vd: '115,000.0000'), 'Thành tiền' (số/tiền, vd: '115,000.0000'), 'Trạng thái' (phân loại: ['Đã hoàn thành', 'Đã hủy', 'Đã trả hàng', 'Đang giao hàng']), 'Số lượng quy đổi' (số/tiền, vd: '1'), 'Khách hàng' (vd: 'Đinh Huy Huy'), '_source_sheet' (vd: '02.2025')]",
+  "gold_answer": {
+    "answer": 36868000,
+    "type": "number",
+    "alias": []
+  },
+  "match_result": {
+    "is_match": false,
+    "eval_score": 0.0,
+    "eval_status_label": "TỪ CHỐI TRẢ LỜI (ABSTAIN - 0.0)"
+  },
+  "deviation_analysis": {
+    "is_applicable": false,
+    "abs_diff": null,
+    "pct_diff": null,
+    "diagnostic_hypothesis": null
+  },
+  "threshold_tau_star": 0.5,
+  "grounding_eval": {},
+  "latency_breakdown_ms": {
+    "ingest_schema": 16470.76,
+    "feasibility": 7.46,
+    "grounding": 46.45,
+    "prompt_build": 16.74,
+    "llm_gen": 247022.58,
+    "sandbox_exec": 161465.77,
+    "normalizer": 0.0
+  },
+  "self_correction_trace": [
+    {
+      "round": 1,
+      "input_error": "Silent Zero: Kết quả tính toán bằng 0 bất thường cho câu hỏi doanh thu / số lượng",
+      "retry_code": "def solution(data):\n    df_sales = None\n    for name, df in data.items():\n        if 'Bảng kê phiếu giao hàng' in name:\n            df_sales = df.copy()\n            break\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền\")\n\n    cols_s = df_sales.columns.tolist()\n    date_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    amt_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower()), None)\n    item_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['hàng', 'tên món', 'tên hàng', 'sản phẩm', 'mặt hàng'])), None)\n\n    df_sales['clean_date'] = clean_date(df_sales[date_col])\n    mask = (df_sales['clean_date'].dt.year == 2026) & (df_sales['clean_date'].dt.month == 2)\n    df_sales = df_sales[mask]\n\n    if item_col:\n        mask_prod = df_sales[item_col].astype(str).str.contains('gas petrolimex 12kg', case=False, na=False)\n        df_sales = df_sales[mask_prod]\n\n    if df_sales.empty:\n        return 0\n    return int(round(clean_num(df_sales[amt_col]).sum()))",
+      "retry_error": null,
+      "retry_raw_result": 0,
+      "execution_ms": 102,
+      "success": false,
+      "sanity_error": "Silent Zero: Kết quả tính toán bằng 0 bất thường cho câu hỏi doanh thu / số lượng"
+    },
+    {
+      "round": 2,
+      "input_error": "Silent Zero: Kết quả tính toán bằng 0 bất thường cho câu hỏi doanh thu / số lượng",
+      "retry_code": "def solution(data):\n    df_sales = None\n    for name, df in data.items():\n        if 'Bảng kê phiếu giao hàng' in name:\n            df_sales = df.copy()\n            break\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền\")\n\n    cols_s = df_sales.columns.tolist()\n    date_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    amt_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower()), None)\n    item_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['hàng', 'tên món', 'tên hàng', 'sản phẩm', 'mặt hàng'])), None)\n\n    df_sales['clean_date'] = clean_date(df_sales[date_col])\n    mask = (df_sales['clean_date'].dt.year == 2026) & (df_sales['clean_date'].dt.month == 2)\n    df_sales = df_sales[mask]\n\n    if item_col:\n        mask_prod = df_sales[item_col].astype(str).str.contains('gas petrolimex 12kg', case=False, na=False)\n        df_sales = df_sales[mask_prod]\n\n    if df_sales.empty:\n        return 0\n    return int(round(clean_num(df_sales[amt_col]).sum()))",
+      "retry_error": null,
+      "retry_raw_result": 0,
+      "execution_ms": 106,
+      "success": false,
+      "sanity_error": "Silent Zero: Kết quả tính toán bằng 0 bất thường cho câu hỏi doanh thu / số lượng"
+    }
+  ]
+}

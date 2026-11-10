@@ -1,0 +1,73 @@
+{
+  "question_id": "q_9602e7257869",
+  "answer": {
+    "id": "q_9602e7257869",
+    "type": "number",
+    "answer": 0
+  },
+  "elapsed_ms": 146447,
+  "confidence": 0.95,
+  "code": "def solution(data):\n    sales_dfs = []\n    for name, df in data.items():\n        n_low = re.sub(r'[^a-zA-Z0-9]', '', str(name).lower())\n        if any(k in n_low for k in ['nhap', 'kho', 'chiphi', 'ncc', 'thekho', 'banggia', 'danhmuc', 'quydoi']):\n            continue\n        cols = [str(c).lower() for c in df.columns]\n        if any(k in c for c in cols for k in ['ngày', 'date', 'thời gian']) or any(k in c for c in cols for k in ['tiền', 'doanh thu', 'trị giá']):\n            sales_dfs.append(df.copy())\n\n    if not sales_dfs:\n        return 0\n    df_sales = pd.concat(sales_dfs, ignore_index=True) if len(sales_dfs) > 1 else sales_dfs[0]\n\n    cols = df_sales.columns.tolist()\n    d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian', 'ngaylap', 'ngày đặt'])), None)\n    amt_c = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tongtien', 'tiền bán', 'doanh thu', 'trị giá', 'tiền']) and 'thuế' not in str(c).lower() and 'giá lẻ' not in str(c).lower() and 'đơn giá' not in str(c).lower()), None)\n    st_c = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt', 'tình trạng', 'xử lý'])), None)\n\n    if not d_c or not amt_c:\n        return 0\n\n    df_sales['clean_date'] = clean_date(df_sales[d_c])\n    if st_c:\n        df_sales = df_sales[~df_sales[st_c].astype(str).str.contains(r'hủy|huỷ|huy|trả|tra|hoàn|hoan|cancel|return', case=False, na=False)]\n\n    mask = (df_sales['clean_date'].dt.year == 2026) & (df_sales['clean_date'].dt.month == 5) & (df_sales['clean_date'].dt.day >= 27) & (df_sales['clean_date'].dt.day <= 3)\n    df_period = df_sales[mask]\n    if df_period.empty:\n        return 0\n\n    df_period['clean_amt'] = clean_num(df_period[amt_c])\n    aov = df_period['clean_amt'].mean()\n    return int(round(aov))",
+  "raw_result": 0,
+  "error": null,
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [
+    "clean_date",
+    "clean_amt"
+  ],
+  "self_correction_count": 0,
+  "business_id": "biz_118",
+  "as_of_date": "2026-05-05",
+  "original_question": "Giá trị trung bình một đơn tuần trước là bao nhiêu?",
+  "normalized_question": "Giá trị trung bình một đơn tuần trước là bao nhiêu?",
+  "expanded_abbreviations": {},
+  "intent": "average_order_value",
+  "temporal_info": {
+    "description": "Tuần trước (từ 2026-04-27 đến 2026-05-03)",
+    "start_date": "2026-04-27",
+    "end_date": "2026-05-03"
+  },
+  "entity_matches": [],
+  "pruned_schema": "### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):\n- Bảng 'Bảng kê phiếu giao hàng' (alias: 't_01'): Sổ giao hàng / Vận chuyển (đợt giao, lượt giao, ngày chở/giao, mã vận đơn, biển số xe)\n- Bảng 'Chi tiết công nợ theo hạn' (alias: 't_02'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n- Bảng 'Danh sách hàng hóa' (alias: 't_03'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'So_chi_tiet_ban_hang_[gộp: T02-2025, T03-2025, T04-2025...]' (alias: 't_04'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n- Bảng 'Bảng kê phiếu giao hàng' [Vai trò: Sổ giao hàng / Vận chuyển (đợt giao, lượt giao, ngày chở/giao, mã vận đơn, biển số xe)] (41198 dòng):\n  Cột (8): ['Ngày giao hàng' (ngày: '2025-02-01' -> '2026-09-10'), 'Mã đơn hàng' (vd: 'ORD000002'), 'Lần giao' (phân loại: ['1', '2', '3']), 'Tên hàng hóa' (vd: 'Kẽm buộc 1mm'), 'Đơn vị tính' (vd: 'kg'), 'Số lượng giao' (số/tiền, vd: '1'), 'Biển số xe' (phân loại: ['51C-327.66', '51D-233.15']), 'Người giao hàng' (phân loại: ['Ông Hương', 'Châu Giang'])]\n\n- Bảng 'Chi tiết công nợ theo hạn' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (4915 dòng):\n  Cột (3): ['Mã đơn hàng' (vd: 'ORD000005'), 'Số ngày được nợ' (số/tiền, vd: '30'), 'Hạn thanh toán' (vd: '03/03/2025')]\n\n- Bảng 'Danh sách hàng hóa' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (55 dòng):\n  Cột (8): ['Mã hàng hóa' (vd: 'SP0001'), 'Mã barcode' (vd: '8939792877748'), 'Tên hàng hóa' (vd: 'Xi măng Hà Tiên PCB...'), 'Loại hàng hóa' (phân loại: ['Hàng hóa']), 'Nhóm hàng hóa' (vd: 'xi măng'), 'Đơn vị tính' (vd: 'bao'), 'Tồn lớn nhất' (số/tiền, vd: '999999999'), 'Được bán trực tiếp' (phân loại: ['1'])]\n\n- Bảng 'So_chi_tiet_ban_hang_[gộp: T02-2025, T03-2025, T04-2025...]' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (46001 dòng):\n  Cột (11): ['Ngày' (ngày: '2025-02-01' -> '2026-09-10'), 'Mã đơn hàng' (vd: 'ORD000001'), 'Tên hàng hóa' (vd: 'Ống PVC Bình Minh D...'), 'Đơn vị tính' (vd: 'cây'), 'Số lượng' (số/tiền, vd: '2'), 'Đơn giá' (số/tiền, vd: '65,000.0000'), 'Thành tiền' (số/tiền, vd: '130,000.0000'), 'Trạng thái' (vd: 'đã xong'), 'Số lượng quy đổi' (số/tiền, vd: '2'), 'Khách hàng' (vd: 'Tống Trang Dũng'), '_source_sheet' (vd: 'T02-2025')]",
+  "gold_answer": {
+    "answer": 1371362,
+    "type": "number",
+    "alias": []
+  },
+  "match_result": {
+    "is_match": false,
+    "eval_score": -1.0,
+    "eval_status_label": "SAI LỆCH ĐÁP ÁN (WRONG - -1.0)"
+  },
+  "deviation_analysis": {
+    "is_applicable": true,
+    "abs_diff": 1371362.0,
+    "pct_diff": 100.0,
+    "diagnostic_hypothesis": null
+  },
+  "threshold_tau_star": 0.5,
+  "grounding_eval": {
+    "entity_coverage": 1.0,
+    "temporal_coverage": 1.0,
+    "table_coverage": 1.0,
+    "entity_penalty": 0.0,
+    "temporal_penalty": 0.0,
+    "table_penalty": 0.0,
+    "total_penalty": 0.0,
+    "missed_mentions": [],
+    "offtopic_tables": [],
+    "total_valid_mentions": 0,
+    "covered_mentions": 0
+  },
+  "latency_breakdown_ms": {
+    "ingest_schema": 0.0,
+    "feasibility": 7.97,
+    "grounding": 56.94,
+    "prompt_build": 13.87,
+    "llm_gen": 145170.74,
+    "sandbox_exec": 1197.54,
+    "normalizer": 0.48
+  },
+  "self_correction_trace": []
+}

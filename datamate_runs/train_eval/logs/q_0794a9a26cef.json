@@ -1,0 +1,87 @@
+{
+  "question_id": "q_0794a9a26cef",
+  "answer": {
+    "id": "q_0794a9a26cef",
+    "type": "abstain",
+    "answer": null,
+    "reason": "Runtime Error: Không tìm thấy cột cần thiết trong bảng tồn kho"
+  },
+  "elapsed_ms": 824101,
+  "confidence": 0.0,
+  "code": "def solution(data):\n    df_stock = data.get('BaoCaoTonKho')\n    if df_stock is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng tồn kho trong dữ liệu\", table_name=\"BaoCaoTonKho\")\n\n    prod_col = next((c for c in df_stock.columns if any(k in str(c).lower() for k in ['tên hàng', 'sản phẩm', 'mặt hàng', 'product'])), None)\n    remain_col = next((c for c in df_stock.columns if any(k in str(c).lower() for k in ['tồn cuối', 'số lượng tồn', 'tồn kho', 'soluongton', 'tồn thực'])), None)\n    date_col = next((c for c in df_stock.columns if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    unit_col = next((c for c in df_stock.columns if any(k in str(c).lower() for k in ['quy cách', 'đơn vị', 'đvt'])), None)\n\n    if prod_col is None or remain_col is None or date_col is None:\n        raise DataNotFoundError(\"Không tìm thấy cột cần thiết trong bảng tồn kho\")\n\n    df_stock = filter_valid_sales(df_stock, date_col, '2026-09-14', '2026-09-14 23:59:59')\n\n    matched = df_stock[(df_stock[prod_col].astype(str).str.lower() == 'bánh croissant') & (df_stock[date_col] == pd.to_datetime('2026-09-14').date())]\n    if matched.empty:\n        raise DataNotFoundError(\"Không tìm thấy mặt hàng trong bảng tồn kho\", column_name=prod_col)\n\n    total_units = int(round(clean_num(matched[remain_col]).iloc[0]))\n    packing_size = 100\n    if unit_col and not matched[unit_col].isna().all():\n        val = matched[unit_col].iloc[0]\n        m = re.search(r\"\\d+\", str(val))\n        if m:\n            packing_size = int(m.group(0))\n\n    boxes, pills = divmod(total_units, packing_size)\n    return [int(boxes), int(pills)]",
+  "raw_result": null,
+  "error": "Không tìm thấy cột cần thiết trong bảng tồn kho",
+  "unanswerable_source": "none",
+  "selected_tables": [
+    "BaoCaoTonKho"
+  ],
+  "selected_columns": [],
+  "self_correction_count": 2,
+  "business_id": "biz_106",
+  "as_of_date": "2026-09-14",
+  "original_question": "Cuối ngày hôm nay Bánh croissant còn mấy hộp chẵn, mấy cái lẻ?",
+  "normalized_question": "Cuối ngày hôm nay Bánh croissant còn mấy hộp chẵn, mấy cái lẻ?",
+  "expanded_abbreviations": {},
+  "intent": "inventory_unit_conversion",
+  "temporal_info": {
+    "description": "Hôm nay (2026-09-14)",
+    "start_date": "2026-09-14",
+    "end_date": "2026-09-14"
+  },
+  "entity_matches": [
+    "BÁNH CROISSANT",
+    "Bánh croissant",
+    "bánh"
+  ],
+  "pruned_schema": "### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):\n- Bảng 'BaoCaoTonKho' (alias: 't_01'): Tồn kho / Thẻ kho (số lượng tồn, tồn thực)\n- Bảng 'DanhSachChiTietNhapHang' (alias: 't_02'): Nhập hàng chi tiết (mặt hàng, số lượng, giá nhập)\n- Bảng 'DanhSachDonViTinh' (alias: 't_03'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'DanhSachHoaDon' (alias: 't_04'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n- Bảng 'DanhSachHoaDonChiTiet_1' (alias: 't_05'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n- Bảng 'DanhSachHoaDonChiTiet_2' (alias: 't_06'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n- Bảng 'DanhSachKhachHang' (alias: 't_07'): Danh mục khách hàng (mã khách, tên khách, nhóm khách, địa chỉ)\n- Bảng 'DanhSachNhapHang' (alias: 't_08'): Nhập hàng tổng hợp (phiếu nhập, ngày nhập, tiền nhập)\n- Bảng 'DanhSachSanPham' (alias: 't_09'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'SoQuy' (alias: 't_10'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n- Bảng 'BaoCaoTonKho' [Vai trò: Tồn kho / Thẻ kho (số lượng tồn, tồn thực)] (50 dòng):\n  Cột (4): ['Mã hàng' (vd: 'SP0001'), 'Tên hàng' (vd: 'Cà phê đen (M)'), 'ĐVT' (phân loại: ['ly', 'phần', 'cái']), 'Tồn cuối kỳ' (số/tiền, vd: '132')]\n\n- Bảng 'DanhSachChiTietNhapHang' [Vai trò: Nhập hàng chi tiết (mặt hàng, số lượng, giá nhập)] (1562 dòng):\n  Cột (6): ['Mã nhập hàng' (vd: 'PN00001'), 'STT' (vd: '1'), 'Mã hàng' (vd: 'SP0001'), 'ĐVT' (phân loại: ['ly', 'phần', 'hộp']), 'Số lượng' (số/tiền, vd: '237'), 'Đơn giá' (số/tiền, vd: '7,100')]\n\n- Bảng 'DanhSachDonViTinh' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (2 dòng):\n  Cột (4): ['Mã hàng' (vd: 'SP0049'), 'ĐVT' (phân loại: ['hộp']), 'Quy đổi' (vd: '6'), 'Giá bán' (số/tiền, vd: '222000')]\n\n- Bảng 'DanhSachHoaDon' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (78788 dòng):\n  Cột (11): ['Mã hóa đơn' (vd: 'ORD000001'), 'Thời gian' (ngày: '2025-02-01' -> '2026-09-14'), 'Mã KH' (vd: 'KH0043'), 'Khách hàng' (vd: 'Triệu Hằng Hiếu'), 'Tổng tiền hàng' (số/tiền, vd: '90,000'), 'Giảm giá' (số/tiền, vd: '0'), 'Tổng sau giảm giá' (số/tiền, vd: '90,000'), 'Khách đã trả' (vd: '90,000'), 'Phương thức thanh toán' (phân loại: ['Tiền mặt', 'Chuyển khoản', 'Ví điện tử', 'Thu hộ (COD)', 'Ghi nợ']), 'Trạng thái' (vd: 'xong'), 'Thời gian tạo' (ngày: '2025-02-01' -> '2026-09-14')]\n\n- Bảng 'DanhSachHoaDonChiTiet_1' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (97504 dòng):\n  Cột (11): ['Mã hóa đơn' (vd: 'ORD000001'), 'STT' (phân loại: ['1', '2', '3']), 'Mã hàng' (vd: 'SP0026'), 'Tên hàng' (vd: 'Hồng trà sữa (L)'), 'Đơn vị tính' (phân loại: ['ly', 'phần', 'cái', 'hộp']), 'Số lượng' (số/tiền, vd: '1'), 'Đơn giá' (số/tiền, vd: '45,000'), 'Giảm giá' (số/tiền, vd: '0'), 'Thành tiền' (số/tiền, vd: '45,000'), 'Số lượng quy đổi' (số/tiền, vd: '1'), 'Giá vốn' (số/tiền, vd: '13,000')]\n\n- Bảng 'DanhSachHoaDonChiTiet_2' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (28682 dòng):\n  Cột (11): ['Mã hóa đơn' (vd: 'ORD060893'), 'STT' (phân loại: ['1', '2', '3']), 'Mã hàng' (vd: 'SP0005'), 'Tên hàng' (vd: 'Bạc xỉu (M)'), 'Đơn vị tính' (phân loại: ['ly', 'phần', 'cái', 'hộp']), 'Số lượng' (số/tiền, vd: '3'), 'Đơn giá' (số/tiền, vd: '33,500'), 'Giảm giá' (số/tiền, vd: '0'), 'Thành tiền' (số/tiền, vd: '100,500'), 'Số lượng quy đổi' (số/tiền, vd: '3'), 'Giá vốn' (số/tiền, vd: '9,110')]\n\n- Bảng 'DanhSachKhachHang' [Vai trò: Danh mục khách hàng (mã khách, tên khách, nhóm khách, địa chỉ)] (240 dòng):\n  Cột (10): ['Mã khách hàng' (vd: 'KH0001'), 'Trạng thái' (phân loại: ['Đang hoạt động']), 'Ngày sinh' (ngày: '1966-08-04' -> '2003-12-16'), 'Tổng điểm' (phân loại: ['0']), 'Điểm tích lũy' (phân loại: ['0']), 'Tên khách hàng' (vd: 'Nguyễn Phương An'), 'Mã số thuế' (số/tiền, vd: '0759812817'), 'Người tạo' (phân loại: ['admin']), 'Điện thoại' (vd: '0932426380'), 'Loại hình khách' (phân loại: ['Cá nhân'])]\n\n- Bảng 'DanhSachNhapHang' [Vai trò: Nhập hàng tổng hợp (phiếu nhập, ngày nhập, tiền nhập)] (513 dòng):\n  Cột (6): ['Mã nhập hàng' (vd: 'PN00001'), 'Thời gian' (ngày: '2025-02-01' -> '2026-09-14'), 'Mã NCC' (phân loại: ['NCC005', 'NCC004', 'NCC001', 'NCC003', 'NCC002']), 'Cần trả NCC' (số/tiền, vd: '56,356,700'), 'Trạng thái' (phân loại: ['Đã nhập hàng']), 'Ghi chú' (phân loại: ['nhập đầu kỳ'])]\n\n- Bảng 'DanhSachSanPham' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (50 dòng):\n  Cột (13): ['Được bán trực tiếp' (phân loại: ['1']), 'Nhóm hàng(3 Cấp)' (vd: 'cà phê'), 'Mã barcode' (vd: '8937889784207'), 'Mã hàng' (vd: 'SP0001'), 'Tồn lớn nhất' (số/tiền, vd: '999999999'), 'Tên hàng' (vd: 'Cà phê đen (M)'), 'Giá bán' (số/tiền, vd: '27500'), 'Loại hàng hóa' (phân loại: ['Hàng hóa']), 'Giá vốn' (số/tiền, vd: '6742'), 'ĐVT' (phân loại: ['ly', 'phần', 'cái']), 'Đang kinh doanh' (phân loại: ['True']), 'Định mức tồn tối thiểu' (số/tiền, vd: '0'), 'Thời gian tạo' (ngày: '2023-03-05' -> '2025-01-25')]\n\n- Bảng 'SoQuy' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (78673 dòng):\n  Cột (5): ['Mã phiếu' (vd: 'PAY000001'), 'Thời gian' (ngày: '2025-02-01' -> '2026-09-14'), 'Mã hóa đơn' (vd: 'ORD000001'), 'Phương thức thanh toán' (phân loại: ['Tiền mặt', 'Chuyển khoản', 'Ví điện tử', 'Thu hộ (COD)']), 'Giá trị' (số/tiền, vd: '90.000đ')]",
+  "gold_answer": {
+    "answer": [
+      13,
+      2
+    ],
+    "type": "list",
+    "alias": []
+  },
+  "match_result": {
+    "is_match": false,
+    "eval_score": 0.0,
+    "eval_status_label": "TỪ CHỐI TRẢ LỜI (ABSTAIN - 0.0)"
+  },
+  "deviation_analysis": {
+    "is_applicable": false,
+    "abs_diff": null,
+    "pct_diff": null,
+    "diagnostic_hypothesis": null
+  },
+  "threshold_tau_star": 0.5,
+  "grounding_eval": {},
+  "latency_breakdown_ms": {
+    "ingest_schema": 87312.33,
+    "feasibility": 0.76,
+    "grounding": 119.13,
+    "prompt_build": 14.11,
+    "llm_gen": 407328.15,
+    "sandbox_exec": 329327.22,
+    "normalizer": 0.01
+  },
+  "self_correction_trace": [
+    {
+      "round": 1,
+      "input_error": "Không tìm thấy bảng tồn kho trong dữ liệu [Bảng tìm kiếm: 'tồn kho'] [Các bảng thực tế có sẵn: BaoCaoTonKho, t_01, DanhSachChiTietNhapHang, t_02, DanhSachDonViTinh, t_03, DanhSachHoaDon, t_04, DanhSachHoaDonChiTiet_1, t_05]",
+      "retry_code": "def solution(data):\n    df_stock = data.get('BaoCaoTonKho')\n    if df_stock is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng tồn kho trong dữ liệu\", table_name=\"BaoCaoTonKho\")\n\n    prod_col = next((c for c in df_stock.columns if any(k in str(c).lower() for k in ['tên hàng', 'sản phẩm', 'mặt hàng', 'product'])), None)\n    remain_col = next((c for c in df_stock.columns if any(k in str(c).lower() for k in ['tồn cuối', 'số lượng tồn', 'tồn kho', 'soluongton', 'tồn thực'])), None)\n    date_col = next((c for c in df_stock.columns if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    unit_col = next((c for c in df_stock.columns if any(k in str(c).lower() for k in ['quy cách', 'đơn vị', 'đvt'])), None)\n\n    if prod_col is None or remain_col is None or date_col is None:\n        raise DataNotFoundError(\"Không tìm thấy cột cần thiết trong bảng tồn kho\")\n\n    df_stock = filter_valid_sales(df_stock, date_col, '2026-09-14', '2026-09-14 23:59:59')\n\n    matched = df_stock[(df_stock[prod_col].astype(str).str.lower() == 'bánh croissant') & (df_stock[date_col] == pd.to_datetime('2026-09-14').date())]\n    if matched.empty:\n        raise DataNotFoundError(\"Không tìm thấy mặt hàng trong bảng tồn kho\", column_name=prod_col)\n\n    total_units = int(round(clean_num(matched[remain_col]).iloc[0]))\n    packing_size = 100\n    if unit_col and not matched[unit_col].isna().all():\n        val = matched[unit_col].iloc[0]\n        m = re.search(r\"\\d+\", str(val))\n        if m:\n            packing_size = int(m.group(0))\n\n    boxes, pills = divmod(total_units, packing_size)\n    return [int(boxes), int(pills)]",
+      "retry_error": "Không tìm thấy cột cần thiết trong bảng tồn kho",
+      "retry_raw_result": null,
+      "execution_ms": 24,
+      "success": false
+    },
+    {
+      "round": 2,
+      "input_error": "Không tìm thấy cột cần thiết trong bảng tồn kho",
+      "retry_code": "def solution(data):\n    df_stock = data.get('BaoCaoTonKho')\n    if df_stock is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng tồn kho trong dữ liệu\", table_name=\"BaoCaoTonKho\")\n\n    prod_col = next((c for c in df_stock.columns if any(k in str(c).lower() for k in ['tên hàng', 'sản phẩm', 'mặt hàng', 'product'])), None)\n    remain_col = next((c for c in df_stock.columns if any(k in str(c).lower() for k in ['tồn cuối', 'số lượng tồn', 'tồn kho', 'soluongton', 'tồn thực'])), None)\n    date_col = next((c for c in df_stock.columns if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    unit_col = next((c for c in df_stock.columns if any(k in str(c).lower() for k in ['quy cách', 'đơn vị', 'đvt'])), None)\n\n    if prod_col is None or remain_col is None or date_col is None:\n        raise DataNotFoundError(\"Không tìm thấy cột cần thiết trong bảng tồn kho\")\n\n    df_stock = filter_valid_sales(df_stock, date_col, '2026-09-14', '2026-09-14 23:59:59')\n\n    matched = df_stock[(df_stock[prod_col].astype(str).str.lower() == 'bánh croissant') & (df_stock[date_col] == pd.to_datetime('2026-09-14').date())]\n    if matched.empty:\n        raise DataNotFoundError(\"Không tìm thấy mặt hàng trong bảng tồn kho\", column_name=prod_col)\n\n    total_units = int(round(clean_num(matched[remain_col]).iloc[0]))\n    packing_size = 100\n    if unit_col and not matched[unit_col].isna().all():\n        val = matched[unit_col].iloc[0]\n        m = re.search(r\"\\d+\", str(val))\n        if m:\n            packing_size = int(m.group(0))\n\n    boxes, pills = divmod(total_units, packing_size)\n    return [int(boxes), int(pills)]",
+      "retry_error": "Không tìm thấy cột cần thiết trong bảng tồn kho",
+      "retry_raw_result": null,
+      "execution_ms": 6,
+      "success": false
+    }
+  ]
+}

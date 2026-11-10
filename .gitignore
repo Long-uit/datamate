@@ -37,8 +37,8 @@ submission.jsonl
 results/
 
 scripts/
-reports/*
-!reports/Agents/
+reports/
+reports/Agents/
 reports/Agents/step*_logs/
 reports/Agents/*.png
 reports/Agents/*.jsonl

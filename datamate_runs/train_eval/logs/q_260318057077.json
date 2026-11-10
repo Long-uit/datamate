@@ -1,0 +1,78 @@
+{
+  "question_id": "q_260318057077",
+  "answer": {
+    "id": "q_260318057077",
+    "type": "number",
+    "answer": 803177000
+  },
+  "elapsed_ms": 201185,
+  "confidence": 1.0,
+  "code": "def solution(data):\n    df_sales = None\n    for name, df in data.items():\n        if any(k in str(name).lower() for k in ['nhap', 'kho', 'chiphi', 'ncc', 'tonkho']):\n            continue\n        cols = df.columns.tolist()\n        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower()), None)\n        if d_c and a_c:\n            df_sales = df.copy()\n            break\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền\")\n\n    cols_s = df_sales.columns.tolist()\n    date_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    amt_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower()), None)\n    status_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt'])), None)\n\n    df_sales['clean_date'] = clean_date(df_sales[date_col])\n    if status_col:\n        df_sales = df_sales[~df_sales[status_col].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|trả|cancel', regex=True, na=False)]\n\n    mask = (df_sales['clean_date'].dt.year == 2026) & (df_sales['clean_date'].dt.month >= 4) & (df_sales['clean_date'].dt.month <= 6)\n    df_sales = df_sales[mask]\n\n    if df_sales.empty:\n        return 0\n    return int(round(clean_num(df_sales[amt_col]).sum()))",
+  "raw_result": 803177000,
+  "error": null,
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [
+    "clean_date"
+  ],
+  "self_correction_count": 0,
+  "business_id": "biz_121",
+  "as_of_date": "2026-09-20",
+  "original_question": "xem giúp tổng dthu quý 2/2026 là bn hả",
+  "normalized_question": "xem giúp tổng doanh thu quý 2/2026 là bao nhiêu hả",
+  "expanded_abbreviations": {
+    "dthu": "doanh thu",
+    "bn": "bao nhiêu"
+  },
+  "intent": "aggregation",
+  "temporal_info": {
+    "description": "Quý 2/2026",
+    "start_date": "2026-04-01",
+    "end_date": "2026-06-30"
+  },
+  "entity_matches": [
+    "La Bảo Dương",
+    "2,200"
+  ],
+  "pruned_schema": "### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):\n- Bảng 'DonHang_ChiTiet' (alias: 't_01'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n- Bảng 'DuLieuXuat_DanhSachQuyDoi' (alias: 't_02'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'DuLieuXuat_DanhSachSanPham' (alias: 't_03'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'DuLieuXuat_DonNhapHang' (alias: 't_04'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n- Bảng 'DuLieuXuat_DonNhapHang_ChiTiet' (alias: 't_05'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n- Bảng 'DuLieuXuat_DonHang_Lo' (alias: 't_06'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n- Bảng 'DuLieuXuat_DanhSachThuoc' (alias: 't_07'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n- Bảng 'DonHang_ChiTiet' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (82920 dòng):\n  Cột (9): ['Mã đơn hàng' (vd: 'ORD000001'), 'Ngày đặt hàng' (ngày: '2025-03-01' -> '2026-09-20'), 'Trạng thái đơn hàng' (phân loại: ['Đã hoàn thành', 'Đã hủy', 'Đã hoàn hàng', 'Đang giao dịch']), 'Tên khách hàng' (vd: 'Lâm Ngọc Ngọc'), 'Tên sản phẩm' (vd: 'Amoxicillin 500mg D...'), 'Số lượng sản phẩm' (số/tiền, vd: '1'), 'Giá sản phẩm' (số/tiền, vd: '100,000'), 'Tổng tiền' (số/tiền, vd: '100000'), 'Đơn vị tính' (vd: 'hộp')]\n\n- Bảng 'DuLieuXuat_DanhSachQuyDoi' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (83 dòng):\n  Cột (4): ['Tên sản phẩm' (vd: 'Panadol Extra hộp 1...'), 'Đơn vị quy đổi' (phân loại: ['vỉ', 'hộp', 'chai', 'tuýp', 'lốc']), 'Tỉ lệ quy đổi' (vd: '12'), 'Đơn vị cơ bản' (vd: 'viên')]\n\n- Bảng 'DuLieuXuat_DanhSachSanPham' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (80 dòng):\n  Cột (7): ['Mã SKU' (vd: 'SP0001'), 'Tên sản phẩm' (vd: 'Panadol Extra hộp 1...'), 'Mã barcode' (vd: '8937854393632'), 'Đơn vị' (vd: 'viên'), 'Tồn lớn nhất' (số/tiền, vd: '999999999'), 'Loại sản phẩm' (vd: 'giảm đau hạ sốt'), 'Loại hàng hóa' (phân loại: ['Hàng hóa'])]\n\n- Bảng 'DuLieuXuat_DonNhapHang' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (566 dòng):\n  Cột (3): ['Mã đơn nhập' (vd: 'PN00001'), 'Ngày nhập' (ngày: '2025-03-01' -> '2026-09-20'), 'Mã nhà cung cấp' (phân loại: ['NCC001', 'NCC004', 'NCC002', 'NCC003', 'NCC005'])]\n\n- Bảng 'DuLieuXuat_DonNhapHang_ChiTiet' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (3665 dòng):\n  Cột (5): ['Mã đơn nhập' (vd: 'PN00204'), 'Mã SKU' (vd: 'SP0001'), 'Mã lô' (vd: 'A2509923'), 'Hạn sử dụng' (vd: '08/03/2027'), 'Số lượng nhập' (số/tiền, vd: '360')]\n\n- Bảng 'DuLieuXuat_DonHang_Lo' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (84745 dòng):\n  Cột (4): ['Mã đơn hàng' (vd: 'ORD000001'), 'Mã lô' (vd: 'Y2503213'), 'Số lượng' (số/tiền, vd: '100'), 'Số lượng trả' (số/tiền, vd: '0')]\n\n- Bảng 'DuLieuXuat_DanhSachThuoc' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (80 dòng):\n  Cột (3): ['Mã SKU' (vd: 'SP0001'), 'Hoạt chất' (vd: 'Paracetamol + Cafein'), 'Thuốc kê đơn' (phân loại: ['False', 'True'])]",
+  "gold_answer": {
+    "answer": 797461200,
+    "type": "number",
+    "alias": []
+  },
+  "match_result": {
+    "is_match": false,
+    "eval_score": -1.0,
+    "eval_status_label": "SAI LỆCH ĐÁP ÁN (WRONG - -1.0)"
+  },
+  "deviation_analysis": {
+    "is_applicable": true,
+    "abs_diff": 5715800.0,
+    "pct_diff": 0.7167496048710583,
+    "diagnostic_hypothesis": null
+  },
+  "threshold_tau_star": 0.5,
+  "grounding_eval": {
+    "entity_coverage": 1.0,
+    "temporal_coverage": 1.0,
+    "table_coverage": 1.0,
+    "entity_penalty": 0.0,
+    "temporal_penalty": 0.0,
+    "table_penalty": 0.0,
+    "total_penalty": 0.0,
+    "missed_mentions": [],
+    "offtopic_tables": [],
+    "total_valid_mentions": 0,
+    "covered_mentions": 0
+  },
+  "latency_breakdown_ms": {
+    "ingest_schema": 32776.85,
+    "feasibility": 12.2,
+    "grounding": 181.42,
+    "prompt_build": 30.01,
+    "llm_gen": 134344.38,
+    "sandbox_exec": 33839.59,
+    "normalizer": 0.87
+  },
+  "self_correction_trace": []
+}

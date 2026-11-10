@@ -1,0 +1,18 @@
+{
+  "question_id": "q_279180641d59",
+  "answer": {
+    "id": "q_279180641d59",
+    "type": "abstain",
+    "answer": null,
+    "reason": "Sanity Check: Kết quả '0' vô lý cho câu hỏi tìm đối tượng xếp hạng / bán chạy nhất"
+  },
+  "elapsed_ms": 157045,
+  "confidence": 0.0,
+  "code": "def solution(data):\n    df_sales = next((df for n, df in data.items() if 'So_chi_tiet_ban_hang' in n), None)\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy dữ liệu bán hàng phù hợp\", table_name=\"bán hàng\")\n\n    cols = df_sales.columns.tolist()\n    date_col = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    if date_col is None:\n        raise DataNotFoundError(\"Không tìm thấy cột ngày trong bảng bán hàng\")\n\n    df_sales['clean_date'] = clean_date(df_sales[date_col])\n    mask = (df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 7)\n    df_period = df_sales[mask]\n\n    if df_period.empty:\n        return 0\n\n    prod_col = next((c for c in cols if any(k in str(c).lower() for k in ['tên hàng', 'sản phẩm', 'mặt hàng', 'tên thuốc', 'hàng'])), None)\n    if prod_col is None:\n        raise DataNotFoundError(\"Không tìm thấy cột tên hàng trong bảng bán hàng\")\n\n    grp = df_period.groupby(prod_col, as_index=False)['clean_date'].count()\n    result = grp[grp['clean_date'] >= 74]['clean_date'].sum()\n    return int(round(result))",
+  "raw_result": 0,
+  "error": "Kết quả '0' vô lý cho câu hỏi tìm đối tượng xếp hạng / bán chạy nhất",
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [],
+  "self_correction_count": 0
+}

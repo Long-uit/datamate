@@ -1,0 +1,72 @@
+{
+  "question_id": "q_20cfa482235e",
+  "answer": {
+    "id": "q_20cfa482235e",
+    "type": "string",
+    "answer": "Cty Vũ Sơn"
+  },
+  "elapsed_ms": 203850,
+  "confidence": 1.0,
+  "code": "def solution(data):\n    df_nhap = next((df.copy() for name, df in data.items() if 'nhap' in re.sub(r'[^a-zA-Z0-9]', '', str(name).lower())), None)\n    if df_nhap is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng nhập hàng trong dữ liệu\", table_name=\"nhập hàng\", available_tables=list(data.keys()))\n\n    cols = df_nhap.columns.tolist()\n    d_c = next((c for c in cols if any(k in str(c).lower() for k in ['thời gian', 'ngày', 'date', 'ngaylap'])), None)\n    amt_col = next((c for c in cols if any(k in str(c).lower() for k in ['cần trả ncc', 'tổng tiền', 'tong tien', 'thành tiền', 'giá trị']) and 'trả hàng' not in str(c).lower()), None)\n    if not d_c or not amt_col:\n        raise DataNotFoundError(\"Bảng nhập hàng thiếu cột ngày hoặc cột tiền\", column_name=\"ngày/tiền\", available_columns=cols)\n\n    df_nhap['clean_date'] = clean_date(df_nhap[d_c])\n    df_nhap = df_nhap[(df_nhap['clean_date'] >= pd.Timestamp('2026-05-01')) & (df_nhap['clean_date'] <= pd.Timestamp('2026-05-31 23:59:59'))]\n\n    st_c = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt', 'ghi chú', 'cancel'])), None)\n    if st_c:\n        df_nhap = df_nhap[~df_nhap[st_c].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|cancel')]\n\n    top_ncc = df_nhap.groupby('Nhà cung cấp')[amt_col].sum().idxmax()\n    return top_ncc",
+  "raw_result": "Cty Vũ Sơn",
+  "error": null,
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [
+    "clean_date"
+  ],
+  "self_correction_count": 0,
+  "business_id": "biz_105",
+  "as_of_date": "2026-06-24",
+  "original_question": "coi giùm tháng 5/2026 cuwar hàng nhập nhiều tiền hàng nhất từ nhaf cung cấp nào",
+  "normalized_question": "coi giùm tháng 5/2026 cuwar hàng nhập nhiều tiền hàng nhất từ nhaf cung cấp nào",
+  "expanded_abbreviations": {},
+  "intent": "purchase_import",
+  "temporal_info": {
+    "description": "Tháng 5/2026",
+    "start_date": "2026-05-01",
+    "end_date": "2026-05-31"
+  },
+  "entity_matches": [],
+  "pruned_schema": "### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):\n- Bảng 'BangGia' (alias: 't_01'): Bảng dữ liệu khác\n- Bảng 'DanhMuc' (alias: 't_02'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'SoNhapHang' (alias: 't_05'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n- Bảng 'BangGia' [Vai trò: Bảng dữ liệu khác] (78 dòng):\n  Cột (4): ['Ngày áp dụng' (ngày: '2025-02-01' -> '2026-06-11'), 'ten_hang' (vd: 'Cà phê đen (M)'), 'Giá mới' (số/tiền, vd: '25.000đ'), 'Giá cũ' (số/tiền, vd: '29.000đ')]\n\n- Bảng 'DanhMuc' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (2 dòng):\n  Cột (4): ['Tên món' (vd: 'Bánh croissant'), 'Đơn vị gốc' (phân loại: ['cái']), 'ĐV nhập' (vd: 'hộp'), 'Hệ số' (vd: '6')]\n\n- Bảng 'SoNhapHang' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (1373 dòng):\n  Cột (9): ['Số phiếu' (vd: 'PN00001'), 'Ngày nhập' (ngày: '2025-02-01' -> '2026-06-24'), 'Ghi chu' (phân loại: ['nhập đầu kỳ']), 'Thành tiền' (số/tiền, vd: '2131200'), 'Nhà cung cấp' (phân loại: ['Cty Hoàng Bình', 'Cty Dương An', 'Cty Vũ Tâm', 'Cty Thân Ngọc', 'Cty Vũ Sơn']), 'Tên mặt hàng' (vd: 'Cà phê đen (M)'), 'Giá nhập' (số/tiền, vd: '7200'), 'ĐVT' (phân loại: ['ly', 'phần', 'hộp']), 'SL nhập' (vd: '296')]",
+  "gold_answer": {
+    "answer": "Cty Thân Ngọc",
+    "type": "string",
+    "alias": []
+  },
+  "match_result": {
+    "is_match": false,
+    "eval_score": -1.0,
+    "eval_status_label": "SAI LỆCH ĐÁP ÁN (WRONG - -1.0)"
+  },
+  "deviation_analysis": {
+    "is_applicable": false,
+    "abs_diff": null,
+    "pct_diff": null,
+    "diagnostic_hypothesis": null
+  },
+  "threshold_tau_star": 0.5,
+  "grounding_eval": {
+    "entity_coverage": 1.0,
+    "temporal_coverage": 1.0,
+    "table_coverage": 1.0,
+    "entity_penalty": 0.0,
+    "temporal_penalty": 0.0,
+    "table_penalty": 0.0,
+    "total_penalty": 0.0,
+    "missed_mentions": [],
+    "offtopic_tables": [],
+    "total_valid_mentions": 0,
+    "covered_mentions": 0
+  },
+  "latency_breakdown_ms": {
+    "ingest_schema": 47852.36,
+    "feasibility": 7.56,
+    "grounding": 3.59,
+    "prompt_build": 3.11,
+    "llm_gen": 108848.04,
+    "sandbox_exec": 47134.94,
+    "normalizer": 0.48
+  },
+  "self_correction_trace": []
+}

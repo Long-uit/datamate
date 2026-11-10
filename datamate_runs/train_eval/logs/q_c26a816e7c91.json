@@ -1,0 +1,73 @@
+{
+  "question_id": "q_c26a816e7c91",
+  "answer": {
+    "id": "q_c26a816e7c91",
+    "type": "boolean",
+    "answer": false
+  },
+  "elapsed_ms": 122727,
+  "confidence": 1.0,
+  "code": "def solution(data):\n    dfs = [df for n, df in data.items() if 'SoBanHang' in n]\n    if not dfs:\n        raise DataNotFoundError(\"Bảng SoBanHang không tồn tại\")\n\n    df_sales = pd.concat(dfs, ignore_index=True)\n    cols = df_sales.columns.tolist()\n    d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    amt_col = next((c for c in cols if any(k in str(c).lower() for k in ['trị giá', 'thành tiền', 'tổng tiền', 'tiền']) and 'thuế' not in str(c).lower()), None)\n    st_c = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status'])), None)\n\n    df_sales['clean_date'] = clean_date(df_sales[d_c])\n    df_sales['clean_amt'] = clean_num(df_sales[amt_col])\n\n    if st_c:\n        df_sales = df_sales[~df_sales[st_c].astype(str).str.contains(r'hủy|huỷ|huy|trả|tra|hoàn|hoan|cancel', case=False, na=False)]\n\n    r7 = df_sales[(df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 7)]['clean_amt'].sum()\n    r8 = df_sales[(df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 8)]['clean_amt'].sum()\n    r9 = df_sales[(df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 9)]['clean_amt'].sum()\n\n    return bool(r7 < r8 < r9)",
+  "raw_result": false,
+  "error": null,
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [
+    "clean_date",
+    "clean_amt"
+  ],
+  "self_correction_count": 0,
+  "business_id": "biz_105",
+  "as_of_date": "2026-06-24",
+  "original_question": "Từ tháng 7/2025 qua tháng 8/2025 rồi tháng 9/2025, doanh thu có tăng liên tục không?",
+  "normalized_question": "Từ tháng 7/2025 qua tháng 8/2025 rồi tháng 9/2025, doanh thu có tăng liên tục không?",
+  "expanded_abbreviations": {},
+  "intent": "time_series",
+  "temporal_info": {
+    "description": "Tháng 7/2025",
+    "start_date": "2025-07-01",
+    "end_date": "2025-07-31"
+  },
+  "entity_matches": [],
+  "pruned_schema": "### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):\n- Bảng 'BangGia' (alias: 't_01'): Bảng dữ liệu khác\n- Bảng 'DanhMuc' (alias: 't_02'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'SoBanHang_1_[gộp: Thang 02 2025, Thang 03 2025, Thang 04 2025...]' (alias: 't_03'): Sổ giao hàng / Vận chuyển (đợt giao, lượt giao, ngày chở/giao, mã vận đơn, biển số xe)\n- Bảng 'SoBanHang_2026_[gộp: Thang 02 2026, Thang 03 2026, Thang 04 2026...]' (alias: 't_04'): Sổ giao hàng / Vận chuyển (đợt giao, lượt giao, ngày chở/giao, mã vận đơn, biển số xe)\n- Bảng 'SoNhapHang' (alias: 't_05'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n- Bảng 'BangGia' [Vai trò: Bảng dữ liệu khác] (78 dòng):\n  Cột (4): ['Ngày áp dụng' (ngày: '2025-02-01' -> '2026-06-11'), 'ten_hang' (vd: 'Cà phê đen (M)'), 'Giá mới' (số/tiền, vd: '25.000đ'), 'Giá cũ' (số/tiền, vd: '29.000đ')]\n\n- Bảng 'DanhMuc' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (2 dòng):\n  Cột (4): ['Tên món' (vd: 'Bánh croissant'), 'Đơn vị gốc' (phân loại: ['cái']), 'ĐV nhập' (vd: 'hộp'), 'Hệ số' (vd: '6')]\n\n- Bảng 'SoBanHang_1_[gộp: Thang 02 2025, Thang 03 2025, Thang 04 2025...]' [Vai trò: Sổ giao hàng / Vận chuyển (đợt giao, lượt giao, ngày chở/giao, mã vận đơn, biển số xe)] (97295 dòng):\n  Cột (11): ['Hàng' (vd: 'Đá xay cookie (M)'), 'so_luong' (vd: '1.0'), 'Unit' (phân loại: ['ly', 'phần', 'cái', 'hộp']), 'Trị giá' (số/tiền, vd: '55.000đ'), 'Status' (vd: 'đã lấy'), 'Giá lẻ' (số/tiền, vd: '55.000đ'), 'Giờ' (vd: '2025-02-01 06:00:25'), 'Mã hóa đơn' (vd: 'ORD000001'), 'Ngày giao dịch' (ngày: '2025-02-01' -> '2026-01-31'), 'Khách' (vd: 'Vương Sơn Thảo'), '_source_sheet' (vd: 'Thang 02 2025')]\n\n- Bảng 'SoBanHang_2026_[gộp: Thang 02 2026, Thang 03 2026, Thang 04 2026...]' [Vai trò: Sổ giao hàng / Vận chuyển (đợt giao, lượt giao, ngày chở/giao, mã vận đơn, biển số xe)] (40711 dòng):\n  Cột (11): ['Hàng' (vd: 'Cappuccino (L)'), 'so_luong' (phân loại: ['-1.0', '3.0', '1.0', '2.0', '-2.0', '-3.0']), 'Unit' (phân loại: ['ly', 'phần', 'cái', 'hộp']), 'Trị giá' (số/tiền, vd: '-53.500đ'), 'Status' (vd: 'Đổi trả'), 'Giá lẻ' (số/tiền, vd: '53.500đ'), 'Giờ' (vd: '2026-02-01 08:47:28'), 'Mã hóa đơn' (vd: 'ORD059865'), 'Ngày giao dịch' (ngày: '2026-02-01' -> '2026-06-24'), 'Khách' (vd: 'Đinh Tâm Khoa'), '_source_sheet' (phân loại: ['Thang 02 2026', 'Thang 03 2026', 'Thang 04 2026', 'Thang 05 2026', 'Thang 06 2026'])]\n\n- Bảng 'SoNhapHang' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (1373 dòng):\n  Cột (9): ['Số phiếu' (vd: 'PN00001'), 'Ngày nhập' (ngày: '2025-02-01' -> '2026-06-24'), 'Ghi chu' (phân loại: ['nhập đầu kỳ']), 'Thành tiền' (số/tiền, vd: '2131200'), 'Nhà cung cấp' (phân loại: ['Cty Hoàng Bình', 'Cty Dương An', 'Cty Vũ Tâm', 'Cty Thân Ngọc', 'Cty Vũ Sơn']), 'Tên mặt hàng' (vd: 'Cà phê đen (M)'), 'Giá nhập' (số/tiền, vd: '7200'), 'ĐVT' (phân loại: ['ly', 'phần', 'hộp']), 'SL nhập' (vd: '296')]",
+  "gold_answer": {
+    "answer": false,
+    "type": "boolean",
+    "alias": []
+  },
+  "match_result": {
+    "is_match": true,
+    "eval_score": 1.0,
+    "eval_status_label": "HOÀN TOÀN TRÙNG KHỚP (CORRECT - +1.0)"
+  },
+  "deviation_analysis": {
+    "is_applicable": false,
+    "abs_diff": null,
+    "pct_diff": null,
+    "diagnostic_hypothesis": null
+  },
+  "threshold_tau_star": 0.5,
+  "grounding_eval": {
+    "entity_coverage": 1.0,
+    "temporal_coverage": 1.0,
+    "table_coverage": 1.0,
+    "entity_penalty": 0.0,
+    "temporal_penalty": 0.0,
+    "table_penalty": 0.0,
+    "total_penalty": 0.0,
+    "missed_mentions": [],
+    "offtopic_tables": [],
+    "total_valid_mentions": 0,
+    "covered_mentions": 0
+  },
+  "latency_breakdown_ms": {
+    "ingest_schema": 0.01,
+    "feasibility": 1.21,
+    "grounding": 2.97,
+    "prompt_build": 4.09,
+    "llm_gen": 118478.86,
+    "sandbox_exec": 4239.76,
+    "normalizer": 0.72
+  },
+  "self_correction_trace": []
+}

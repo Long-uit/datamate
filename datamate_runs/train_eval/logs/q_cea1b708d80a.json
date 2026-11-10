@@ -1,0 +1,87 @@
+{
+  "question_id": "q_cea1b708d80a",
+  "answer": {
+    "id": "q_cea1b708d80a",
+    "type": "abstain",
+    "answer": null,
+    "reason": "Runtime Error: Không tìm thấy cột ngày trong bảng BaoCaoTonKho [Bảng tìm kiếm: 'BaoCaoTonKho']"
+  },
+  "elapsed_ms": 583451,
+  "confidence": 0.0,
+  "code": "def solution(data):\n    df = data.get('DuLieuBanHang_BaoCaoTonKho')\n    if df is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng BaoCaoTonKho\", table_name=\"BaoCaoTonKho\")\n\n    cols = df.columns.tolist()\n    date_col = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    if date_col is None:\n        raise DataNotFoundError(\"Không tìm thấy cột ngày trong bảng BaoCaoTonKho\", table_name=\"BaoCaoTonKho\")\n\n    df['clean_date'] = clean_date(df[date_col])\n    target_date = pd.to_datetime(\"2026-08-05\").date()\n    df = df[(df['clean_date'].dt.date == target_date)]\n\n    prod_col = next((c for c in cols if any(k in str(c).lower() for k in ['hàng', 'tên món', 'tên hàng', 'sản phẩm', 'món', 'mặt hàng', 'product', 'item'])), None)\n    if prod_col is None:\n        raise DataNotFoundError(\"Không tìm thấy cột tên hàng trong bảng BaoCaoTonKho\", table_name=\"BaoCaoTonKho\")\n\n    df = df[df[prod_col].astype(str).str.contains('Kem đánh răng P/S 180g', case=False, na=False)]\n    if df.empty:\n        return 0\n\n    return int(round(clean_num(df['Tồn cuối kỳ']).sum()))",
+  "raw_result": null,
+  "error": "Không tìm thấy cột ngày trong bảng BaoCaoTonKho [Bảng tìm kiếm: 'BaoCaoTonKho']",
+  "unanswerable_source": "none",
+  "selected_tables": [
+    "DuLieuBanHang",
+    "DuLieuBanHang_BaoCaoTonKho"
+  ],
+  "selected_columns": [
+    "clean_date",
+    "Tồn cuối kỳ"
+  ],
+  "self_correction_count": 2,
+  "business_id": "biz_109",
+  "as_of_date": "2026-08-05",
+  "original_question": "hôm nay kho còn tồn bao nhiu hộp Kem đánh răng P/S 180g lúc cuối ngày",
+  "normalized_question": "hôm nay kho còn tồn bao nhiu hộp Kem đánh răng P/S 180g lúc cuối ngày",
+  "expanded_abbreviations": {},
+  "intent": "inventory_unit_conversion",
+  "temporal_info": {
+    "description": "Hôm nay (2026-08-05)",
+    "start_date": "2026-08-05",
+    "end_date": "2026-08-05"
+  },
+  "entity_matches": [
+    "Kem đánh răng P/S 180g",
+    "Kem đánh răng P/S 180 g"
+  ],
+  "pruned_schema": "### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):\n- Bảng 'DanhSachHoaDonChiTiet' (alias: 't_01'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n- Bảng 'DuLieuBanHang_DanhSachHoaDon' (alias: 't_02'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n- Bảng 'DuLieuBanHang_DanhSachSanPham' (alias: 't_03'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'DuLieuBanHang_DanhSachKhachHang' (alias: 't_04'): Danh mục khách hàng (mã khách, tên khách, nhóm khách, địa chỉ)\n- Bảng 'DuLieuBanHang_BaoCaoTonKho' (alias: 't_05'): Tồn kho / Thẻ kho (số lượng tồn, tồn thực)\n- Bảng 'DuLieuBanHang_DanhSachNhapHang' (alias: 't_06'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n- Bảng 'DuLieuBanHang_DanhSachChiTietNhapHang' (alias: 't_07'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n- Bảng 'DuLieuBanHang_SoQuy' (alias: 't_08'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n- Bảng 'DuLieuBanHang_DanhSachDonViTinh' (alias: 't_09'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n- Bảng 'DanhSachHoaDonChiTiet' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (83284 dòng):\n  Cột (11): ['Mã hóa đơn' (vd: 'ORD000001'), 'STT' (vd: '1'), 'Mã hàng' (vd: 'SP0006'), 'Tên hàng' (vd: 'Nước suối Aquafina ...'), 'Đơn vị tính' (vd: 'thùng'), 'Số lượng' (số/tiền, vd: '2'), 'Đơn giá' (số/tiền, vd: '120,000'), 'Giảm giá' (số/tiền, vd: '0'), 'Thành tiền' (số/tiền, vd: '240,000'), 'Số lượng quy đổi' (số/tiền, vd: '48'), 'Giá vốn' (số/tiền, vd: '88,800')]\n\n- Bảng 'DuLieuBanHang_DanhSachHoaDon' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (33053 dòng):\n  Cột (13): ['Mã hóa đơn' (vd: 'ORD000001'), 'Thời gian' (ngày: '2025-01-01' -> '2026-08-05'), 'Mã KH' (vd: 'KH0058'), 'Khách hàng' (vd: 'kl'), 'Tổng tiền hàng' (số/tiền, vd: '301,000'), 'Giảm giá' (số/tiền, vd: '10,000'), 'Tổng sau giảm giá' (số/tiền, vd: '291,000'), 'Khách đã trả' (vd: '291,000'), 'Phương thức thanh toán' (phân loại: ['Chuyển khoản', 'Tiền mặt', 'Ghi nợ', 'Ví điện tử', 'Thu hộ (COD)']), 'Trạng thái' (vd: 'đã lấy'), 'Thời gian tạo' (ngày: '2025-01-01' -> '2026-08-05'), 'Kênh bán' (phân loại: ['store', 'phone', 'zalo_oa']), 'Người bán' (phân loại: ['NV002', 'NV003', 'NV001'])]\n\n- Bảng 'DuLieuBanHang_DanhSachSanPham' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (60 dòng):\n  Cột (11): ['Tồn lớn nhất' (số/tiền, vd: '999999999'), 'Nhóm hàng(3 Cấp)' (vd: 'nước giải khát'), 'Mã hàng' (vd: 'SP0001'), 'Tên hàng' (vd: 'Coca Cola 330ml'), 'Giá bán' (số/tiền, vd: '10000'), 'Định mức tồn tối thiểu' (số/tiền, vd: '0'), 'Giá vốn' (số/tiền, vd: '8272'), 'Được bán trực tiếp' (phân loại: ['1']), 'ĐVT' (vd: 'lon'), 'Đang kinh doanh' (phân loại: ['True']), 'Thời gian tạo' (ngày: '2023-02-10' -> '2024-12-27')]\n\n- Bảng 'DuLieuBanHang_DanhSachKhachHang' [Vai trò: Danh mục khách hàng (mã khách, tên khách, nhóm khách, địa chỉ)] (320 dòng):\n  Cột (11): ['Mã khách hàng' (vd: 'KH0001'), 'Tổng điểm' (phân loại: ['0']), 'Tên khách hàng' (vd: 'Đinh Khoa Châu'), 'Điện thoại' (vd: '0918010418'), 'MST' (phân loại: ['0974131600', '0733153733']), 'Trạng thái' (phân loại: ['Đang hoạt động']), 'Loại hình khách' (phân loại: ['Cá nhân']), 'Người tạo' (phân loại: ['admin']), 'Nhóm khách hàng' (phân loại: ['lẻ', 'thân thiết', 'sỉ']), 'Ngày tạo' (ngày: '2022-07-23' -> '2025-01-24'), 'Sinh nhật' (vd: '23/05/1991')]\n\n- Bảng 'DuLieuBanHang_BaoCaoTonKho' [Vai trò: Tồn kho / Thẻ kho (số lượng tồn, tồn thực)] (60 dòng):\n  Cột (4): ['Mã hàng' (vd: 'SP0001'), 'Tên hàng' (vd: 'Coca Cola 330ml'), 'ĐVT' (vd: 'lon'), 'Tồn cuối kỳ' (số/tiền, vd: '145')]\n\n- Bảng 'DuLieuBanHang_DanhSachNhapHang' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (561 dòng):\n  Cột (6): ['Mã nhập hàng' (vd: 'PN00001'), 'Thời gian' (ngày: '2025-01-01' -> '2026-08-05'), 'Mã NCC' (phân loại: ['NCC004', 'NCC001', 'NCC005', 'NCC002', 'NCC003']), 'Cần trả NCC' (số/tiền, vd: '145,823,000'), 'Trạng thái' (phân loại: ['Đã nhập hàng']), 'Ghi chú' (phân loại: ['nhập đầu kỳ'])]\n\n- Bảng 'DuLieuBanHang_DanhSachChiTietNhapHang' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (2225 dòng):\n  Cột (6): ['Mã nhập hàng' (vd: 'PN00001'), 'STT' (vd: '1'), 'Mã hàng' (vd: 'SP0001'), 'ĐVT' (vd: 'thùng'), 'Số lượng' (số/tiền, vd: '8'), 'Đơn giá' (số/tiền, vd: '204,000')]\n\n- Bảng 'DuLieuBanHang_SoQuy' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (36974 dòng):\n  Cột (5): ['Mã phiếu' (vd: 'PAY000001'), 'Thời gian' (ngày: '2025-01-01' -> '2026-08-05'), 'Mã hóa đơn' (vd: 'ORD000001'), 'Phương thức thanh toán' (phân loại: ['Chuyển khoản', 'Tiền mặt', 'Ví điện tử', 'Thu hộ (COD)']), 'Giá trị' (số/tiền, vd: '291000')]\n\n- Bảng 'DuLieuBanHang_DanhSachDonViTinh' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (77 dòng):\n  Cột (4): ['Mã hàng' (vd: 'SP0001'), 'ĐVT' (vd: 'lốc'), 'Quy đổi' (vd: '6'), 'Giá bán' (số/tiền, vd: '60000')]",
+  "gold_answer": {
+    "answer": 3,
+    "type": "number",
+    "alias": []
+  },
+  "match_result": {
+    "is_match": false,
+    "eval_score": 0.0,
+    "eval_status_label": "TỪ CHỐI TRẢ LỜI (ABSTAIN - 0.0)"
+  },
+  "deviation_analysis": {
+    "is_applicable": false,
+    "abs_diff": null,
+    "pct_diff": null,
+    "diagnostic_hypothesis": null
+  },
+  "threshold_tau_star": 0.5,
+  "grounding_eval": {},
+  "latency_breakdown_ms": {
+    "ingest_schema": 48843.77,
+    "feasibility": 0.71,
+    "grounding": 157.19,
+    "prompt_build": 14.97,
+    "llm_gen": 305891.31,
+    "sandbox_exec": 228543.39,
+    "normalizer": 0.0
+  },
+  "self_correction_trace": [
+    {
+      "round": 1,
+      "input_error": "Không tìm thấy cột ngày trong bảng BaoCaoTonKho [Bảng tìm kiếm: 'BaoCaoTonKho']",
+      "retry_code": "def solution(data):\n    df = data.get('DuLieuBanHang_BaoCaoTonKho')\n    if df is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng BaoCaoTonKho\", table_name=\"BaoCaoTonKho\")\n\n    cols = df.columns.tolist()\n    date_col = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    if date_col is None:\n        raise DataNotFoundError(\"Không tìm thấy cột ngày trong bảng BaoCaoTonKho\", table_name=\"BaoCaoTonKho\")\n\n    df['clean_date'] = clean_date(df[date_col])\n    target_date = pd.to_datetime(\"2026-08-05\").date()\n    df = df[(df['clean_date'].dt.date == target_date)]\n\n    prod_col = next((c for c in cols if any(k in str(c).lower() for k in ['hàng', 'tên món', 'tên hàng', 'sản phẩm', 'món', 'mặt hàng', 'product', 'item'])), None)\n    if prod_col is None:\n        raise DataNotFoundError(\"Không tìm thấy cột tên hàng trong bảng BaoCaoTonKho\", table_name=\"BaoCaoTonKho\")\n\n    df = df[df[prod_col].astype(str).str.contains('Kem đánh răng P/S 180g', case=False, na=False)]\n    if df.empty:\n        return 0\n\n    return int(round(clean_num(df['Tồn cuối kỳ']).sum()))",
+      "retry_error": "Không tìm thấy cột ngày trong bảng BaoCaoTonKho [Bảng tìm kiếm: 'BaoCaoTonKho']",
+      "retry_raw_result": null,
+      "execution_ms": 8,
+      "success": false
+    },
+    {
+      "round": 2,
+      "input_error": "Không tìm thấy cột ngày trong bảng BaoCaoTonKho [Bảng tìm kiếm: 'BaoCaoTonKho']",
+      "retry_code": "def solution(data):\n    df = data.get('DuLieuBanHang_BaoCaoTonKho')\n    if df is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng BaoCaoTonKho\", table_name=\"BaoCaoTonKho\")\n\n    cols = df.columns.tolist()\n    date_col = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    if date_col is None:\n        raise DataNotFoundError(\"Không tìm thấy cột ngày trong bảng BaoCaoTonKho\", table_name=\"BaoCaoTonKho\")\n\n    df['clean_date'] = clean_date(df[date_col])\n    target_date = pd.to_datetime(\"2026-08-05\").date()\n    df = df[(df['clean_date'].dt.date == target_date)]\n\n    prod_col = next((c for c in cols if any(k in str(c).lower() for k in ['hàng', 'tên món', 'tên hàng', 'sản phẩm', 'món', 'mặt hàng', 'product', 'item'])), None)\n    if prod_col is None:\n        raise DataNotFoundError(\"Không tìm thấy cột tên hàng trong bảng BaoCaoTonKho\", table_name=\"BaoCaoTonKho\")\n\n    df = df[df[prod_col].astype(str).str.contains('Kem đánh răng P/S 180g', case=False, na=False)]\n    if df.empty:\n        return 0\n\n    return int(round(clean_num(df['Tồn cuối kỳ']).sum()))",
+      "retry_error": "Không tìm thấy cột ngày trong bảng BaoCaoTonKho [Bảng tìm kiếm: 'BaoCaoTonKho']",
+      "retry_raw_result": null,
+      "execution_ms": 8,
+      "success": false
+    }
+  ]
+}

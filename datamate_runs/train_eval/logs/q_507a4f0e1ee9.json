@@ -1,0 +1,85 @@
+{
+  "question_id": "q_507a4f0e1ee9",
+  "answer": {
+    "id": "q_507a4f0e1ee9",
+    "type": "abstain",
+    "answer": null,
+    "reason": "Runtime Error: Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền"
+  },
+  "elapsed_ms": 500561,
+  "confidence": 0.0,
+  "code": "def solution(data):\n    df_sales = None\n    for name, df in data.items():\n        if any(k in str(name).lower() for k in ['nhap', 'kho', 'chiphi', 'ncc', 'tonkho']):\n            continue\n        cols = df.columns.tolist()\n        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower()), None)\n        if d_c and a_c:\n            df_sales = df.copy()\n            break\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền\")\n\n    cols_s = df_sales.columns.tolist()\n    date_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    amt_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower()), None)\n\n    df_sales['clean_date'] = clean_date(df_sales[date_col])\n\n    mask = (df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 4) & (df_sales['clean_date'].dt.day == 30)\n    df_sales = df_sales[mask]\n\n    if df_sales.empty:\n        return 0\n    return int(round(clean_num(df_sales[amt_col]).sum()))",
+  "raw_result": null,
+  "error": "Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền",
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [
+    "clean_date"
+  ],
+  "self_correction_count": 2,
+  "business_id": "biz_127",
+  "as_of_date": "2025-04-30",
+  "original_question": "bữa qua cuwar hàng bán đươc bn tiền vaayj",
+  "normalized_question": "bữa qua cuwar hàng bán đươc bao nhiêu tiền vaayj",
+  "expanded_abbreviations": {
+    "bn": "bao nhiêu"
+  },
+  "intent": "aggregation",
+  "temporal_info": {
+    "description": "Mốc thời gian tham chiếu (hôm nay): 2025-04-30",
+    "start_date": null,
+    "end_date": "2025-04-30"
+  },
+  "entity_matches": [
+    "Chung Bảo Hằng",
+    "Hàng hóa"
+  ],
+  "pruned_schema": "### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):\n- Bảng 'chi_tiet_don' (alias: 't_01'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n- Bảng 'don_hang' (alias: 't_02'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n- Bảng 'khach_hang' (alias: 't_03'): Danh mục khách hàng (mã khách, tên khách, nhóm khách, địa chỉ)\n- Bảng 'san_pham' (alias: 't_04'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'thanh_toan' (alias: 't_05'): Bảng dữ liệu khác\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n- Bảng 'chi_tiet_don' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (128293 dòng):\n  Cột (8): ['Mã đơn hàng' (vd: 'ORD000001'), 'SoLuong' (số/tiền, vd: '1'), 'No.' (vd: '1'), 'DVT' (vd: 'phần'), 'Amount' (vd: '10.000đ'), 'Số lượng lẻ' (số/tiền, vd: '1'), 'Mã mặt hàng' (vd: 'SP0011'), 'Đơn giá (đ)' (số/tiền, vd: '10000')]\n\n- Bảng 'don_hang' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (33874 dòng):\n  Cột (10): ['Còn nợ' (số/tiền, vd: '0'), 'Diễn giải' (rỗng), 'Tổng đơn' (vd: '457000'), 'Loại bán' (phân loại: ['store', 'phone', 'zalo_oa']), 'Ngày' (ngày: '2025-03-01' -> '2026-07-28'), 'Mã chứng từ' (vd: 'ORD000001'), 'Customer ID' (vd: 'KH0169'), 'Khách trả' (vd: '457000'), 'Trả bằng' (phân loại: ['cash', 'transfer', 'cod', 'ewallet', 'debt']), 'Tình trạng' (phân loại: ['completed', 'cancelled', 'returned', 'shipping'])]\n\n- Bảng 'khach_hang' [Vai trò: Danh mục khách hàng (mã khách, tên khách, nhóm khách, địa chỉ)] (200 dòng):\n  Cột (14): ['CCCD' (rỗng), 'Tên công ty' (rỗng), 'Di động' (vd: '0912852391'), 'Email' (rỗng), 'Sinh nhật' (vd: '28/04/1998'), 'Người tạo' (phân loại: ['admin']), 'Tổng điểm' (phân loại: ['0']), 'Loại hình khách' (phân loại: ['Cá nhân']), 'Mã KH' (vd: 'KH0001'), 'Khách hàng (tên)' (vd: 'Hoàng Nhung Hương'), 'Điểm hiện tại' (phân loại: ['0']), 'MST' (phân loại: ['0379528487', '0537094146', '0328522962']), 'Trạng thái' (phân loại: ['Đang hoạt động']), 'Ghi chú' (rỗng)]\n\n- Bảng 'san_pham' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (61 dòng):\n  Cột (17): ['Trọng lượng' (rỗng), 'Giá niêm yết' (số/tiền, vd: '52500'), 'Mô tả chi tiết' (rỗng), 'Danh mục' (vd: 'rau'), 'Ghi chú' (rỗng), 'Mã sản phẩm bán' (vd: 'SP0001'), 'Tên SP' (vd: 'Rau muống xào tỏi'), 'Mẫu ghi chú' (rỗng), 'Mã barcode' (vd: '8935659370070'), 'Loại hàng hóa' (phân loại: ['Hàng hóa']), 'Tồn lớn nhất' (số/tiền, vd: '999999999'), 'Thương hiệu' (rỗng), 'Thuộc tính' (rỗng), 'Hình ảnh (url1,url2...)' (rỗng), 'Đơn vị cơ bản' (vd: 'đĩa'), 'Được bán trực tiếp' (phân loại: ['1']), 'Mã HH Liên quan' (rỗng)]\n\n- Bảng 'thanh_toan' [Vai trò: Bảng dữ liệu khác] (33473 dòng):\n  Cột (5): ['Số CT' (vd: 'ORD000001'), 'Ngày thu' (ngày: '2025-03-01' -> '2026-07-28'), 'Mã GD' (vd: 'PAY000001'), 'Giá trị' (số/tiền, vd: '457000'), 'HTTT' (phân loại: ['cash', 'transfer', 'ewallet', 'cod'])]",
+  "gold_answer": {
+    "answer": 25578000,
+    "type": "number",
+    "alias": []
+  },
+  "match_result": {
+    "is_match": false,
+    "eval_score": 0.0,
+    "eval_status_label": "TỪ CHỐI TRẢ LỜI (ABSTAIN - 0.0)"
+  },
+  "deviation_analysis": {
+    "is_applicable": false,
+    "abs_diff": null,
+    "pct_diff": null,
+    "diagnostic_hypothesis": null
+  },
+  "threshold_tau_star": 0.5,
+  "grounding_eval": {},
+  "latency_breakdown_ms": {
+    "ingest_schema": 4589.63,
+    "feasibility": 0.68,
+    "grounding": 87.89,
+    "prompt_build": 29.13,
+    "llm_gen": 319105.29,
+    "sandbox_exec": 176748.65,
+    "normalizer": 0.0
+  },
+  "self_correction_trace": [
+    {
+      "round": 1,
+      "input_error": "Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền",
+      "retry_code": "def solution(data):\n    df_sales = None\n    for name, df in data.items():\n        if any(k in str(name).lower() for k in ['nhap', 'kho', 'chiphi', 'ncc', 'tonkho']):\n            continue\n        cols = df.columns.tolist()\n        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower()), None)\n        if d_c and a_c:\n            df_sales = df.copy()\n            break\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền\")\n\n    cols_s = df_sales.columns.tolist()\n    date_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    amt_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower()), None)\n\n    df_sales['clean_date'] = clean_date(df_sales[date_col])\n\n    mask = (df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 4) & (df_sales['clean_date'].dt.day == 30)\n    df_sales = df_sales[mask]\n\n    if df_sales.empty:\n        return 0\n    return int(round(clean_num(df_sales[amt_col]).sum()))",
+      "retry_error": "Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền",
+      "retry_raw_result": null,
+      "execution_ms": 13,
+      "success": false
+    },
+    {
+      "round": 2,
+      "input_error": "Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền",
+      "retry_code": "def solution(data):\n    df_sales = None\n    for name, df in data.items():\n        if any(k in str(name).lower() for k in ['nhap', 'kho', 'chiphi', 'ncc', 'tonkho']):\n            continue\n        cols = df.columns.tolist()\n        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower()), None)\n        if d_c and a_c:\n            df_sales = df.copy()\n            break\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền\")\n\n    cols_s = df_sales.columns.tolist()\n    date_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    amt_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower()), None)\n\n    df_sales['clean_date'] = clean_date(df_sales[date_col])\n\n    mask = (df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 4) & (df_sales['clean_date'].dt.day == 30)\n    df_sales = df_sales[mask]\n\n    if df_sales.empty:\n        return 0\n    return int(round(clean_num(df_sales[amt_col]).sum()))",
+      "retry_error": "Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền",
+      "retry_raw_result": null,
+      "execution_ms": 6,
+      "success": false
+    }
+  ]
+}

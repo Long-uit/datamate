@@ -1,0 +1,17 @@
+{
+  "question_id": "q_0537f6e4f5ab",
+  "answer": {
+    "id": "q_0537f6e4f5ab",
+    "type": "number",
+    "answer": 11645700
+  },
+  "elapsed_ms": 85769,
+  "confidence": 1.0,
+  "code": "def solution(data):\n    df_sales = next((df for n, df in data.items() if 'So_chi_tiet_ban_hang' in n), None)\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng bán hàng phù hợp\", table_name=\"bán hàng\")\n\n    cols = df_sales.columns.tolist()\n    d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    if d_c is None:\n        raise DataNotFoundError(\"Không tìm thấy cột ngày trong bảng bán hàng\")\n\n    df_sales['clean_date'] = clean_date(df_sales[d_c])\n    target_dates = ['2025-03-25', '2025-04-25', '2025-05-25']\n    results = []\n\n    for date_str in target_dates:\n        mask = (df_sales['clean_date'].dt.date == pd.to_datetime(date_str).date())\n        total_amount = clean_num(df_sales.loc[mask, 'Thành tiền']).sum()\n        results.append(total_amount)\n\n    return max(results)",
+  "raw_result": 11645700.0,
+  "error": null,
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [],
+  "self_correction_count": 0
+}

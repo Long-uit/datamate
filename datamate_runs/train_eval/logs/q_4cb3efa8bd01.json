@@ -1,0 +1,76 @@
+{
+  "question_id": "q_4cb3efa8bd01",
+  "answer": {
+    "id": "q_4cb3efa8bd01",
+    "type": "percent",
+    "answer": -94
+  },
+  "elapsed_ms": 205968,
+  "confidence": 1.0,
+  "code": "def solution(data):\n    df_ord = None\n    date_col = None\n    amt_col = None\n    for name, df in data.items():\n        cols = df.columns.tolist()\n        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'amount', 'tổng tiền'])), None)\n        if d_c and a_c:\n            df_ord = df.copy()\n            date_col = d_c\n            amt_col = a_c\n            break\n\n    if df_ord is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng có cột ngày và thành tiền\", table_name=\"đơn hàng\", available_tables=list(data.keys()))\n\n    df_ord['clean_date'] = clean_date(df_ord[date_col])\n    mask_current = (df_ord['clean_date'] >= pd.Timestamp('2025-03-15')) & (df_ord['clean_date'] <= pd.Timestamp('2025-03-15 23:59:59'))\n    mask_previous = (df_ord['clean_date'] >= pd.Timestamp('2025-02-01')) & (df_ord['clean_date'] <= pd.Timestamp('2025-02-15 23:59:59'))\n    total_current = clean_num(df_ord.loc[mask_current, amt_col]).sum()\n    total_previous = clean_num(df_ord.loc[mask_previous, amt_col]).sum()\n\n    if total_previous == 0:\n        return 0\n\n    percentage_increase = ((total_current - total_previous) / total_previous) * 100\n    return int(round(percentage_increase))",
+  "raw_result": -94,
+  "error": null,
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [
+    "clean_date"
+  ],
+  "self_correction_count": 0,
+  "business_id": "biz_130",
+  "as_of_date": "2025-03-15",
+  "original_question": "tu dau thang nay den het hnay, dthu hon hay kem cung ky thang trc may %",
+  "normalized_question": "tu dau thang nay den het hôm nay doanh thu hon hay kem cung ky thang trước may %",
+  "expanded_abbreviations": {
+    "hnay,": "hôm nay",
+    "dthu": "doanh thu",
+    "trc": "trước"
+  },
+  "intent": "rate_percentage",
+  "temporal_info": {
+    "description": "Kỳ chính: Hôm nay (2025-03-15) | Kỳ đối chiếu: Tháng trước kỳ so sánh (từ 2025-02-01 đến 2025-02-15)",
+    "start_date": "2025-03-15",
+    "end_date": "2025-03-15"
+  },
+  "entity_matches": [],
+  "pruned_schema": "### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):\n- Bảng 'Danh sách hàng hóa' (alias: 't_01'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'So_chi_tiet_ban_hang_1' (alias: 't_02'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n- Bảng 'So_chi_tiet_ban_hang_2' (alias: 't_03'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n- Bảng 'Danh sách hàng hóa' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (61 dòng):\n  Cột (9): ['Mã hàng hóa' (vd: 'SP0001'), 'Được bán trực tiếp' (phân loại: ['1']), 'Loại hàng hóa' (phân loại: ['Hàng hóa']), 'Tên hàng hóa' (vd: 'Rau muống xào tỏi'), 'Nhóm hàng hóa' (vd: 'rau'), 'Định mức tồn tối thiểu' (số/tiền, vd: '0'), 'Đơn vị tính' (vd: 'đĩa'), 'Định mức tồn tối đa' (số/tiền, vd: '999999999'), 'Giá vốn' (số/tiền, vd: '15,995.0000')]\n- Bảng 'So_chi_tiet_ban_hang_1' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (99653 dòng):\n  Cột (9): ['Ngày' (ngày: '2025-02-01' -> '2026-01-03'), 'Mã đơn hàng' (vd: 'ORD000001'), 'Tên hàng hóa' (vd: 'Bia Sài Gòn Special...'), 'Đơn vị tính' (vd: 'lon'), 'Số lượng' (số/tiền, vd: '1'), 'Đơn giá' (số/tiền, vd: '19,000.0000'), 'Thành tiền' (số/tiền, vd: '19,000.0000'), 'Trạng thái' (phân loại: ['Đã hoàn thành', 'Đã hủy', 'Đã trả hàng']), 'Số lượng quy đổi' (số/tiền, vd: '1.0')]\n- Bảng 'So_chi_tiet_ban_hang_2' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (72283 dòng):\n  Cột (9): ['Ngày' (ngày: '2026-01-03' -> '2026-08-29'), 'Mã đơn hàng' (vd: 'ORD026603'), 'Tên hàng hóa' (vd: 'Trà đá'), 'Đơn vị tính' (vd: 'ly'), 'Số lượng' (số/tiền, vd: '1'), 'Đơn giá' (số/tiền, vd: '5,000.0000'), 'Thành tiền' (số/tiền, vd: '5,000.0000'), 'Trạng thái' (phân loại: ['Đã hoàn thành', 'Đã hủy', 'Đã trả hàng', 'Đang giao hàng']), 'Số lượng quy đổi' (số/tiền, vd: '1.0')]",
+  "gold_answer": {
+    "answer": 38.88,
+    "type": "percent",
+    "alias": []
+  },
+  "match_result": {
+    "is_match": false,
+    "eval_score": -1.0,
+    "eval_status_label": "SAI LỆCH ĐÁP ÁN (WRONG - -1.0)"
+  },
+  "deviation_analysis": {
+    "is_applicable": true,
+    "abs_diff": 132.88,
+    "pct_diff": 341.7695473251029,
+    "diagnostic_hypothesis": null
+  },
+  "threshold_tau_star": 0.5,
+  "grounding_eval": {
+    "entity_coverage": 1.0,
+    "temporal_coverage": 1.0,
+    "table_coverage": 1.0,
+    "entity_penalty": 0.0,
+    "temporal_penalty": 0.0,
+    "table_penalty": 0.0,
+    "total_penalty": 0.0,
+    "missed_mentions": [],
+    "offtopic_tables": [],
+    "total_valid_mentions": 0,
+    "covered_mentions": 0
+  },
+  "latency_breakdown_ms": {
+    "ingest_schema": 51053.31,
+    "feasibility": 6.45,
+    "grounding": 6.56,
+    "prompt_build": 3.39,
+    "llm_gen": 103427.62,
+    "sandbox_exec": 51470.35,
+    "normalizer": 0.5
+  },
+  "self_correction_trace": []
+}

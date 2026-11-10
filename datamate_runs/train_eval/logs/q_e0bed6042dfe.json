@@ -1,0 +1,72 @@
+{
+  "question_id": "q_e0bed6042dfe",
+  "answer": {
+    "id": "q_e0bed6042dfe",
+    "type": "number",
+    "answer": 6501500
+  },
+  "elapsed_ms": 111881,
+  "confidence": 1.0,
+  "code": "def solution(data):\n    df_sales = None\n    for name, df in data.items():\n        if any(k in str(name).lower() for k in ['nhap', 'kho', 'chiphi', 'ncc', 'tonkho']):\n            continue\n        cols = df.columns.tolist()\n        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower()), None)\n        if d_c and a_c:\n            df_sales = df.copy()\n            break\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền\")\n\n    cols_s = df_sales.columns.tolist()\n    date_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    amt_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower()), None)\n    status_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt'])), None)\n\n    df_sales['clean_date'] = clean_date(df_sales[date_col])\n    if status_col:\n        df_sales = df_sales[~df_sales[status_col].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|trả|cancel', regex=True, na=False)]\n\n    mask = (df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 7) & (df_sales['clean_date'].dt.day == 24)\n    df_sales = df_sales[mask]\n\n    if df_sales.empty:\n        return 0\n    return int(round(clean_num(df_sales[amt_col]).sum()))",
+  "raw_result": 6501500,
+  "error": null,
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [
+    "clean_date"
+  ],
+  "self_correction_count": 0,
+  "business_id": "biz_104",
+  "as_of_date": "2025-07-25",
+  "original_question": "Hôm qua doanh thu được bao nhiêu?",
+  "normalized_question": "Hôm qua doanh thu được bao nhiêu?",
+  "expanded_abbreviations": {},
+  "intent": "aggregation",
+  "temporal_info": {
+    "description": "Hôm qua (2025-07-24)",
+    "start_date": "2025-07-24",
+    "end_date": "2025-07-24"
+  },
+  "entity_matches": [],
+  "pruned_schema": "### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):\n- Bảng 'DanhSachQuyDoi' (alias: 't_01'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'DonHang_ChiTiet' (alias: 't_02'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n- Bảng 'DanhSachQuyDoi' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (2 dòng):\n  Cột (4): ['Tên sản phẩm' (vd: 'Bánh croissant'), 'Đơn vị quy đổi' (phân loại: ['hộp']), 'Tỉ lệ quy đổi' (vd: '6'), 'Đơn vị cơ bản' (phân loại: ['cái'])]\n- Bảng 'DonHang_ChiTiet' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (62451 dòng):\n  Cột (9): ['Mã đơn hàng' (vd: 'ORD000001'), 'Ngày đặt hàng' (ngày: '2025-04-01' -> '2026-06-02'), 'Trạng thái đơn hàng' (phân loại: ['Đã hoàn thành', 'Đã hủy', 'Đã hoàn hàng', 'Đang giao dịch']), 'Tên khách hàng' (vd: 'Bạch Quang Hoa'), 'Tên sản phẩm' (vd: 'Sinh tố xoài (M)'), 'Số lượng sản phẩm' (số/tiền, vd: '2.0'), 'Giá sản phẩm' (số/tiền, vd: '42000'), 'Tổng tiền' (số/tiền, vd: '84000'), 'Đơn vị tính' (phân loại: ['ly', 'phần', 'cái', 'hộp'])]",
+  "gold_answer": {
+    "answer": 6405500,
+    "type": "number",
+    "alias": []
+  },
+  "match_result": {
+    "is_match": false,
+    "eval_score": -1.0,
+    "eval_status_label": "SAI LỆCH ĐÁP ÁN (WRONG - -1.0)"
+  },
+  "deviation_analysis": {
+    "is_applicable": true,
+    "abs_diff": 96000.0,
+    "pct_diff": 1.498712044336898,
+    "diagnostic_hypothesis": null
+  },
+  "threshold_tau_star": 0.5,
+  "grounding_eval": {
+    "entity_coverage": 1.0,
+    "temporal_coverage": 1.0,
+    "table_coverage": 1.0,
+    "entity_penalty": 0.0,
+    "temporal_penalty": 0.0,
+    "table_penalty": 0.0,
+    "total_penalty": 0.0,
+    "missed_mentions": [],
+    "offtopic_tables": [],
+    "total_valid_mentions": 0,
+    "covered_mentions": 0
+  },
+  "latency_breakdown_ms": {
+    "ingest_schema": 0.0,
+    "feasibility": 10.48,
+    "grounding": 59.83,
+    "prompt_build": 25.21,
+    "llm_gen": 111445.27,
+    "sandbox_exec": 340.35,
+    "normalizer": 0.46
+  },
+  "self_correction_trace": []
+}

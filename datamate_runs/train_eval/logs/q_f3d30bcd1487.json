@@ -1,0 +1,79 @@
+{
+  "question_id": "q_f3d30bcd1487",
+  "answer": {
+    "id": "q_f3d30bcd1487",
+    "type": "percent",
+    "answer": 0
+  },
+  "elapsed_ms": 135249,
+  "confidence": 1.0,
+  "code": "def solution(data):\n    df_ord = None\n    date_col = None\n    prod_col = None\n    for name, df in data.items():\n        cols = df.columns.tolist()\n        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n        p_c = next((c for c in cols if any(k in str(c).lower() for k in ['hàng', 'tên món', 'tên hàng', 'sản phẩm', 'món', 'mặt hàng', 'product', 'item'])), None)\n        if d_c and p_c:\n            df_ord = df.copy()\n            date_col = d_c\n            prod_col = p_c\n            break\n\n    if df_ord is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng có cột ngày và tên hàng\", table_name=\"đơn hàng\", available_tables=list(data.keys()))\n\n    df_ord['clean_date'] = clean_date(df_ord[date_col])\n    mask = (df_ord['clean_date'] >= pd.Timestamp('2025-09-04')) & (df_ord['clean_date'] <= pd.Timestamp('2025-09-04 23:59:59'))\n    df_period = df_ord[mask]\n    df_period = df_period[df_period[prod_col].astype(str).str.contains('Sinh tố xoài \\(L\\)', case=False, na=False)]\n    total_sales = clean_num(df_period['Thành tiền']).sum()\n    return int(round(total_sales))",
+  "raw_result": 0,
+  "error": null,
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [
+    "clean_date",
+    "Thành tiền"
+  ],
+  "self_correction_count": 0,
+  "business_id": "biz_112",
+  "as_of_date": "2026-07-31",
+  "original_question": "So số ly Sinh tố xoài (L) bán ra trong 30 ngày kể từ ngày 04/09/2025, ngày tăng giá lên 50.500đ, với 30 ngày ngay trước ngày đó: tăng hay giảm bao nhiêu % nhỉ?",
+  "normalized_question": "So số ly Sinh tố xoài (L) bán ra trong 30 ngày kể từ ngày 04/09/2025, ngày tăng giá lên 50.500đ, với 30 ngày ngay trước ngày đó: tăng hay giảm bao nhiêu % nhỉ?",
+  "expanded_abbreviations": {},
+  "intent": "rate_percentage",
+  "temporal_info": {
+    "description": "Ngày 04/09/2025 (2025-09-04)",
+    "start_date": "2025-09-04",
+    "end_date": "2025-09-04"
+  },
+  "entity_matches": [
+    "Sinh tố xoài (L)",
+    "sinh tố",
+    "Sinh tố xoài (M)",
+    "Sinh tố bơ (L)",
+    "Sinh tố bơ (M)"
+  ],
+  "pruned_schema": "### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):\n- Bảng 'Danh sách hàng hóa' (alias: 't_01'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'So_chi_tiet_ban_hang_1_[gộp: T04_2025, T05_2025, T06_2025...]' (alias: 't_02'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n- Bảng 'So_chi_tiet_ban_hang_2026_[gộp: T06_2026, T07_2026]' (alias: 't_03'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n- Bảng 'Danh sách hàng hóa' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (50 dòng):\n  Cột (10): ['Mã hàng hóa' (vd: 'SP0001'), 'Mã vạch EAN' (vd: '8937049426541'), 'Tồn nhỏ nhất' (số/tiền, vd: '0'), 'Loại hàng hóa' (phân loại: ['Hàng hóa']), 'Tên hàng hóa' (vd: 'Cà phê đen (M)'), 'Nhóm hàng hóa' (vd: 'cà phê'), 'Đơn vị tính' (phân loại: ['ly', 'phần', 'cái']), 'Giá bán' (số/tiền, vd: '25,000.0000'), 'Tồn lớn nhất' (số/tiền, vd: '999999999'), 'Giá vốn' (số/tiền, vd: '6,719.0000')]\n- Bảng 'So_chi_tiet_ban_hang_1_[gộp: T04_2025, T05_2025, T06_2025...]' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (98586 dòng):\n  Cột (10): ['Ngày' (ngày: '2025-04-01' -> '2026-05-31'), 'Mã đơn hàng' (vd: 'ORD000001'), 'Tên hàng hóa' (vd: 'Trà đào cam sả (L)'), 'Đơn vị tính' (phân loại: ['ly', 'phần', 'cái', 'hộp']), 'Số lượng' (số/tiền, vd: '1 ly'), 'Đơn giá' (số/tiền, vd: '45,000.0000'), 'Thành tiền' (số/tiền, vd: '45,000.0000'), 'Trạng thái' (phân loại: ['xong', 'cancel', 'trả hàng', 'Đã hoàn thành', 'Đã hủy đơn', 'Hoàn trả']), 'Số lượng quy đổi' (số/tiền, vd: '1'), '_source_sheet' (vd: 'T04_2025')]\n- Bảng 'So_chi_tiet_ban_hang_2026_[gộp: T06_2026, T07_2026]' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (14739 dòng):\n  Cột (10): ['Ngày' (ngày: '2026-06-01' -> '2026-07-31'), 'Mã đơn hàng' (vd: 'ORD061542'), 'Tên hàng hóa' (vd: 'Sinh tố xoài (L)'), 'Đơn vị tính' (phân loại: ['ly', 'cái', 'phần', 'hộp']), 'Số lượng' (số/tiền, vd: '1 ly'), 'Đơn giá' (số/tiền, vd: '50,500.0000'), 'Thành tiền' (số/tiền, vd: '50,500.0000'), 'Trạng thái' (phân loại: ['Đã hoàn thành', 'Hoàn trả', 'Đã hủy đơn', 'Đang vận chuyển']), 'Số lượng quy đổi' (số/tiền, vd: '1'), '_source_sheet' (phân loại: ['T06_2026', 'T07_2026'])]",
+  "gold_answer": {
+    "answer": 7.04,
+    "type": "percent",
+    "alias": []
+  },
+  "match_result": {
+    "is_match": false,
+    "eval_score": -1.0,
+    "eval_status_label": "SAI LỆCH ĐÁP ÁN (WRONG - -1.0)"
+  },
+  "deviation_analysis": {
+    "is_applicable": true,
+    "abs_diff": 7.04,
+    "pct_diff": 100.0,
+    "diagnostic_hypothesis": null
+  },
+  "threshold_tau_star": 0.5,
+  "grounding_eval": {
+    "entity_coverage": 1.0,
+    "temporal_coverage": 1.0,
+    "table_coverage": 1.0,
+    "entity_penalty": 0.0,
+    "temporal_penalty": 0.0,
+    "table_penalty": 0.0,
+    "total_penalty": 0.0,
+    "missed_mentions": [],
+    "offtopic_tables": [],
+    "total_valid_mentions": 2,
+    "covered_mentions": 2
+  },
+  "latency_breakdown_ms": {
+    "ingest_schema": 0.0,
+    "feasibility": 1.26,
+    "grounding": 24.17,
+    "prompt_build": 3.94,
+    "llm_gen": 101588.36,
+    "sandbox_exec": 33631.38,
+    "normalizer": 0.63
+  },
+  "self_correction_trace": []
+}

@@ -1,0 +1,75 @@
+{
+  "question_id": "q_94fd5882870e",
+  "answer": {
+    "id": "q_94fd5882870e",
+    "type": "percent",
+    "answer": 0
+  },
+  "elapsed_ms": 170964,
+  "confidence": 1.0,
+  "code": "def solution(data):\n    df_ord = None\n    date_col = None\n    prod_col = None\n    amt_col = None\n    for name, df in data.items():\n        cols = df.columns.tolist()\n        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n        p_c = next((c for c in cols if any(k in str(c).lower() for k in ['hàng', 'tên món', 'tên hàng', 'sản phẩm', 'món', 'mặt hàng', 'product', 'item'])), None)\n        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'amount', 'giá', 'price'])), None)\n        if d_c and p_c and a_c:\n            df_ord = df.copy()\n            date_col = d_c\n            prod_col = p_c\n            amt_col = a_c\n            break\n\n    if df_ord is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng có cột ngày, tên hàng và thành tiền\", table_name=\"đơn hàng\", available_tables=list(data.keys()))\n\n    df_ord['clean_date'] = clean_date(df_ord[date_col])\n    mask = (df_ord['clean_date'] >= pd.Timestamp('2026-08-01')) & (df_ord['clean_date'] <= pd.Timestamp('2026-08-31 23:59:59'))\n    df_period = df_ord[mask]\n    if df_period.empty:\n        return 0\n\n    df_cátđá = df_period[df_period[prod_col] == 'cát đá']\n    total_revenue = clean_num(df_period[amt_col]).sum()\n    cátđá_revenue = clean_num(df_cátđá[amt_col]).sum()\n    ratio = (cátđá_revenue / total_revenue) * 100\n    return int(round(ratio))",
+  "raw_result": 0,
+  "error": null,
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [
+    "clean_date"
+  ],
+  "self_correction_count": 0,
+  "business_id": "biz_118",
+  "as_of_date": "2026-09-10",
+  "original_question": "Tỉ trọng của nhóm cát đá trong doanh thu tháng 8/2026 là bao nhiêu %?",
+  "normalized_question": "Tỉ trọng của nhóm cát đá trong doanh thu tháng 8/2026 là bao nhiêu %?",
+  "expanded_abbreviations": {},
+  "intent": "rate_percentage",
+  "temporal_info": {
+    "description": "Tháng 8/2026",
+    "start_date": "2026-08-01",
+    "end_date": "2026-08-31"
+  },
+  "entity_matches": [
+    "cát đá",
+    "La Đạt Thắng"
+  ],
+  "pruned_schema": "### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):\n- Bảng 'Bảng kê phiếu giao hàng' (alias: 't_01'): Sổ giao hàng / Vận chuyển (đợt giao, lượt giao, ngày chở/giao, mã vận đơn, biển số xe)\n- Bảng 'Chi tiết công nợ theo hạn' (alias: 't_02'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n- Bảng 'Danh sách hàng hóa' (alias: 't_03'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'So_chi_tiet_ban_hang_[gộp: T02-2025, T03-2025, T04-2025...]' (alias: 't_04'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n- Bảng 'Bảng kê phiếu giao hàng' [Vai trò: Sổ giao hàng / Vận chuyển (đợt giao, lượt giao, ngày chở/giao, mã vận đơn, biển số xe)] (41198 dòng):\n  Cột (8): ['Ngày giao hàng' (ngày: '2025-02-01' -> '2026-09-10'), 'Mã đơn hàng' (vd: 'ORD000002'), 'Lần giao' (phân loại: ['1', '2', '3']), 'Tên hàng hóa' (vd: 'Kẽm buộc 1mm'), 'Đơn vị tính' (vd: 'kg'), 'Số lượng giao' (số/tiền, vd: '1'), 'Biển số xe' (phân loại: ['51C-327.66', '51D-233.15']), 'Người giao hàng' (phân loại: ['Ông Hương', 'Châu Giang'])]\n\n- Bảng 'Chi tiết công nợ theo hạn' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (4915 dòng):\n  Cột (3): ['Mã đơn hàng' (vd: 'ORD000005'), 'Số ngày được nợ' (số/tiền, vd: '30'), 'Hạn thanh toán' (vd: '03/03/2025')]\n\n- Bảng 'Danh sách hàng hóa' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (55 dòng):\n  Cột (8): ['Mã hàng hóa' (vd: 'SP0001'), 'Mã barcode' (vd: '8939792877748'), 'Tên hàng hóa' (vd: 'Xi măng Hà Tiên PCB...'), 'Loại hàng hóa' (phân loại: ['Hàng hóa']), 'Nhóm hàng hóa' (vd: 'xi măng'), 'Đơn vị tính' (vd: 'bao'), 'Tồn lớn nhất' (số/tiền, vd: '999999999'), 'Được bán trực tiếp' (phân loại: ['1'])]\n\n- Bảng 'So_chi_tiet_ban_hang_[gộp: T02-2025, T03-2025, T04-2025...]' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (46001 dòng):\n  Cột (11): ['Ngày' (ngày: '2025-02-01' -> '2026-09-10'), 'Mã đơn hàng' (vd: 'ORD000001'), 'Tên hàng hóa' (vd: 'Ống PVC Bình Minh D...'), 'Đơn vị tính' (vd: 'cây'), 'Số lượng' (số/tiền, vd: '2'), 'Đơn giá' (số/tiền, vd: '65,000.0000'), 'Thành tiền' (số/tiền, vd: '130,000.0000'), 'Trạng thái' (vd: 'đã xong'), 'Số lượng quy đổi' (số/tiền, vd: '2'), 'Khách hàng' (vd: 'Tống Trang Dũng'), '_source_sheet' (vd: 'T02-2025')]",
+  "gold_answer": {
+    "answer": 13.53,
+    "type": "percent",
+    "alias": []
+  },
+  "match_result": {
+    "is_match": false,
+    "eval_score": -1.0,
+    "eval_status_label": "SAI LỆCH ĐÁP ÁN (WRONG - -1.0)"
+  },
+  "deviation_analysis": {
+    "is_applicable": true,
+    "abs_diff": 13.53,
+    "pct_diff": 100.0,
+    "diagnostic_hypothesis": null
+  },
+  "threshold_tau_star": 0.5,
+  "grounding_eval": {
+    "entity_coverage": 1.0,
+    "temporal_coverage": 1.0,
+    "table_coverage": 1.0,
+    "entity_penalty": 0.0,
+    "temporal_penalty": 0.0,
+    "table_penalty": 0.0,
+    "total_penalty": 0.0,
+    "missed_mentions": [],
+    "offtopic_tables": [],
+    "total_valid_mentions": 1,
+    "covered_mentions": 1
+  },
+  "latency_breakdown_ms": {
+    "ingest_schema": 27873.7,
+    "feasibility": 6.96,
+    "grounding": 52.33,
+    "prompt_build": 14.9,
+    "llm_gen": 114238.09,
+    "sandbox_exec": 28778.31,
+    "normalizer": 0.46
+  },
+  "self_correction_trace": []
+}

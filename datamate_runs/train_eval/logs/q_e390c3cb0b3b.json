@@ -1,0 +1,72 @@
+{
+  "question_id": "q_e390c3cb0b3b",
+  "answer": {
+    "id": "q_e390c3cb0b3b",
+    "type": "number",
+    "answer": 18748333
+  },
+  "elapsed_ms": 120698,
+  "confidence": 1.0,
+  "code": "def solution(data):\n    df_sales = None\n    date_col = amt_col = status_col = None\n    for name, df in data.items():\n        if any(k in str(name).lower() for k in ['nhap', 'kho', 'chiphi', 'ncc', 'tonkho']):\n            continue\n        cols = df.columns.tolist()\n        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'ngaylap', 'thời gian', 'ngày tạo'])), None)\n        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower() and 'giảm' not in str(c).lower()), None)\n        if d_c and a_c:\n            df_sales = df.copy()\n            date_col, amt_col = d_c, a_c\n            status_col = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt', 'tình trạng'])), None)\n            break\n\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền\", table_name=\"bán hàng\")\n\n    df_sales['clean_date'] = clean_date(df_sales[date_col])\n    if status_col:\n        df_sales = df_sales[~df_sales[status_col].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|trả|tra|hoàn|hoan|cancel|return')]\n\n    target_date = pd.to_datetime(\"2025-09-28\").date()\n    df_sales = df_sales[(df_sales['clean_date'].dt.date >= target_date) & (df_sales['clean_date'].dt.date <= target_date + pd.Timedelta(days=1))]\n    if df_sales.empty:\n        return 0\n\n    return int(round(clean_num(df_sales[amt_col]).sum()))",
+  "raw_result": 18748333,
+  "error": null,
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [
+    "clean_date"
+  ],
+  "self_correction_count": 0,
+  "business_id": "biz_111",
+  "as_of_date": "2025-09-28",
+  "original_question": "Doanh thu hôm nay là bao nhiêu?",
+  "normalized_question": "Doanh thu hôm nay là bao nhiêu?",
+  "expanded_abbreviations": {},
+  "intent": "aggregation",
+  "temporal_info": {
+    "description": "Hôm nay (2025-09-28)",
+    "start_date": "2025-09-28",
+    "end_date": "2025-09-28"
+  },
+  "entity_matches": [],
+  "pruned_schema": "### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):\n- Bảng 'chi_tiet_don' (alias: 't_01'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n- Bảng 'don_hang' (alias: 't_02'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n- Bảng 'khach_hang' (alias: 't_03'): Danh mục khách hàng (mã khách, tên khách, nhóm khách, địa chỉ)\n- Bảng 'san_pham' (alias: 't_04'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'thanh_toan' (alias: 't_05'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n- Bảng 'chi_tiet_don' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (106585 dòng):\n  Cột (8): ['SL quy đổi' (phân loại: ['1', '2', '3', '6']), 'Thứ tự' (phân loại: ['1', '2', '3']), 'Giá đơn vị' (số/tiền, vd: '7000'), 'SL' (vd: '1'), 'T.Tiền' (số/tiền, vd: '7000'), 'ID SP' (vd: 'SP0046'), 'Ma don' (vd: 'ORD000001'), 'Đơn vị (tính)' (phân loại: ['phần', 'ly', 'cái', 'hộp'])]\n\n- Bảng 'don_hang' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (66469 dòng):\n  Cột (9): ['Số KH' (vd: 'KH0114'), 'Xử lý' (phân loại: ['completed', 'cancelled', 'returned', 'shipping']), 'NgayBan' (vd: '1 thg 1 2025'), 'Bán qua' (phân loại: ['zalo_oa', 'store', 'phone']), 'Còn lại' (vd: '0'), 'Khách trả' (vd: '22000'), 'Tổng bill' (vd: '22000'), 'Phương thức TT' (phân loại: ['transfer', 'ewallet', 'cash', 'cod', 'debt']), 'Mã chứng từ' (vd: 'ORD000001')]\n\n- Bảng 'khach_hang' [Vai trò: Danh mục khách hàng (mã khách, tên khách, nhóm khách, địa chỉ)] (200 dòng):\n  Cột (15): ['ma_kh' (vd: 'KH0001'), 'Điểm tích lũy' (phân loại: ['0']), 'Nhóm' (phân loại: ['thân thiết', 'lẻ', 'sỉ']), 'Trạng thái' (phân loại: ['Đang hoạt động']), 'Email' (rỗng), 'Ghi chú KH' (rỗng), 'Mã số thuế' (số/tiền, vd: '0185121074'), 'Loại hình khách' (phân loại: ['Cá nhân']), 'Ngày sinh' (ngày: '1967-05-28' -> '2003-05-13'), 'CCCD' (rỗng), 'Phone' (vd: '0328548455'), 'Người tạo' (phân loại: ['admin']), 'Addr' (vd: '264 Lương Định Của'), 'Khách lẻ/sỉ' (vd: 'Dương Hùng Trung - ...'), 'Tổng điểm' (phân loại: ['0'])]\n\n- Bảng 'san_pham' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (50 dòng):\n  Cột (18): ['Thuộc tính' (rỗng), 'Được bán trực tiếp' (phân loại: ['1']), 'Mã barcode' (vd: '8934789659628'), 'SKU' (vd: 'SP0001'), 'Hình ảnh' (rỗng), 'Giá' (số/tiền, vd: '25000'), 'Đơn vị' (phân loại: ['ly', 'phần', 'cái']), 'Loại hàng hóa' (phân loại: ['Hàng hóa']), 'Thương hiệu' (rỗng), 'Nhom hang' (vd: 'cà phê'), 'Trọng lượng' (rỗng), 'Vị trí' (rỗng), 'Mẫu ghi chú' (rỗng), 'Mô tả sản phẩm' (rỗng), 'Bảo hành' (rỗng), 'Tồn nhỏ nhất' (số/tiền, vd: '0'), 'Mã HH Liên quan' (rỗng), 'Sản phẩm' (vd: 'Cà phê đen (M)')]\n\n- Bảng 'thanh_toan' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (66195 dòng):\n  Cột (5): ['Thời gian thu' (ngày: '2025-01-01' -> '2026-08-19'), 'Phương thức' (phân loại: ['transfer', 'ewallet', 'cash', 'cod']), 'Tiền' (số/tiền, vd: '22000'), 'Mã phiếu thu' (vd: 'PAY000001'), 'Số HĐ' (vd: 'ORD000001')]",
+  "gold_answer": {
+    "answer": 10792500,
+    "type": "number",
+    "alias": []
+  },
+  "match_result": {
+    "is_match": false,
+    "eval_score": -1.0,
+    "eval_status_label": "SAI LỆCH ĐÁP ÁN (WRONG - -1.0)"
+  },
+  "deviation_analysis": {
+    "is_applicable": true,
+    "abs_diff": 7955833.0,
+    "pct_diff": 73.71631225388,
+    "diagnostic_hypothesis": null
+  },
+  "threshold_tau_star": 0.5,
+  "grounding_eval": {
+    "entity_coverage": 1.0,
+    "temporal_coverage": 1.0,
+    "table_coverage": 1.0,
+    "entity_penalty": 0.0,
+    "temporal_penalty": 0.0,
+    "table_penalty": 0.0,
+    "total_penalty": 0.0,
+    "missed_mentions": [],
+    "offtopic_tables": [],
+    "total_valid_mentions": 0,
+    "covered_mentions": 0
+  },
+  "latency_breakdown_ms": {
+    "ingest_schema": 0.0,
+    "feasibility": 1.94,
+    "grounding": 5.89,
+    "prompt_build": 6.16,
+    "llm_gen": 120391.48,
+    "sandbox_exec": 292.33,
+    "normalizer": 0.43
+  },
+  "self_correction_trace": []
+}

@@ -1,0 +1,17 @@
+{
+  "question_id": "q_23f483dd4193",
+  "answer": {
+    "id": "q_23f483dd4193",
+    "type": "number",
+    "answer": 293
+  },
+  "elapsed_ms": 98410,
+  "confidence": 1.0,
+  "code": "def solution(data):\n    df_sales = None\n    order_col = date_col = None\n    for name, df in data.items():\n        n_clean = re.sub(r'[^a-zA-Z0-9]', '', str(name).lower())\n        if any(k in n_clean for k in ['nhap', 'kho', 'chiphi', 'ncc', 'tonkho', 'khachhang']):\n            continue\n        cols = df.columns.tolist()\n        o_c = next((c for c in cols if any(k in str(c).lower() for k in ['mã đơn', 'ma don', 'mã hóa đơn', 'mã hd', 'order_id', 'order id', 'mã chứng từ', 'mã giao dịch'])), None)\n        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'ngaylap', 'thời gian', 'ngày tạo'])), None)\n        if o_c and d_c:\n            df_sales = df.copy()\n            order_col, date_col = o_c, d_c\n            break\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng bán hàng có cột mã đơn và cột ngày\", table_name=\"bán hàng\", available_tables=list(data.keys()))\n\n    df_sales['clean_date'] = clean_date(df_sales[date_col])\n    mask = (df_sales['clean_date'] >= pd.Timestamp('2025-11-10')) & (df_sales['clean_date'] <= pd.Timestamp('2025-11-14 23:59:59'))\n    df_filtered = df_sales[mask]\n    if df_filtered.empty:\n        return 0\n    return int(df_filtered[order_col].dropna().nunique())",
+  "raw_result": 293,
+  "error": null,
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [],
+  "self_correction_count": 0
+}

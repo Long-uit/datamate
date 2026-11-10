@@ -1,0 +1,50 @@
+{
+  "question_id": "q_ebf285497536",
+  "answer": {
+    "id": "q_ebf285497536",
+    "type": "unanswerable",
+    "answer": null
+  },
+  "elapsed_ms": 33601,
+  "confidence": 1.0,
+  "code": "# Feasibility Gate: Unanswerable detected deterministically",
+  "raw_result": "unanswerable",
+  "error": null,
+  "unanswerable_source": "gate",
+  "selected_tables": [],
+  "selected_columns": [],
+  "self_correction_count": 0,
+  "business_id": "biz_112",
+  "as_of_date": "2026-07-31",
+  "original_question": "coi giumf tieenf bán Trà vải (L) tháng 3/2025 là bao nhiêu",
+  "normalized_question": "coi giumf tieenf bán Trà vải (L) tháng 3/2025 là bao nhiêu",
+  "expanded_abbreviations": {},
+  "intent": "unanswerable_gate",
+  "temporal_info": {},
+  "entity_matches": [],
+  "pruned_schema": "",
+  "gold_answer": {
+    "answer": null,
+    "type": "unanswerable",
+    "alias": []
+  },
+  "match_result": {
+    "is_match": true,
+    "eval_score": 1.0,
+    "eval_status_label": "HOÀN TOÀN TRÙNG KHỚP (CORRECT - +1.0)"
+  },
+  "deviation_analysis": {
+    "is_applicable": false,
+    "abs_diff": null,
+    "pct_diff": null,
+    "diagnostic_hypothesis": null
+  },
+  "threshold_tau_star": 0.5,
+  "unanswerable_reason": "Kỳ hỏi (2025-03-01 đến 2025-03-31) kết thúc trước mốc dữ liệu sớm nhất của shop (2025-04-01) [Điều 7 Rulebook]",
+  "grounding_eval": {},
+  "latency_breakdown_ms": {
+    "ingest_schema": 33599.89,
+    "feasibility": 1.12
+  },
+  "self_correction_trace": []
+}
