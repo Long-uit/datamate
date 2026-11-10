@@ -1,0 +1,153 @@
+{
+  "total": 30,
+  "correct": 7,
+  "wrong": 7,
+  "abstain": 16,
+  "pa": 0.0,
+  "accuracy": 0.5,
+  "coverage": 0.4667,
+  "total_time_sec": 282.5,
+  "status_changes_count": 6,
+  "status_changes": [
+    {
+      "question_id": "q_23401b31d098",
+      "old_state": "WRONG",
+      "new_state": "ABSTAIN",
+      "old_answer": 2932,
+      "new_answer": null,
+      "reason": "Sanity Error: Câu hỏi đếm đơn bị hủy nhưng code không lọc điều kiện trạng thái hủy"
+    },
+    {
+      "question_id": "q_f3d30bcd1487",
+      "old_state": "WRONG",
+      "new_state": "ABSTAIN",
+      "old_answer": 0,
+      "new_answer": null,
+      "reason": "Sanity Error: Câu hỏi yêu cầu tính phần trăm (percent) nhưng code không thực hiện phép chia tỷ lệ"
+    },
+    {
+      "question_id": "q_4befa8de665c",
+      "old_state": "WRONG",
+      "new_state": "ABSTAIN",
+      "old_answer": 1219,
+      "new_answer": null,
+      "reason": "Sanity Error: Câu hỏi đếm đơn bị hủy nhưng code không lọc điều kiện trạng thái hủy"
+    },
+    {
+      "question_id": "q_94fd5882870e",
+      "old_state": "WRONG",
+      "new_state": "ABSTAIN",
+      "old_answer": 0,
+      "new_answer": null,
+      "reason": "Sanity Error: Silent Zero: Kết quả phần trăm bằng 0 bất thường"
+    },
+    {
+      "question_id": "q_9602e7257869",
+      "old_state": "WRONG",
+      "new_state": "ABSTAIN",
+      "old_answer": 0,
+      "new_answer": null,
+      "reason": "Sanity Error: Silent Zero: Kết quả tính toán bằng 0 bất thường cho câu hỏi doanh thu / số lượng / trung bình"
+    },
+    {
+      "question_id": "q_f95fc735e3bc",
+      "old_state": "WRONG",
+      "new_state": "ABSTAIN",
+      "old_answer": 0,
+      "new_answer": null,
+      "reason": "Sanity Error: Câu hỏi yêu cầu tính phần trăm (percent) nhưng code không thực hiện phép chia tỷ lệ"
+    }
+  ],
+  "breakdown": {
+    "number": {
+      "total": 22,
+      "correct": 5,
+      "wrong": 5,
+      "abstain": 12,
+      "latencies": [
+        8965,
+        47,
+        209,
+        4634,
+        21329,
+        2499,
+        179,
+        344,
+        7747,
+        10466,
+        445,
+        18568,
+        126,
+        25465,
+        15485,
+        1892,
+        7540,
+        2593,
+        56,
+        18116,
+        100,
+        1794
+      ],
+      "pa": 0.0,
+      "avg_latency_ms": 6754.5
+    },
+    "string": {
+      "total": 1,
+      "correct": 0,
+      "wrong": 1,
+      "abstain": 0,
+      "latencies": [
+        21600
+      ],
+      "pa": -1.0,
+      "avg_latency_ms": 21600.0
+    },
+    "boolean": {
+      "total": 1,
+      "correct": 1,
+      "wrong": 0,
+      "abstain": 0,
+      "latencies": [
+        1549
+      ],
+      "pa": 1.0,
+      "avg_latency_ms": 1549.0
+    },
+    "list": {
+      "total": 1,
+      "correct": 0,
+      "wrong": 0,
+      "abstain": 1,
+      "latencies": [
+        38790
+      ],
+      "pa": 0.0,
+      "avg_latency_ms": 38790.0
+    },
+    "unanswerable": {
+      "total": 1,
+      "correct": 1,
+      "wrong": 0,
+      "abstain": 0,
+      "latencies": [
+        15155
+      ],
+      "pa": 1.0,
+      "avg_latency_ms": 15155.0
+    },
+    "percent": {
+      "total": 4,
+      "correct": 0,
+      "wrong": 1,
+      "abstain": 3,
+      "latencies": [
+        182,
+        12051,
+        19332,
+        24773
+      ],
+      "pa": -0.25,
+      "avg_latency_ms": 14084.5
+    }
+  }
+}

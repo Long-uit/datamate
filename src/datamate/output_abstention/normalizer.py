@@ -514,44 +514,83 @@ def infer_expected_type(question: Optional[str] = None) -> Optional[str]:
     if not question:
         return None
     q_low = _nfc(question).lower()
+    q_no_acc = re.sub(
+        r"[^a-z0-9\s%]",
+        " ",
+        "".join(c for c in unicodedata.normalize("NFD", q_low.replace("đ", "d")) if unicodedata.category(c) != "Mn")
+        if unicodedata is not None
+        else q_low,
+    )
+    q_no_acc = re.sub(r"\s+", " ", q_no_acc).strip()
 
-    # Percent (loại trừ nồng độ thuốc có chữ số đứng ngay trước dấu %)
+    # 1. Percent (loại trừ nồng độ thuốc có chữ số đứng ngay trước dấu %)
     if PCT_PATTERN.search(q_low):
         return "percent"
 
-    # Date
-    if any(k in q_low for k in ("ngày nào", "ngay nao", "thời điểm nào", "hạn dùng", "vào ngày", "hạn sử dụng")):
-        return "date"
-
-    # Boolean
-    if any(k in q_low for k in ("có hay không", "đúng không", "phải không", "có đơn nào", "đã từng", "có cao hơn", "có nhiều hơn")):
+    # 2. Boolean (kiểm tra trước để không bị bắt nhầm từ 'doanh thu' trong 'doanh thu có tăng liên tục không')
+    if (
+        any(k in q_low for k in (
+            "có hay không", "đúng không", "phải không", "có đơn nào", "đã từng",
+            "có cao hơn", "có nhiều hơn", "có tăng liên tục", "có giảm liên tục",
+            "có luôn cao hơn", "có luôn thấp hơn", "có phải tháng",
+        ))
+        or re.search(r"\bc(?:[oó]|os)\s+(?:t[aă]ng|gi[aả]m|lu[oô]n|ph[aả]i)\b.*(?:kh[oô]ng|khoong|\bko\b|\bk\b|[aạ]\?|nh[iỉ]\?)", q_low)
+    ):
         return "boolean"
 
-    # Table
-    if any(k in q_low for k in ("bảng", "lập bảng", "thống kê chi tiết từng", "mỗi người còn nợ bao nhiêu")):
+    # 3. Date (tránh bắt nhầm 'vào ngày DD/MM/YYYY là bao nhiêu')
+    if (
+        any(k in q_low for k in ("ngày nào", "ngay nao", "ngayf nào", "thời điểm nào", "tháng nào", "thang nao"))
+        or re.search(r"\b(?:ng[aà]yf?|th[aá]ng)\s+n(?:[aà]o|aof)\b", q_low)
+    ):
+        return "date"
+
+    # 4. Table (yêu cầu lập bảng hoặc liệt kê nhiều đối tượng kèm số tiền/số lượng từng người)
+    if (
+        any(k in q_low for k in ("bảng", "lập bảng", "thống kê chi tiết từng", "mỗi người còn nợ", "số nợ của từng", "kèm số tiền còn nợ"))
+        or re.search(r"(?:top\s*\d+|li[eệ]t\s*k[eê]\s*\d+|\d+\s*kh[aá]ch).*(?:m[oỗ]i\s*ng[uư][oờ]i|t[uừ]ng\s*ng(?:[uư][oờ]i|uwowif)|k[eè]m\s*s[oố]\s*ti[eề]n)", q_low)
+        or re.search(r"(?:moi\s*nguoi\s*con\s*no|so\s*no\s*cua\s*tung|kem\s*so\s*tien\s*con\s*no)", q_no_acc)
+    ):
         return "table"
 
-    # List (Top-K hoặc danh sách nhiều đối tượng)
-    if (
-        any(k in q_low for k in ("danh sách", "top", "những mặt hàng nào", "liệt kê", "các khách hàng", "mấy hộp chẵn", "mấy vỉ chẵn", "mấy lốc chẵn"))
-        or re.search(r"(?<!/)(?<!\d)\b([1-9]|[1-4]\d|50|mấy)\s+(?:mặt\s*hàng|sản\s*phẩm|sp|khách(?:\s*hàng)?|món|hàng|khach)\b", q_low)
-        or re.search(r"\btop\s*\d+\b", q_low)
+    # 5. List (Top-K với K >= 2, danh sách nhiều đối tượng, hoặc cặp [chẵn, lẻ] / mỗi loại lần lượt)
+    # Lưu ý: không bắt 'mấy mặt hàng ế / mấy khách mua từ X đơn' (đó là câu hỏi đếm số lượng -> number)
+    is_count_how_many = bool(re.search(
+        r"\b(?:c[oó]\s*(?:t[oổ]ng\s*c[oộ]ng\s*)?)?(?:m[aấ]y|bao\s*nhi[eê]u|nhi[eê]u)\s+(?:m[aặ]t\s*h[aà]ng|s[aả]n\s*ph[aẩ]m|sp|kh[aá]ch(?:\s*h[aà]ng)?|m[oó]n)\b",
+        q_low,
+    ))
+    if not is_count_how_many and (
+        any(k in q_low for k in (
+            "danh sách", "những mặt hàng nào", "nhung mat hang nao", "những sản phẩm nào", "nhung san pham nao",
+            "liệt kê", "liet ke", "các khách hàng", "mấy hộp chẵn", "mấy vỉ chẵn", "mấy lốc chẵn", "may hop chan",
+            "bao nhieu hop chan", "bao nhiêu hộp chẵn", "từ tháng cũ đến tháng mới",
+            "lần lượt là bao nhiêu", "lan luot la bao nhieu", "lần lượt theo thứ tự", "lan luwowtj theo",
+            "mỗi loại bao nhiêu", "mỗi bên bao nhiêu", "ghi hai số theo thứ tự",
+        ))
+        or re.search(r"\btop\s*(?:[2-9]|\d{2,})\b", q_low)
+        or re.search(r"(?<!/)(?<!\d)\b([2-9]|[1-4]\d|50)\s+(?:mặt\s*hàng|mat\s*hang|sản\s*phẩm|san\s*pham|sp|khách(?:\s*hàng)?|món|mon|hàng|khach|best\s*seller)\b", q_low)
+        or re.search(r"\bh[aà]ng\s+n[aà]o\s+h[eế]t\s+h[aạ]n\b", q_low)
+        or re.search(r"nh[oó]m\s*tu[oổ]i\s*n[oợ]\s*0.*7\s*ng[aà]y", q_low)
     ):
         return "list"
 
-    # String (Top-1 đối tượng đơn lẻ)
-    if (
-        re.search(r"\b(?:hàng|sp|món|sản\s*phẩm|hang|mon|san\s*pham)\s+n[aà]o\s+(?:bán\s*chạy|nhiều|chạy|hot|chi\s*tiêu|mua|thấp|ít|chay|ban\s*chay|nhieu)\b", q_low)
-        or re.search(r"\b(?:bán\s*(?:chạy|nhiều|hot)|chi\s*tiêu\s*nhiều|chay)\s*nhất\s*l[aà]\s*(?:gì|ai|những\s*gì|mặt\s*hàng\s*nào|sp\s*nào|gi)\b", q_low)
-        or re.search(r"\bsp\s+(?:bán|ban)\s+(?:dc|được|duoc)?\s*(?:nhiều|nhieu)\s*nhất\b", q_low)
-        or re.search(r"\b(?:hàng|hang)\s+n[aà]o\s+(?:chạy|chay)\s*nhất\b", q_low)
+    # 6. String (Top-1 đối tượng đơn lẻ: mặt hàng nào, khách nào, nhà cung cấp nào, ai...)
+    if not is_count_how_many and (
+        re.search(r"\b(?:hàng|sp|món|sản\s*phẩm|mặt\s*hàng|hang|mon|san\s*pham|mat\s*hang)\s+n(?:[aà]o|aof)\b", q_low)
+        or re.search(r"\b(?:khách(?:\s*hàng)?|khach(?:\s*hang)?|nhà\s*cung\s*cấp|nhaf\s*cung\s*cấp|nha\s*cung\s*cap|ncc|nhân\s*viên|nhan\s*vien)\s+n(?:[aà]o|aof)\b", q_low)
+        or re.search(r"\bai\s+(?:mua|bán|ban|nợ|no|chi\s*tiêu|l[aà]\s+(?:kh[aá]ch|ng[uư][oờ]i))\b", q_low)
+        or re.search(r"\b(?:l[aà]\s+ai|la\s+ai)\b", q_low)
+        or re.search(r"\b(?:bán\s*(?:chạy|nhiều|hot)|chi\s*tiêu\s*nhiều|chay|hot)\s*nhất\s*l[aà]\s*(?:gì|ai|chi|những\s*gì|mặt\s*hàng\s*nào|sp\s*nào|gi|mat\s*hang\s*nao)\b", q_low)
+        or re.search(r"\b(?:sản\s*phẩm|sp|mặt\s*hàng)\s+b[aá]n\s+(?:dc|đc|được|duoc)?\s*(?:nhiều|nhieu|nhieeuf)\s*nhất\b", q_low)
         or re.search(r"\btop\s*1\b", q_low)
     ):
         return "string"
 
-    # Number
+    # 7. Number
     if (
-        any(k in q_low for k in ("bao nhiêu", "bnhiu", "bao nhiu", "mấy", "tổng cộng", "doanh thu", "dthu", "tiền", "số lượng", "số đơn", "giá trị"))
+        any(k in q_low for k in ("bao nhiêu", "bnhiu", "bao nhiu", "bn ", "nhiêu", "mấy", "đếm số", "tổng cộng", "doanh thu", "dthu", "tiền", "số lượng", "số đơn", "giá trị"))
+        or re.search(r"\b(?:bn|nhiêu)$", q_low)
+        or re.search(r"\b(?:bao\s*nhieu|may|tong\s*cong|doanh\s*thu|tien|so\s*luong|so\s*don|gia\s*tri|gia\s*ban|dem\s*so)\b", q_no_acc)
         or re.search(r"\bgiá\s*trị\s*trung\s*bình\s*một\s*đơn\b", q_low)
         or re.search(r"(?:gi[aá]s?\s*tr[iị]\s*)?trung\s*b[iì]nh\s*(?:m[oộ]t|1)\s*đ[oơ]n|tb\s*(?:m[oộ]t|1)\s*đ[oơ]n|\baov\b", q_low)
     ):
@@ -853,11 +892,13 @@ def check_result_sanity(
     sub_ans: Dict[str, Any],
     question: str = "",
     code_text: str = "",
+    penalize_zero_revenue_qty: Optional[bool] = None,
 ) -> Tuple[bool, Optional[str]]:
     """
     Bộ kiểm tra tính hợp lý hậu thực thi (Post-execution Sanity Check).
-    Phát hiện các kết quả vô lý (số âm bất thường, số 0 vô lý cho câu hỏi xếp hạng,
-    danh sách rỗng) để kích hoạt tự sửa lỗi hoặc ép về 'abstain' tránh bị phạt -1 điểm.
+    Phát hiện các kết quả vô lý (số âm bất thường, số 0 vô lý cho câu hỏi doanh thu/số lượng/trung bình/xếp hạng,
+    kiểu trả về không khớp câu hỏi, percent thiếu phép chia tỷ lệ, điều kiện lọc luôn rỗng, danh sách rỗng)
+    để kích hoạt tự sửa lỗi hoặc ép về 'abstain' tránh bị phạt -1 điểm.
     
     Returns:
         Tuple[bool, Optional[str]]: (is_sane, error_reason_if_not_sane)
@@ -872,10 +913,17 @@ def check_result_sanity(
     if ans_type in ("unanswerable", "abstain"):
         return True, None
 
+    if penalize_zero_revenue_qty is None:
+        try:
+            from src.datamate.config import get_config
+            penalize_zero_revenue_qty = get_config().abstention.penalize_zero_revenue_qty
+        except Exception:
+            penalize_zero_revenue_qty = True
+
     # 0. Chặn Python type objects (vd: return int, return float, <class 'int'>)
     if isinstance(ans_val, type):
         return False, f"Kết quả trả về là Python type object ({ans_val}) thay vì giá trị tính toán"
-    if isinstance(ans_val, str) and (ans_val.startswith("<class ") or ans_val.strip() in ("<class 'int'>", "<class 'float'>", "<class 'str'>", "<class 'list'>", "<class 'dict'>")):
+    if isinstance(ans_val, str) and (raw_val_str := ans_val.strip()) and (ans_val.startswith("<class ") or raw_val_str in ("<class 'int'>", "<class 'float'>", "<class 'str'>", "<class 'list'>", "<class 'dict'>")):
         return False, f"Kết quả trả về là type representation ({ans_val}) thay vì giá trị tính toán"
 
     # 1. Kiểm tra None / NaN
@@ -883,6 +931,47 @@ def check_result_sanity(
         return False, "Kết quả trả về là None, NaN hoặc Inf"
 
     q_low = _nfc(question).lower() if question else ""
+    clean_c = re.sub(r"#.*", "", code_text) if code_text else ""
+
+    # 1b. Kiểm tra điều kiện lọc luôn rỗng (ví dụ: dt.day >= 27 & dt.day <= 3 hoặc start > end)
+    if clean_c:
+        m_day_ge = re.findall(r"dt\.day\s*>=\s*(\d+)", clean_c)
+        m_day_le = re.findall(r"dt\.day\s*<=\s*(\d+)", clean_c)
+        if m_day_ge and m_day_le:
+            for d_ge in m_day_ge:
+                for d_le in m_day_le:
+                    if int(d_ge) > int(d_le) and "|" not in clean_c:
+                        return False, f"Điều kiện lọc ngày luôn rỗng (dt.day >= {d_ge} & dt.day <= {d_le})"
+        m_month_ge = re.findall(r"dt\.month\s*>=\s*(\d+)", clean_c)
+        m_month_le = re.findall(r"dt\.month\s*<=\s*(\d+)", clean_c)
+        if m_month_ge and m_month_le:
+            for m_ge in m_month_ge:
+                for m_le in m_month_le:
+                    if int(m_ge) > int(m_le) and "|" not in clean_c:
+                        return False, f"Điều kiện lọc tháng luôn rỗng (dt.month >= {m_ge} & dt.month <= {m_le})"
+
+    # 1c. Kiểm tra kiểu trả về không khớp kiểu câu hỏi kỳ vọng (Return Type Mismatch)
+    if question:
+        expected_q_type = infer_expected_type(question)
+        if expected_q_type and ans_type != expected_q_type:
+            # Cho phép list-vs-number nếu câu hỏi có liệt kê nhiều tháng/nhóm nhưng infer_expected_type đoán number
+            is_multi_part_list = (expected_q_type == "number" and ans_type == "list")
+            if not is_multi_part_list:
+                return False, f"Kết quả '{ans_val}' vô lý: Kiểu trả về '{ans_type}' không khớp với kiểu câu hỏi kỳ vọng '{expected_q_type}'"
+
+    # 1d. Kiểm tra kiểu câu hỏi là percent mà code không tính tỷ lệ (không có phép chia / hàm tính %)
+    if ans_type == "percent" or (question and infer_expected_type(question) == "percent"):
+        if clean_c:
+            has_ratio_op = (
+                "/" in clean_c
+                or any(k in clean_c.lower() for k in ("pct", "ratio", "ty_le", "ti_le", "ty_trong", "ti_trong", "percent", "div("))
+            )
+            if not has_ratio_op:
+                return False, "Câu hỏi yêu cầu tính phần trăm (percent) nhưng code không thực hiện phép chia tỷ lệ"
+        if isinstance(ans_val, (int, float, Decimal)) and float(ans_val) == 0.0 and penalize_zero_revenue_qty:
+            is_change_q = bool(re.search(r"t[aă]ng|gi[aả]m|ch[eê]nh\s*l[eệ]ch|thay\s*đ[oổ]i|bi[eế]n\s*đ[oộ]ng|h[oơ]n\s*hay\s*k[eé]m", q_low))
+            if not is_change_q or (clean_c and clean_c.count("clean_date") < 2 and clean_c.count("mask") < 2):
+                return False, "Silent Zero: Kết quả phần trăm bằng 0 bất thường"
 
     # 2. Kiểm tra số âm bất thường cho các câu hỏi về doanh thu / số lượng / tiền
     # (Ngoại trừ câu hỏi rõ ràng về biến động, chênh lệch, tăng giảm, lãi ròng, lợi nhuận)
@@ -890,25 +979,26 @@ def check_result_sanity(
         num_val = float(ans_val)
         is_change_or_profit = bool(re.search(r"t[aă]ng|gi[aả]m|ch[eê]nh\s*l[eệ]ch|thay\s*đ[oổ]i|l[aã]i|l[oỗ]|l[oợ]i\s*nhu[aậ]n|bi[eế]n\s*đ[oộ]ng", q_low))
         is_revenue_or_qty = bool(re.search(
-            r"doanh\s*thu|doanh\s*s[oố]|t[oổ]ng\s*ti[eề]n|ti[eề]n\s*b[aá]n|s[oố]\s*lu[oợ]ng|"
-            r"(?:bao\s*nhi[eê]u|m[aấ]y|may)\s*(?:đ[oơ]n|ly|chai|h[oộ]p|g[oó]i|s[aả]n\s*ph[aẩ]m|kh[aá]ch|ti[eề]n|h[oó]a\s*đ[oơ]n|kg|kilo|g|gram|t[aấ]n|tan|m[eé]t|met|m3|l[ií]t|lit|th[uú]c|h[aà]ng|m[oó]n)",
+            r"doanh\s*thu|dthu|doanh\s*s[oố]|t[oổ]ng\s*ti[eề]n|ti[eề]n\s*b[aá]n|s[oố]\s*lu[oợ]ng|"
+            r"trung\s*b[iì]nh|trung\s*binh|b[iì]nh\s*qu[aâ]n|binh\s*quan|\baov\b|"
+            r"(?:bao\s*nhi[eê]u|bnhiu|bao\s*nhiu|bn|m[aấ]y|may)\s*(?:đ[oơ]n|ly|chai|h[oộ]p|g[oó]i|s[aả]n\s*ph[aẩ]m|kh[aá]ch|ti[eề]n|h[oó]a\s*đ[oơ]n|kg|kilo|g|gram|t[aấ]n|tan|m[eé]t|met|m3|l[ií]t|lit|th[uú]c|h[aà]ng|m[oó]n|đ[iĩ]a|vi[eê]n)",
             q_low
         ))
 
         if not is_change_or_profit and is_revenue_or_qty and num_val < 0:
-            return False, f"Số âm bất thường ({ans_val}) cho câu hỏi về doanh thu / số lượng không cho phép âm"
+            return False, f"Số âm bất thường ({ans_val}) cho câu hỏi về doanh thu / số lượng / trung bình không cho phép âm"
 
-        is_count_query = bool(re.search(r"đ[eế]m|s[oố]\s*đ[oơ]n|đ[oơ]n\s*(?:h[uủ]y|hu[yỷ])|m[aấ]y\s*đ[oơ]n|m[aấ]y\s*đ[oợ]t|s[oố]\s*đ[oợ]t|bao\s*nhi[eê]u\s*(?:đ[oơ]n|đ[oợ]t|bill)", q_low))
+        is_count_query = bool(re.search(r"đ[eế]m|s[oố]\s*đ[oơ]n|đ[oơ]n\s*(?:h[uủ]y|hu[yỷ])|m[aấ]y\s*đ[oơ]n|m[aấ]y\s*đ[oợ]t|s[oố]\s*đ[oợ]t|bao\s*nhi[eê]u\s*(?:đ[oơ]n|đ[oợ]t|bill)|m[aặt]\s*h[aà]ng\s*[eế]|kh[oô]ng\s*ai\s*mua|b[aá]n\s*(?:ko|kh[oô]ng)\s*(?:đc|được|dc)", q_low))
         has_specific_product_or_unit = bool(re.search(
             r"kg|kilo|g|gram|t[aấ]n|tan|m[eé]t|met|m3|l[ií]t|lit|ly|chai|h[oộ]p|g[oó]i|vi[eê]n|th[uú]c|th[eé]p|m[aá]|th[iị]t|g[aà]|c[aá]|heo|b[oò]|s[aả]n\s*ph[aẩ]m|m[aặ]t\s*h[aà]ng",
             q_low
-        ))
+        )) and not bool(re.search(r"m[aặ]t\s*h[aà]ng\s*[eế]|kh[oô]ng\s*ai\s*mua|b[aá]n\s*(?:ko|kh[oô]ng)\s*(?:đc|được|dc)", q_low))
 
-        # 2b. Kiểm tra Silent Zero (kết quả 0 hoặc 0.0 bất thường khi hỏi doanh thu / tổng tiền / lượng bán)
-        # Miễn trừ cho các truy vấn đếm thuần túy (đếm số đơn, đơn huỷ, đợt giao...) khi không hỏi về sản phẩm/đơn vị cụ thể
+        # 2b. Kiểm tra Silent Zero (kết quả 0 hoặc 0.0 bất thường khi hỏi doanh thu / tổng tiền / lượng bán / trung bình)
+        # Miễn trừ cho các truy vấn đếm thuần túy (đếm số đơn, đơn huỷ, đợt giao, mặt hàng ế...)
         is_pure_count = is_count_query and not has_specific_product_or_unit
-        if num_val == 0.0 and is_revenue_or_qty and not is_change_or_profit and not is_pure_count:
-            return False, "Silent Zero: Kết quả tính toán bằng 0 bất thường cho câu hỏi doanh thu / số lượng"
+        if penalize_zero_revenue_qty and num_val == 0.0 and is_revenue_or_qty and not is_change_or_profit and not is_pure_count:
+            return False, "Silent Zero: Kết quả tính toán bằng 0 bất thường cho câu hỏi doanh thu / số lượng / trung bình"
 
         # 2c. Kiểm tra nhầm lẫn Đếm số đơn (Count) sang Cộng tổng tiền (Sum VNĐ)
         asks_money = bool(re.search(r"ti[eề]n|doanh\s*thu|doanh\s*s[oố]|gi[aá]\s*tr[iị]|bao\s*nhi[eê]u\s*đ[oồ]ng", q_low))

@@ -46,6 +46,7 @@ class GroundingConfig:
 class AbstentionConfig:
     tau_star: float = 0.50
     enabled: bool = True
+    penalize_zero_revenue_qty: bool = True
 
 
 @dataclass
@@ -137,6 +138,7 @@ def load_config(config_path: Optional[str | Path] = None) -> AppConfig:
         abstention=AbstentionConfig(
             tau_star=float(a_data.get("tau_star", 0.50)),
             enabled=bool(a_data.get("enabled", True)),
+            penalize_zero_revenue_qty=bool(a_data.get("penalize_zero_revenue_qty", True)),
         ),
         submission=SubmissionConfig(
             offline_mode=bool(s_data.get("offline_mode", True)),
@@ -174,6 +176,8 @@ def load_config(config_path: Optional[str | Path] = None) -> AppConfig:
         cfg.model.seed = int(os.environ["DATAMATE_SEED"])
     if "DATAMATE_OFFLINE_MODE" in os.environ:
         cfg.submission.offline_mode = os.environ["DATAMATE_OFFLINE_MODE"].lower() in ("1", "true", "yes")
+    if "DATAMATE_PENALIZE_ZERO" in os.environ:
+        cfg.abstention.penalize_zero_revenue_qty = os.environ["DATAMATE_PENALIZE_ZERO"].lower() in ("1", "true", "yes")
 
     return cfg
 

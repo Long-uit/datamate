@@ -257,21 +257,27 @@ def evaluate_semantic_rule_compliance(
     sub_ans: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    Kiểm tra tính tuân thủ ngữ nghĩa Rulebook của đoạn mã Python sinh ra:
+    Kiểm tra tính tuân thủ ngữ nghĩa Rulebook và tính hợp lệ tất định của đoạn mã Python sinh ra:
     - Phát hiện nhầm lẫn giữa 'ưa chuộng nhất' (đếm số đơn nunique) và 'bán chạy nhất' (tổng số lượng).
     - Phát hiện nhầm lẫn giữa đếm số đơn ('bao nhiêu đơn') và cộng tiền ('.sum()').
     - Phát hiện thiếu điều kiện lọc khách có >= 3 đơn khi hỏi 'khách sộp nhất'.
+    - Phát hiện câu hỏi đếm đơn hủy ('bị hủy', 'trạng thái hủy') nhưng code không hề lọc trạng thái hủy.
+    - Phát hiện kiểu câu hỏi là percent nhưng code không có phép chia tỷ lệ.
+    - Phát hiện kiểu trả về không khớp kiểu câu hỏi kỳ vọng.
+    - Phát hiện điều kiện lọc luôn rỗng (vd: dt.day >= 27 & dt.day <= 3).
     """
     violations: List[str] = []
     semantic_penalty = 0.0
-    if not code_text or not question:
+    if not code_text and not question:
         return {"is_compliant": True, "semantic_penalty": 0.0, "violations": []}
 
-    q_low = question.lower()
-    clean_c = re.sub(r"#.*", "", code_text).lower()
+    q_low = unicodedata.normalize("NFC", question).lower() if question else ""
+    q_no_acc = _strip_diacritics(q_low)
+    clean_c = re.sub(r"#.*", "", code_text).lower() if code_text else ""
+    clean_c_no_acc = _strip_diacritics(clean_c)
 
     # 1. 'Ưa chuộng nhất' bắt buộc dùng nunique() trên mã đơn, không phải sum() doanh thu
-    if "ưa chuộng" in q_low or "ua chuong" in _strip_diacritics(q_low):
+    if "ưa chuộng" in q_low or "ua chuong" in q_no_acc:
         if "nunique" not in clean_c and "drop_duplicates" not in clean_c:
             violations.append("Câu hỏi 'ưa chuộng nhất' (Điều 3) yêu cầu đếm số đơn khác nhau (.nunique()), nhưng code chưa dùng .nunique()")
             semantic_penalty += 0.25
@@ -285,13 +291,61 @@ def evaluate_semantic_rule_compliance(
     # 3. Hỏi đếm số đơn nhưng code chỉ gọi .sum() trên cột tiền mà không có nunique/count/len
     asks_order_count = bool(re.search(r"(?:bao\s*nhi[eê]u|m[aấ]y|đ[eế]m\s*s[oố])\s*(?:đ[oơ]n|h[oó]a\s*đ[oơ]n|bill)", q_low))
     asks_money = bool(re.search(r"ti[eề]n|doanh\s*thu|doanh\s*s[oố]|gi[aá]\s*tr[iị]", q_low))
-    if asks_order_count and not asks_money:
-        has_count_op = any(k in clean_c for k in ["nunique", "len(", ".count(", "shape[0]", "value_counts"])
+    if asks_order_count and not asks_money and clean_c:
+        has_count_op = any(k in clean_c for k in ["nunique", "len(", ".count(", "shape[0]", "value_counts", "count_orders"])
         if not has_count_op and ".sum()" in clean_c:
             violations.append("Câu hỏi đếm số đơn nhưng code chỉ gọi .sum() mà không đếm mã đơn (.nunique())")
             semantic_penalty += 0.30
 
-    semantic_penalty = round(min(0.45, semantic_penalty), 4)
+    # 4. Điều kiện lọc luôn rỗng (ví dụ: dt.day >= 27 & dt.day <= 3 trên cùng 1 tháng)
+    if clean_c:
+        m_day_ge = re.findall(r"dt\.day\s*>=\s*(\d+)", clean_c)
+        m_day_le = re.findall(r"dt\.day\s*<=\s*(\d+)", clean_c)
+        if m_day_ge and m_day_le:
+            for d_ge in m_day_ge:
+                for d_le in m_day_le:
+                    if int(d_ge) > int(d_le) and "|" not in clean_c:
+                        violations.append(f"Điều kiện lọc ngày luôn rỗng (dt.day >= {d_ge} & dt.day <= {d_le})")
+                        semantic_penalty += 0.60
+        m_month_ge = re.findall(r"dt\.month\s*>=\s*(\d+)", clean_c)
+        m_month_le = re.findall(r"dt\.month\s*<=\s*(\d+)", clean_c)
+        if m_month_ge and m_month_le:
+            for m_ge in m_month_ge:
+                for m_le in m_month_le:
+                    if int(m_ge) > int(m_le) and "|" not in clean_c:
+                        violations.append(f"Điều kiện lọc tháng luôn rỗng (dt.month >= {m_ge} & dt.month <= {m_le})")
+                        semantic_penalty += 0.60
+
+    # 5. Kiểu câu hỏi là percent mà code không tính tỷ lệ
+    try:
+        from src.datamate.output_abstention.normalizer import infer_expected_type
+        expected_q_type = infer_expected_type(question) if question else None
+    except Exception:
+        expected_q_type = None
+
+    ans_type = sub_ans.get("type") if isinstance(sub_ans, dict) else None
+    if (ans_type == "percent" or expected_q_type == "percent") and clean_c:
+        has_ratio_op = (
+            "/" in clean_c
+            or any(k in clean_c for k in ("pct", "ratio", "ty_le", "ti_le", "ty_trong", "ti_trong", "percent", "div("))
+        )
+        if not has_ratio_op:
+            violations.append("Câu hỏi kiểu percent nhưng code không thực hiện phép chia tính tỷ lệ")
+            semantic_penalty += 0.60
+
+    # 6. Kiểu trả về không khớp kiểu câu hỏi kỳ vọng
+    if expected_q_type and ans_type and ans_type not in ("abstain", "unanswerable"):
+        if ans_type != expected_q_type and not (expected_q_type == "number" and ans_type == "list"):
+            violations.append(f"Kiểu trả về '{ans_type}' không khớp với kiểu câu hỏi kỳ vọng '{expected_q_type}'")
+            semantic_penalty += 0.60
+
+    # 7. Câu hỏi hỏi số đơn bị hủy nhưng code không lọc trạng thái hủy
+    if re.search(r"\b(?:đon|don|bill|hoa\s*don)\s*(?:o\s*trang\s*thai\s*)?(?:bi\s*)?huy\b|\bbao\s*nhieu\s*(?:don|bill)\s*(?:bi\s*)?huy\b", q_no_acc):
+        if clean_c and not re.search(r"huy|cancel|cancelled_orders", clean_c_no_acc):
+            violations.append("Câu hỏi đếm đơn bị hủy nhưng code không lọc điều kiện trạng thái hủy")
+            semantic_penalty += 0.60
+
+    semantic_penalty = round(min(0.80, semantic_penalty), 4)
     return {
         "is_compliant": len(violations) == 0,
         "semantic_penalty": semantic_penalty,
@@ -363,6 +417,7 @@ def compute_confidence_score(
     temporal_info: Optional[Dict[str, Any]] = None,
     allowed_tables: Optional[List[str]] = None,
     question: str = "",
+    penalize_zero_revenue_qty: Optional[bool] = None,
 ) -> float:
     """
     Tính điểm độ tin cậy C in [0.0, 1.0] có hiệu chuẩn dựa trên sức khỏe thực thi,
@@ -371,6 +426,13 @@ def compute_confidence_score(
     ans_type = sub_ans.get("type")
     ans_val = sub_ans.get("answer")
     source = sub_ans.get("unanswerable_source") or unanswerable_source
+
+    if penalize_zero_revenue_qty is None:
+        try:
+            from src.datamate.config import get_config
+            penalize_zero_revenue_qty = get_config().abstention.penalize_zero_revenue_qty
+        except Exception:
+            penalize_zero_revenue_qty = True
 
     # Nếu câu hỏi đã được Feasibility Gate xác định là không khả thi ngay từ đầu
     if not has_feasibility_pass:
@@ -387,6 +449,14 @@ def compute_confidence_score(
     if ans_type == "abstain":
         return 0.0
 
+    # Nếu sanity_passed=False (vi phạm bất kỳ quy tắc tất định nào ở check_result_sanity),
+    # kiểm tra xem lỗi có phải do zero penalty đang tắt hay không; nếu lỗi thật sự -> hạ C xuống dưới ngưỡng (< 0.50).
+    if not sanity_passed:
+        if not penalize_zero_revenue_qty and sanity_error and "Silent Zero" in sanity_error:
+            sanity_passed = True
+        else:
+            return 0.20
+
     # 1. Điểm sức khỏe thực thi (Execution Health Score) - Tối đa 0.40
     if exec_error is not None:
         exec_score = 0.0
@@ -401,31 +471,38 @@ def compute_confidence_score(
         exec_score = max(0.10, exec_score - 0.10)
 
     # 2. Điểm hợp lý dữ liệu (Data Plausibility Score) - Tối đa 0.35
-    if not sanity_passed:
-        plausibility_score = 0.0
-    else:
-        plausibility_score = 0.35
-        # Kiểm tra chi tiết giá trị đáp án
-        if ans_type == "number":
-            if isinstance(ans_val, (int, float)):
-                if math.isnan(ans_val) or math.isinf(ans_val):
-                    plausibility_score = 0.0
-                elif ans_val == 0:
-                    # Số 0 có thể hợp lệ nhưng độ tin cậy thấp hơn một chút nếu là câu hỏi đếm
-                    plausibility_score = 0.30
-        elif ans_type == "list":
-            if not ans_val or len(ans_val) == 0:
-                plausibility_score = 0.0
-            elif len(ans_val) > 50:
-                # Danh sách quá dài bất thường
-                plausibility_score = 0.20
-        elif ans_type == "table":
-            rows = ans_val.get("rows", []) if isinstance(ans_val, dict) else []
-            if not rows:
-                plausibility_score = 0.0
-        elif ans_type == "string":
-            if not ans_val or str(ans_val).strip() == "":
-                plausibility_score = 0.0
+    plausibility_score = 0.35
+    q_low = unicodedata.normalize("NFC", question).lower() if question else ""
+    if ans_type in ("number", "percent"):
+        if isinstance(ans_val, (int, float)):
+            if math.isnan(ans_val) or math.isinf(ans_val):
+                return 0.0
+            elif float(ans_val) == 0.0:
+                is_change_or_profit = bool(re.search(r"t[aă]ng|gi[aả]m|ch[eê]nh\s*l[eệ]ch|thay\s*đ[oổ]i|l[aã]i|l[oỗ]|l[oợ]i\s*nhu[aậ]n|bi[eế]n\s*đ[oộ]ng", q_low))
+                is_rev_qty_avg = bool(re.search(
+                    r"doanh\s*thu|dthu|doanh\s*s[oố]|t[oổ]ng\s*ti[eề]n|ti[eề]n\s*b[aá]n|s[oố]\s*lu[oợ]ng|"
+                    r"trung\s*b[iì]nh|trung\s*binh|b[iì]nh\s*qu[aâ]n|binh\s*quan|\baov\b|"
+                    r"t[ỉỷi]\s*tr[ọo]ng|ty\s*trong|ph[ầa]n\s*tr[ăa]m|%|"
+                    r"(?:bao\s*nhi[eê]u|bnhiu|bao\s*nhiu|bn|m[aấ]y|may)\s*(?:đ[oơ]n|ly|chai|h[oộ]p|g[oó]i|s[aả]n\s*ph[aẩ]m|kh[aá]ch|ti[eề]n|h[oó]a\s*đ[oơ]n|kg|kilo|g|gram|t[aấ]n|tan|m[eé]t|met|m3|l[ií]t|lit|th[uú]c|h[aà]ng|m[oó]n|đ[iĩ]a|vi[eê]n)",
+                    q_low,
+                ))
+                is_pure_count = bool(re.search(r"đ[eế]m|s[oố]\s*đ[oơ]n|đ[oơ]n\s*(?:h[uủ]y|hu[yỷ])|m[aấ]y\s*đ[oơ]n|m[aấ]y\s*đ[oợ]t|s[oố]\s*đ[oợ]t|bao\s*nhi[eê]u\s*(?:đ[oơ]n|đ[oợ]t|bill)|m[aặ]t\s*h[aà]ng\s*[eế]|kh[oô]ng\s*ai\s*mua|b[aá]n\s*(?:ko|kh[oô]ng)\s*(?:đc|được|dc)", q_low))
+                if penalize_zero_revenue_qty and is_rev_qty_avg and not is_change_or_profit and not is_pure_count:
+                    # Hạ C xuống dưới ngưỡng 0.50 khi kết quả = 0 trên câu hỏi doanh thu / số lượng / trung bình
+                    return 0.20
+                plausibility_score = 0.30
+    elif ans_type == "list":
+        if not ans_val or len(ans_val) == 0:
+            return 0.0
+        elif len(ans_val) > 50:
+            plausibility_score = 0.20
+    elif ans_type == "table":
+        rows = ans_val.get("rows", []) if isinstance(ans_val, dict) else []
+        if not rows:
+            return 0.0
+    elif ans_type == "string":
+        if not ans_val or str(ans_val).strip() == "":
+            return 0.0
 
     # 3. Điểm cấu trúc mã nguồn (Code Structure Score) - Tối đa 0.25
     code_score = 0.25

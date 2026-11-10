@@ -21,6 +21,7 @@ grounding:
 abstention:
   tau_star: 0.50               # Ngưỡng tin cậy hiệu chuẩn tối ưu
   enabled: true
+  penalize_zero_revenue_qty: true
 
 submission:
   offline_mode: true
