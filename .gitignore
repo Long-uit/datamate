@@ -48,7 +48,3 @@ reports/Agents/*.jsonl
 .vscode
 .pytest_cache
 
-data_synth/
-.pytest_cache
-benchmark/
-reports/
