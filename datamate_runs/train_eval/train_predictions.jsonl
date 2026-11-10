@@ -1,0 +1,30 @@
+{"id": "q_23401b31d098", "type": "number", "answer": 2932}
+{"id": "q_5e92228fd206", "type": "abstain", "answer": null}
+{"id": "q_e0bed6042dfe", "type": "number", "answer": 6501500}
+{"id": "q_20cfa482235e", "type": "string", "answer": "Cty Vũ Sơn"}
+{"id": "q_c26a816e7c91", "type": "boolean", "answer": false}
+{"id": "q_0794a9a26cef", "type": "abstain", "answer": null, "reason": "Runtime Error: Không tìm thấy cột cần thiết trong bảng tồn kho"}
+{"id": "q_30d639b40362", "type": "abstain", "answer": null, "reason": "Runtime Error: Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền"}
+{"id": "q_cea1b708d80a", "type": "abstain", "answer": null, "reason": "Runtime Error: Không tìm thấy cột ngày trong bảng BaoCaoTonKho [Bảng tìm kiếm: 'BaoCaoTonKho']"}
+{"id": "q_4d7fc53fcc41", "type": "number", "answer": 7426334}
+{"id": "q_e390c3cb0b3b", "type": "number", "answer": 18748333}
+{"id": "q_ebf285497536", "type": "unanswerable", "answer": null}
+{"id": "q_f3d30bcd1487", "type": "percent", "answer": 0}
+{"id": "q_083211e2c80c", "type": "abstain", "answer": null, "reason": "Runtime Error: Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền"}
+{"id": "q_d2b32a2c57d8", "type": "abstain", "answer": null, "reason": "Sanity Error: Silent Zero: Kết quả tính toán bằng 0 bất thường cho câu hỏi doanh thu / số lượng"}
+{"id": "q_4befa8de665c", "type": "number", "answer": 1219}
+{"id": "q_94fd5882870e", "type": "percent", "answer": 0}
+{"id": "q_9602e7257869", "type": "number", "answer": 0}
+{"id": "q_0a626a4c76d0", "type": "number", "answer": 78584}
+{"id": "q_bbf707d184af", "type": "number", "answer": 104880600}
+{"id": "q_5412252566a0", "type": "number", "answer": 8807500}
+{"id": "q_260318057077", "type": "number", "answer": 803177000}
+{"id": "q_f95fc735e3bc", "type": "percent", "answer": 0}
+{"id": "q_0983ff49fa23", "type": "abstain", "answer": null, "reason": "Runtime Error: Không tìm thấy cột ngày hoặc cột thành tiền"}
+{"id": "q_af1ea83ef086", "type": "number", "answer": 571124700}
+{"id": "q_507a4f0e1ee9", "type": "abstain", "answer": null, "reason": "Runtime Error: Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền"}
+{"id": "q_bc10815b2bf1", "type": "abstain", "answer": null, "reason": "Runtime Error: Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền"}
+{"id": "q_1eca36df20a0", "type": "number", "answer": 53}
+{"id": "q_44ab47ab8b70", "type": "number", "answer": 307548300}
+{"id": "q_9de78b7e6230", "type": "abstain", "answer": null, "reason": "Runtime Error: Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền"}
+{"id": "q_4cb3efa8bd01", "type": "percent", "answer": -94}

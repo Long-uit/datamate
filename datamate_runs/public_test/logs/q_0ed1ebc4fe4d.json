@@ -1,0 +1,17 @@
+{
+  "question_id": "q_0ed1ebc4fe4d",
+  "answer": {
+    "id": "q_0ed1ebc4fe4d",
+    "type": "number",
+    "answer": 294
+  },
+  "elapsed_ms": 111010,
+  "confidence": 1.0,
+  "code": "def solution(data):\n    df_sales = next((df for n, df in data.items() if 'So_chi_tiet_ban_hang' in n), None)\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy dữ liệu bán hàng phù hợp\", table_name=\"bán hàng\")\n\n    cols = df_sales.columns.tolist()\n    date_col = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    cust_col = next((c for c in cols if any(k in str(c).lower() for k in ['khách hàng'])), None)\n    st_col = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt'])), None)\n\n    if date_col is None or cust_col is None:\n        raise DataNotFoundError(\"Không tìm thấy cột ngày hoặc khách hàng\", table_name=\"bán hàng\")\n\n    df_sales['clean_date'] = clean_date(df_sales[date_col])\n    mask = (df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 11)\n    if st_col:\n        df_sales = df_sales[~df_sales[st_col].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|trả|cancel', regex=True, na=False)]\n    df_filtered = df_sales[mask]\n\n    unique_customers = df_filtered[~df_filtered[cust_col].astype(str).str.lower().str.contains(r'lẻ|khách lẻ|nan|none', regex=True, na=False)][cust_col].unique()\n    return len(unique_customers)",
+  "raw_result": 294,
+  "error": null,
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [],
+  "self_correction_count": 0
+}

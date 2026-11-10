@@ -1,0 +1,85 @@
+{
+  "question_id": "q_0a626a4c76d0",
+  "answer": {
+    "id": "q_0a626a4c76d0",
+    "type": "number",
+    "answer": 78584
+  },
+  "elapsed_ms": 222141,
+  "confidence": 1.0,
+  "code": "def solution(data):\n    df_sales = None\n    for name, df in data.items():\n        if any(k in str(name).lower() for k in ['nhap', 'kho', 'chiphi', 'ncc', 'tonkho']):\n            continue\n        cols = df.columns.tolist()\n        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower()), None)\n        if d_c and a_c:\n            df_sales = df.copy()\n            break\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng bán hàng có cột ngày và cột thành tiền\")\n\n    cols_s = df_sales.columns.tolist()\n    date_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    amt_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower()), None)\n    status_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt'])), None)\n\n    df_sales['clean_date'] = clean_date(df_sales[date_col])\n    if status_col:\n        df_sales = df_sales[~df_sales[status_col].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|trả|cancel', regex=True, na=False)]\n\n    mask = (df_sales['clean_date'].dt.year == 2026) & (df_sales['clean_date'].dt.month == 3)\n    df_sales = df_sales[mask]\n\n    if df_sales.empty:\n        return 0\n    return int(round(clean_num(df_sales[amt_col]).sum() / len(df_sales)))",
+  "raw_result": 78584,
+  "error": null,
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [
+    "clean_date"
+  ],
+  "self_correction_count": 0,
+  "business_id": "biz_119",
+  "as_of_date": "2026-07-13",
+  "original_question": "Doanh thu trung bình trên một đơn tháng 3/2026 là bao nhiêu?",
+  "normalized_question": "Doanh thu trung bình trên một đơn tháng 3/2026 là bao nhiêu?",
+  "expanded_abbreviations": {},
+  "intent": "aggregation",
+  "temporal_info": {
+    "description": "Tháng 3/2026",
+    "start_date": "2026-03-01",
+    "end_date": "2026-03-31"
+  },
+  "entity_matches": [
+    "Châu Trung Bình",
+    "Chau Trung Binh",
+    "Doãn Thắng Trung",
+    "Dương Thu Thắng",
+    "Lương Bình Bảo",
+    "Luong Binh Bao",
+    "lương bình bảo",
+    "Lý Trung Bảo",
+    "lý trung bảo",
+    "Ly Trung Bao",
+    "La Thu Huy",
+    "Võ Thu Bảo"
+  ],
+  "pruned_schema": "### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):\n- Bảng 'DanhSachHoaDon_[gộp: T01-2025, T02-2025, T03-2025...]' (alias: 't_03'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n- Bảng 'DanhSachHoaDonChiTiet' (alias: 't_04'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n- Bảng 'DanhSachHoaDonChiTietLo' (alias: 't_05'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n- Bảng 'DanhSachKhachHang' (alias: 't_06'): Danh mục khách hàng (mã khách, tên khách, nhóm khách, địa chỉ)\n- Bảng 'DanhSachLoHang' (alias: 't_07'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'DanhSachSanPham' (alias: 't_09'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'DanhSachThuoc' (alias: 't_10'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n- Bảng 'DanhSachHoaDon_[gộp: T01-2025, T02-2025, T03-2025...]' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (34033 dòng):\n  Cột (12): ['Mã hóa đơn' (vd: 'ORD000001'), 'Thời gian' (ngày: '2025-01-01' -> '2026-07-13'), 'Mã KH' (vd: 'KH0144'), 'Khách hàng' (vd: 'Hồ Ngọc Châu'), 'Tổng tiền hàng' (số/tiền, vd: '8,800'), 'Giảm giá' (số/tiền, vd: '0'), 'Khách đã trả' (vd: '8,800'), 'Trạng thái' (phân loại: ['Hoàn thành', 'Đã hủy', 'Đã trả hàng', 'Đang giao hàng']), 'Thời gian tạo' (ngày: '2025-01-01' -> '2026-07-13'), 'Tổng sau giảm giá' (số/tiền, vd: '8,800'), 'Còn nợ' (số/tiền, vd: '0'), '_source_sheet' (vd: 'T01-2025')]\n\n- Bảng 'DanhSachHoaDonChiTiet' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (63823 dòng):\n  Cột (9): ['Mã hóa đơn' (vd: 'ORD000001'), 'Mã hàng' (vd: 'SP0004'), 'Tên hàng' (vd: 'Tiffy Dey hộp 25 vỉ...'), 'Số lượng' (số/tiền, vd: '2'), 'Đơn giá' (số/tiền, vd: '4,400'), 'Giảm giá' (số/tiền, vd: '0'), 'Thành tiền' (số/tiền, vd: '8,800'), 'Số lượng quy đổi' (số/tiền, vd: '8'), 'STT' (phân loại: ['1', '2', '3', '4'])]\n\n- Bảng 'DanhSachHoaDonChiTietLo' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (65483 dòng):\n  Cột (5): ['Mã hóa đơn' (vd: 'ORD000001'), 'STT' (phân loại: ['1', '2', '3', '4']), 'Lô' (vd: 'X2501948'), 'Số lượng (ĐVT cơ bản)' (số/tiền, vd: '8'), 'Số lượng trả (ĐVT cơ bản)' (số/tiền, vd: '0')]\n\n- Bảng 'DanhSachKhachHang' [Vai trò: Danh mục khách hàng (mã khách, tên khách, nhóm khách, địa chỉ)] (300 dòng):\n  Cột (10): ['Tổng điểm' (phân loại: ['0']), 'Mã khách hàng' (vd: 'KH0001'), 'Ngày sinh' (ngày: '1965-07-19' -> '2002-01-17'), 'Tên khách hàng' (vd: 'Đào Hà Phúc'), 'Người tạo' (phân loại: ['admin']), 'Đối tượng KH' (phân loại: ['Cá nhân']), 'Điểm tích lũy' (phân loại: ['0']), 'Điện thoại' (vd: '0909460221'), 'MST' (vd: '0896203682'), 'Địa chỉ' (vd: '62 Khánh Hội')]\n\n- Bảng 'DanhSachLoHang' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (3122 dòng):\n  Cột (5): ['Mã nhập hàng' (vd: 'PN00039'), 'Mã hàng' (vd: 'SP0001'), 'Lô' (vd: 'A2502949'), 'Hạn sử dụng' (vd: '29/07/2025'), 'Số lượng (ĐVT cơ bản)' (số/tiền, vd: '360')]\n\n- Bảng 'DanhSachSanPham' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (70 dòng):\n  Cột (10): ['Mã hàng' (vd: 'SP0001'), 'Loại hàng hóa' (phân loại: ['Hàng hóa']), 'Tên hàng' (vd: 'Panadol Extra hộp 1...'), 'Tồn nhỏ nhất' (số/tiền, vd: '0'), 'Được bán trực tiếp' (phân loại: ['1']), 'Nhóm hàng(3 Cấp)' (vd: 'giảm đau hạ sốt'), 'Giá bán' (số/tiền, vd: '1400'), 'ĐVT' (vd: 'viên'), 'Mã vạch EAN' (vd: '8934444599665'), 'Tồn lớn nhất' (số/tiền, vd: '999999999')]\n\n- Bảng 'DanhSachThuoc' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (70 dòng):\n  Cột (3): ['Mã hàng' (vd: 'SP0001'), 'Hoạt chất' (vd: 'Paracetamol + Cafein'), 'Thuốc kê đơn' (phân loại: ['False', 'True'])]",
+  "gold_answer": {
+    "answer": 78584,
+    "type": "number",
+    "alias": []
+  },
+  "match_result": {
+    "is_match": true,
+    "eval_score": 1.0,
+    "eval_status_label": "HOÀN TOÀN TRÙNG KHỚP (CORRECT - +1.0)"
+  },
+  "deviation_analysis": {
+    "is_applicable": true,
+    "abs_diff": 0.0,
+    "pct_diff": 0.0,
+    "diagnostic_hypothesis": "SAI SỐ LÀM TRÒN THẬP PHÂN (Chênh lệch <= 0.05 đơn vị)."
+  },
+  "threshold_tau_star": 0.5,
+  "grounding_eval": {
+    "entity_coverage": 1.0,
+    "temporal_coverage": 1.0,
+    "table_coverage": 1.0,
+    "entity_penalty": 0.0,
+    "temporal_penalty": 0.0,
+    "table_penalty": 0.0,
+    "total_penalty": 0.0,
+    "missed_mentions": [],
+    "offtopic_tables": [],
+    "total_valid_mentions": 0,
+    "covered_mentions": 0
+  },
+  "latency_breakdown_ms": {
+    "ingest_schema": 41716.89,
+    "feasibility": 13.99,
+    "grounding": 277.24,
+    "prompt_build": 30.17,
+    "llm_gen": 138933.55,
+    "sandbox_exec": 41169.27,
+    "normalizer": 0.87
+  },
+  "self_correction_trace": []
+}

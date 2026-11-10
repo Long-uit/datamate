@@ -1,0 +1,76 @@
+{
+  "question_id": "q_23401b31d098",
+  "answer": {
+    "id": "q_23401b31d098",
+    "type": "number",
+    "answer": 2932
+  },
+  "elapsed_ms": 131616,
+  "confidence": 1.0,
+  "code": "def solution(data):\n    df_sales = None\n    order_col = None\n    date_col = None\n    for name, df in data.items():\n        n_clean = re.sub(r'[^a-zA-Z0-9]', '', str(name).lower())\n        if any(k in n_clean for k in ['nhap', 'kho', 'chiphi', 'ncc', 'tonkho']):\n            continue\n        cols = df.columns.tolist()\n        o_c = next((c for c in cols if any(k in str(c).lower() for k in ['mã đơn', 'ma don', 'mã hóa đơn', 'mã hd', 'order_id', 'order id', 'mã chứng từ', 'mã giao dịch', 'mã phiếu', 'mã'])), None)\n        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'ngaylap', 'thời gian', 'ngày tạo', 'ngày đặt'])), None)\n        if o_c and d_c:\n            df_sales = df.copy()\n            order_col, date_col = o_c, d_c\n            break\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng bán hàng có cột mã đơn và ngày\", table_name=\"bán hàng\", available_tables=list(data.keys()))\n\n    df_sales['clean_date'] = clean_date(df_sales[date_col])\n    mask = (df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 5)\n    df_filtered = df_sales[mask]\n    if df_filtered.empty:\n        return 0\n    return int(df_filtered[order_col].dropna().nunique())",
+  "raw_result": 2932,
+  "error": null,
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [
+    "clean_date"
+  ],
+  "self_correction_count": 0,
+  "business_id": "biz_104",
+  "as_of_date": "2026-06-02",
+  "original_question": "so don bi huy trong thang 5 nam 2025 la bao nhieu z",
+  "normalized_question": "so don bi huy trong thang 5 nam 2025 la bao nhieu z",
+  "expanded_abbreviations": {},
+  "intent": "cancelled_orders",
+  "temporal_info": {
+    "description": "Tháng 5/2025",
+    "start_date": "2025-05-01",
+    "end_date": "2025-05-31"
+  },
+  "entity_matches": [
+    "Trịnh Thắng Huy",
+    "Trần Bảo Huy",
+    "La Quang Nam"
+  ],
+  "pruned_schema": "### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):\n- Bảng 'DanhSachQuyDoi' (alias: 't_01'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'DonHang_ChiTiet' (alias: 't_02'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n- Bảng 'DanhSachQuyDoi' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (2 dòng):\n  Cột (4): ['Tên sản phẩm' (vd: 'Bánh croissant'), 'Đơn vị quy đổi' (phân loại: ['hộp']), 'Tỉ lệ quy đổi' (vd: '6'), 'Đơn vị cơ bản' (phân loại: ['cái'])]\n- Bảng 'DonHang_ChiTiet' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (62451 dòng):\n  Cột (9): ['Mã đơn hàng' (vd: 'ORD000001'), 'Ngày đặt hàng' (ngày: '2025-04-01' -> '2026-06-02'), 'Trạng thái đơn hàng' (phân loại: ['Đã hoàn thành', 'Đã hủy', 'Đã hoàn hàng', 'Đang giao dịch']), 'Tên khách hàng' (vd: 'Bạch Quang Hoa'), 'Tên sản phẩm' (vd: 'Sinh tố xoài (M)'), 'Số lượng sản phẩm' (số/tiền, vd: '2.0'), 'Giá sản phẩm' (số/tiền, vd: '42000'), 'Tổng tiền' (số/tiền, vd: '84000'), 'Đơn vị tính' (phân loại: ['ly', 'phần', 'cái', 'hộp'])]",
+  "gold_answer": {
+    "answer": 66,
+    "type": "number",
+    "alias": []
+  },
+  "match_result": {
+    "is_match": false,
+    "eval_score": -1.0,
+    "eval_status_label": "SAI LỆCH ĐÁP ÁN (WRONG - -1.0)"
+  },
+  "deviation_analysis": {
+    "is_applicable": true,
+    "abs_diff": 2866.0,
+    "pct_diff": 4342.424242424242,
+    "diagnostic_hypothesis": null
+  },
+  "threshold_tau_star": 0.5,
+  "grounding_eval": {
+    "entity_coverage": 1.0,
+    "temporal_coverage": 1.0,
+    "table_coverage": 1.0,
+    "entity_penalty": 0.0,
+    "temporal_penalty": 0.0,
+    "table_penalty": 0.0,
+    "total_penalty": 0.0,
+    "missed_mentions": [],
+    "offtopic_tables": [],
+    "total_valid_mentions": 0,
+    "covered_mentions": 0
+  },
+  "latency_breakdown_ms": {
+    "ingest_schema": 20857.82,
+    "feasibility": 185.94,
+    "grounding": 230.19,
+    "prompt_build": 26.95,
+    "llm_gen": 91162.94,
+    "sandbox_exec": 19152.53,
+    "normalizer": 0.42
+  },
+  "self_correction_trace": []
+}

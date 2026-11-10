@@ -1,0 +1,20 @@
+{
+  "question_id": "q_09e3efc66c68",
+  "answer": {
+    "id": "q_09e3efc66c68",
+    "type": "abstain",
+    "answer": null
+  },
+  "elapsed_ms": 45542,
+  "confidence": 0.0,
+  "code": "def solution(data):\n    sales_df = data.get('So_chi_tiet_ban_hang')\n    if sales_df is None:\n        return",
+  "raw_result": {
+    "type": "abstain",
+    "answer": null
+  },
+  "error": null,
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [],
+  "self_correction_count": 0
+}

@@ -1,0 +1,25 @@
+{
+  "question_id": "q_262952036572",
+  "answer": {
+    "id": "q_262952036572",
+    "type": "list",
+    "answer": [
+      "Dầu ăn Simply 2L",
+      "Dầu ăn Tường An 1L",
+      "Gạo ST25"
+    ]
+  },
+  "elapsed_ms": 112585,
+  "confidence": 1.0,
+  "code": "def solution(data):\n    df_sales = next((df for n, df in data.items() if 'So_chi_tiet_ban_hang' in n), None)\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy dữ liệu bán hàng phù hợp\", table_name=\"bán hàng\")\n\n    cols = df_sales.columns.tolist()\n    d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    if d_c:\n        df_sales['clean_date'] = clean_date(df_sales[d_c])\n    else:\n        raise DataNotFoundError(\"Không tìm thấy cột ngày trong bảng bán hàng\")\n\n    amt_col = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'amount', 'tien'])), None)\n    if amt_col:\n        df_sales['clean_amt'] = clean_num(df_sales[amt_col])\n    else:\n        raise DataNotFoundError(\"Không tìm thấy cột thành tiền trong bảng bán hàng\")\n\n    mask = (df_sales['clean_date'] >= pd.Timestamp('2026-01-19')) & (df_sales['clean_date'] <= pd.Timestamp('2026-01-25 23:59:59'))\n    df_period = df_sales[mask]\n    if df_period.empty:\n        return []\n\n    grp = df_period.groupby('Tên hàng hóa', as_index=False)['clean_amt'].sum()\n    grp = grp.sort_values(by='clean_amt', ascending=False)\n\n    return grp.head(3)['Tên hàng hóa'].astype(str).tolist()",
+  "raw_result": [
+    "Dầu ăn Simply 2L",
+    "Dầu ăn Tường An 1L",
+    "Gạo ST25"
+  ],
+  "error": null,
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [],
+  "self_correction_count": 0
+}

@@ -1,0 +1,18 @@
+{
+  "question_id": "q_01d1fc600b26",
+  "answer": {
+    "id": "q_01d1fc600b26",
+    "type": "abstain",
+    "answer": null,
+    "reason": "Sanity Check: Silent Zero: Kết quả tính toán bằng 0 bất thường cho câu hỏi doanh thu / số lượng"
+  },
+  "elapsed_ms": 196563,
+  "confidence": 0.0,
+  "code": "def solution(data):\n    df_sales = data.get('So_chi_tiet_ban_hang')\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng bán hàng\")\n\n    cols = df_sales.columns.tolist()\n    date_col = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    amt_col = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower()), None)\n    prod_col = next((c for c in cols if any(k in str(c).lower() for k in ['hàng', 'tên món', 'tên hàng', 'sản phẩm', 'món', 'mặt hàng'])), None)\n    status_col = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt'])), None)\n\n    if date_col and amt_col:\n        df_sales['clean_date'] = clean_date(df_sales[date_col])\n        if status_col:\n            df_sales = df_sales[~df_sales[status_col].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|trả|cancel', regex=True, na=False)]\n\n        mask = (df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 7)\n        df_sales = df_sales[mask]\n\n        if prod_col:\n            mask_prod = df_sales[prod_col].astype(str).str.contains('Bia Heineken 330ml', case=False, na=False)\n            df_sales = df_sales[mask_prod]\n\n        if df_sales.empty:\n            return 0\n        return int(round(clean_num(df_sales[amt_col]).sum()))\n    else:\n        raise DataNotFoundError(\"Không tìm thấy cột ngày hoặc cột thành tiền\")",
+  "raw_result": 0,
+  "error": "Silent Zero: Kết quả tính toán bằng 0 bất thường cho câu hỏi doanh thu / số lượng",
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [],
+  "self_correction_count": 0
+}

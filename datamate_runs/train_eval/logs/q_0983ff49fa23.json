@@ -1,0 +1,84 @@
+{
+  "question_id": "q_0983ff49fa23",
+  "answer": {
+    "id": "q_0983ff49fa23",
+    "type": "abstain",
+    "answer": null,
+    "reason": "Runtime Error: Không tìm thấy cột ngày hoặc cột thành tiền"
+  },
+  "elapsed_ms": 249702,
+  "confidence": 0.0,
+  "code": "def solution(data):\n    df_sales = data.get('ban_hang')\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng bán hàng\")\n\n    cols = df_sales.columns.tolist()\n    date_col = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    amt_col = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower()), None)\n    if date_col and amt_col:\n        df_sales['clean_date'] = clean_date(df_sales[date_col])\n        mask = (df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 11)\n        df_sales = df_sales[mask]\n        return int(round(clean_num(df_sales[amt_col]).sum()))\n    else:\n        raise DataNotFoundError(\"Không tìm thấy cột ngày hoặc cột thành tiền\")",
+  "raw_result": null,
+  "error": "Không tìm thấy cột ngày hoặc cột thành tiền",
+  "unanswerable_source": "none",
+  "selected_tables": [
+    "ban_hang"
+  ],
+  "selected_columns": [
+    "clean_date"
+  ],
+  "self_correction_count": 2,
+  "business_id": "biz_125",
+  "as_of_date": "2026-05-11",
+  "original_question": "so dia ma heo nuong nuoc mam ban duoc trong thang 11/2025 la bao nhieu",
+  "normalized_question": "so dia ma heo nuong nuoc mam ban duoc trong thang 11/2025 la bao nhieu",
+  "expanded_abbreviations": {},
+  "intent": "aggregation",
+  "temporal_info": {
+    "description": "Tháng 11/2025",
+    "start_date": "2025-11-01",
+    "end_date": "2025-11-30"
+  },
+  "entity_matches": [
+    "Hứa Thắng Bảo"
+  ],
+  "pruned_schema": "### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):\n- Bảng 'ban_hang' (alias: 't_01'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n- Bảng 'ban_hang' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (79052 dòng):\n  Cột (10): ['dvt' (vd: 'đĩa'), 'Hàng bán' (vd: 'Gỏi xoài tôm nướng'), 'Khách hàng (tên)' (vd: 'Hứa Hiếu Phương'), 'Số lượng lẻ' (số/tiền, vd: '1'), 'Amount' (vd: '125000'), 'Trạng thái xử lý' (phân loại: ['Đã hoàn thành', 'Huỷ đơn', 'Đã trả hàng', 'Đang xử lý']), 'SL bán' (vd: '1'), 'Ngày bán' (ngày: '2025-01-01' -> '2026-05-11'), 'Số phiếu' (vd: 'ORD000001'), 'Giá 1 đv' (số/tiền, vd: '125,000')]",
+  "gold_answer": {
+    "answer": 67,
+    "type": "number",
+    "alias": []
+  },
+  "match_result": {
+    "is_match": false,
+    "eval_score": 0.0,
+    "eval_status_label": "TỪ CHỐI TRẢ LỜI (ABSTAIN - 0.0)"
+  },
+  "deviation_analysis": {
+    "is_applicable": false,
+    "abs_diff": null,
+    "pct_diff": null,
+    "diagnostic_hypothesis": null
+  },
+  "threshold_tau_star": 0.5,
+  "grounding_eval": {},
+  "latency_breakdown_ms": {
+    "ingest_schema": 4008.61,
+    "feasibility": 12.8,
+    "grounding": 50.43,
+    "prompt_build": 5.83,
+    "llm_gen": 155791.74,
+    "sandbox_exec": 89833.5,
+    "normalizer": 0.0
+  },
+  "self_correction_trace": [
+    {
+      "round": 1,
+      "input_error": "Không tìm thấy cột ngày hoặc cột thành tiền",
+      "retry_code": "def solution(data):\n    df_sales = data.get('ban_hang')\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng bán hàng\")\n\n    cols = df_sales.columns.tolist()\n    date_col = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    amt_col = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower()), None)\n    if date_col and amt_col:\n        df_sales['clean_date'] = clean_date(df_sales[date_col])\n        mask = (df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 11)\n        df_sales = df_sales[mask]\n        return int(round(clean_num(df_sales[amt_col]).sum()))\n    else:\n        raise DataNotFoundError(\"Không tìm thấy cột ngày hoặc cột thành tiền\")",
+      "retry_error": "Không tìm thấy cột ngày hoặc cột thành tiền",
+      "retry_raw_result": null,
+      "execution_ms": 4,
+      "success": false
+    },
+    {
+      "round": 2,
+      "input_error": "Không tìm thấy cột ngày hoặc cột thành tiền",
+      "retry_code": "def solution(data):\n    df_sales = data.get('ban_hang')\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng bán hàng\")\n\n    cols = df_sales.columns.tolist()\n    date_col = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    amt_col = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower()), None)\n    if date_col and amt_col:\n        df_sales['clean_date'] = clean_date(df_sales[date_col])\n        mask = (df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 11)\n        df_sales = df_sales[mask]\n        return int(round(clean_num(df_sales[amt_col]).sum()))\n    else:\n        raise DataNotFoundError(\"Không tìm thấy cột ngày hoặc cột thành tiền\")",
+      "retry_error": "Không tìm thấy cột ngày hoặc cột thành tiền",
+      "retry_raw_result": null,
+      "execution_ms": 4,
+      "success": false
+    }
+  ]
+}

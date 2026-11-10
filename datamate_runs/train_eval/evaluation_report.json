@@ -1,0 +1,102 @@
+{
+  "total": 30,
+  "correct": 7,
+  "wrong": 13,
+  "abstain": 10,
+  "pa": -0.2,
+  "accuracy": 0.35,
+  "coverage": 0.6667,
+  "total_time_sec": 6206.06,
+  "breakdown": {
+    "number": {
+      "total": 22,
+      "correct": 5,
+      "wrong": 8,
+      "abstain": 9,
+      "latencies": [
+        131616,
+        37401,
+        111881,
+        397368,
+        583451,
+        137171,
+        120698,
+        388770,
+        425029,
+        152857,
+        146447,
+        222141,
+        129470,
+        245161,
+        201185,
+        249702,
+        136038,
+        500561,
+        511405,
+        429700,
+        119147,
+        508290
+      ],
+      "pa": -0.1364,
+      "avg_latency_ms": 267522.2
+    },
+    "string": {
+      "total": 1,
+      "correct": 0,
+      "wrong": 1,
+      "abstain": 0,
+      "latencies": [
+        203850
+      ],
+      "pa": -1.0,
+      "avg_latency_ms": 203850.0
+    },
+    "boolean": {
+      "total": 1,
+      "correct": 1,
+      "wrong": 0,
+      "abstain": 0,
+      "latencies": [
+        122727
+      ],
+      "pa": 1.0,
+      "avg_latency_ms": 122727.0
+    },
+    "list": {
+      "total": 1,
+      "correct": 0,
+      "wrong": 0,
+      "abstain": 1,
+      "latencies": [
+        824101
+      ],
+      "pa": 0.0,
+      "avg_latency_ms": 824101.0
+    },
+    "unanswerable": {
+      "total": 1,
+      "correct": 1,
+      "wrong": 0,
+      "abstain": 0,
+      "latencies": [
+        33601
+      ],
+      "pa": 1.0,
+      "avg_latency_ms": 33601.0
+    },
+    "percent": {
+      "total": 4,
+      "correct": 0,
+      "wrong": 4,
+      "abstain": 0,
+      "latencies": [
+        135249,
+        170964,
+        209440,
+        205968
+      ],
+      "pa": -1.0,
+      "avg_latency_ms": 180405.2
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "question_id": "q_278b0742d740",
+  "answer": {
+    "id": "q_278b0742d740",
+    "type": "number",
+    "answer": 0
+  },
+  "elapsed_ms": 73288,
+  "confidence": 0.95,
+  "code": "def solution(data):\n    df_sales = data.get('So_chi_tiet_ban_hang')\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng bán hàng\")\n\n    cols = df_sales.columns.tolist()\n    d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n    if d_c:\n        df_sales['clean_date'] = clean_date(df_sales[d_c])\n        mask = (df_sales['clean_date'].dt.year == 2026) & (df_sales['clean_date'].dt.month == 4)\n        df_sales = df_sales[mask]\n\n    item_col = next((c for c in cols if any(k in str(c).lower() for k in ['hàng', 'tên món', 'tên hàng', 'sản phẩm', 'mặt hàng'])), None)\n    if item_col:\n        df_sales = df_sales.groupby(item_col).filter(lambda x: len(x) >= 84)\n\n    return len(df_sales[item_col].unique())",
+  "raw_result": 0,
+  "error": null,
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [],
+  "self_correction_count": 0
+}

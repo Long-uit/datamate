@@ -1,0 +1,17 @@
+{
+  "question_id": "q_29e1057e3fbd",
+  "answer": {
+    "id": "q_29e1057e3fbd",
+    "type": "percent",
+    "answer": -25
+  },
+  "elapsed_ms": 96837,
+  "confidence": 1.0,
+  "code": "def solution(data):\n    df_ord = None\n    date_col = None\n    amt_col = None\n    for name, df in data.items():\n        cols = df.columns.tolist()\n        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'amount', 'tổng tiền'])), None)\n        if d_c and a_c:\n            df_ord = df.copy()\n            date_col = d_c\n            amt_col = a_c\n            break\n\n    if df_ord is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng có cột ngày và thành tiền\", table_name=\"đơn hàng\", available_tables=list(data.keys()))\n\n    df_ord['clean_date'] = clean_date(df_ord[date_col])\n    mask_current = (df_ord['clean_date'] >= pd.Timestamp('2026-03-01')) & (df_ord['clean_date'] <= pd.Timestamp('2026-03-11 23:59:59'))\n    mask_previous = (df_ord['clean_date'] >= pd.Timestamp('2026-02-01')) & (df_ord['clean_date'] <= pd.Timestamp('2026-02-11 23:59:59'))\n    total_current = clean_num(df_ord.loc[mask_current, amt_col]).sum()\n    total_previous = clean_num(df_ord.loc[mask_previous, amt_col]).sum()\n\n    if total_previous == 0:\n        return 0\n\n    change_rate = int(round(((total_current - total_previous) / total_previous) * 100))\n    return change_rate",
+  "raw_result": -25,
+  "error": null,
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [],
+  "self_correction_count": 0
+}

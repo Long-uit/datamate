@@ -1,0 +1,72 @@
+{
+  "question_id": "q_4befa8de665c",
+  "answer": {
+    "id": "q_4befa8de665c",
+    "type": "number",
+    "answer": 1219
+  },
+  "elapsed_ms": 152857,
+  "confidence": 1.0,
+  "code": "def solution(data):\n    df_sales = None\n    order_col = None\n    date_col = None\n    status_col = None\n    for name, df in data.items():\n        n_clean = re.sub(r'[^a-zA-Z0-9]', '', str(name).lower())\n        if any(k in n_clean for k in ['nhap', 'kho', 'chiphi', 'ncc', 'tonkho']):\n            continue\n        cols = df.columns.tolist()\n        o_c = next((c for c in cols if any(k in str(c).lower() for k in ['mã đơn', 'ma don', 'mã hoá đơn', 'mã hd', 'order_id', 'order id', 'mã chứng từ', 'mã giao dịch', 'mã phiếu', 'mã'])), None)\n        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'ngaylap', 'thời gian', 'ngày tạo', 'ngày đặt'])), None)\n        st_c = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt', 'tình trạng', 'xử lý'])), None)\n        if o_c and d_c and st_c:\n            df_sales = df.copy()\n            order_col, date_col, status_col = o_c, d_c, st_c\n            break\n    if df_sales is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng bán hàng có cột mã đơn, ngày và trạng thái\", table_name=\"bán hàng\", available_tables=list(data.keys()))\n\n    df_sales['clean_date'] = clean_date(df_sales[date_col])\n    mask = (df_sales['clean_date'].dt.year == 2026) & (df_sales['clean_date'].dt.month == 3)\n    df_filtered = df_sales[mask]\n    if df_filtered.empty:\n        return 0\n    return int(df_filtered[order_col].dropna().nunique())",
+  "raw_result": 1219,
+  "error": null,
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [
+    "clean_date"
+  ],
+  "self_correction_count": 0,
+  "business_id": "biz_116",
+  "as_of_date": "2026-09-03",
+  "original_question": "tháng 3/2026 có bao nhiêu bill bị huỷ",
+  "normalized_question": "tháng 3/2026 có bao nhiêu bill bị huỷ",
+  "expanded_abbreviations": {},
+  "intent": "cancelled_orders",
+  "temporal_info": {
+    "description": "Tháng 3/2026",
+    "start_date": "2026-03-01",
+    "end_date": "2026-03-31"
+  },
+  "entity_matches": [],
+  "pruned_schema": "### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):\n- Bảng 'Bao_cao_ban_hang_So_chi_tiet_ban_hang' (alias: 't_01'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n- Bảng 'Bao_cao_ban_hang_Danh sách hàng hóa' (alias: 't_02'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'Bao_cao_ban_hang_Chi tiết công nợ theo hạn' (alias: 't_04'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n- Bảng 'Bao_cao_ban_hang_So_chi_tiet_ban_hang' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (39889 dòng):\n  Cột (10): ['Ngày' (ngày: '2025-05-01' -> '2026-09-03'), 'Mã đơn hàng' (vd: 'ORD000001'), 'Tên hàng hóa' (vd: 'Gạch thẻ đặc 4x8x18'), 'Đơn vị tính' (vd: 'viên'), 'Số lượng' (số/tiền, vd: '1'), 'Đơn giá' (số/tiền, vd: '1,500.0000'), 'Thành tiền' (số/tiền, vd: '1,500.0000'), 'Trạng thái' (vd: 'ok'), 'Số lượng quy đổi' (số/tiền, vd: '1'), 'Khách hàng' (vd: 'Cao Sơn An')]\n\n- Bảng 'Bao_cao_ban_hang_Danh sách hàng hóa' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (55 dòng):\n  Cột (8): ['Mã hàng hóa' (vd: 'SP0001'), 'Tên hàng hóa' (vd: 'Xi măng Hà Tiên PCB...'), 'Nhóm hàng hóa' (vd: 'xi măng'), 'Đơn vị tính' (vd: 'bao'), 'Tồn nhỏ nhất' (số/tiền, vd: '0'), 'Được bán trực tiếp' (phân loại: ['1']), 'Giá vốn' (số/tiền, vd: '91,396.0000'), 'Tồn lớn nhất' (số/tiền, vd: '999999999')]\n\n- Bảng 'Bao_cao_ban_hang_Chi tiết công nợ theo hạn' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (3803 dòng):\n  Cột (3): ['Mã đơn hàng' (vd: 'ORD000001'), 'Số ngày được nợ' (số/tiền, vd: '30'), 'Hạn thanh toán' (vd: '31/05/2025')]",
+  "gold_answer": {
+    "answer": 26,
+    "type": "number",
+    "alias": []
+  },
+  "match_result": {
+    "is_match": false,
+    "eval_score": -1.0,
+    "eval_status_label": "SAI LỆCH ĐÁP ÁN (WRONG - -1.0)"
+  },
+  "deviation_analysis": {
+    "is_applicable": true,
+    "abs_diff": 1193.0,
+    "pct_diff": 4588.461538461538,
+    "diagnostic_hypothesis": null
+  },
+  "threshold_tau_star": 0.5,
+  "grounding_eval": {
+    "entity_coverage": 1.0,
+    "temporal_coverage": 1.0,
+    "table_coverage": 1.0,
+    "entity_penalty": 0.0,
+    "temporal_penalty": 0.0,
+    "table_penalty": 0.0,
+    "total_penalty": 0.0,
+    "missed_mentions": [],
+    "offtopic_tables": [],
+    "total_valid_mentions": 0,
+    "covered_mentions": 0
+  },
+  "latency_breakdown_ms": {
+    "ingest_schema": 21373.71,
+    "feasibility": 9.17,
+    "grounding": 57.23,
+    "prompt_build": 20.73,
+    "llm_gen": 108165.82,
+    "sandbox_exec": 23230.62,
+    "normalizer": 0.43
+  },
+  "self_correction_trace": []
+}

@@ -1,0 +1,107 @@
+{
+  "question_id": "q_f95fc735e3bc",
+  "answer": {
+    "id": "q_f95fc735e3bc",
+    "type": "percent",
+    "answer": 0
+  },
+  "elapsed_ms": 209440,
+  "confidence": 1.0,
+  "code": "def solution(data):\n    df_dct = None\n    date_col = None\n    prod_col = None\n    amt_col = None\n    for name, df in data.items():\n        cols = df.columns.tolist()\n        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)\n        p_c = next((c for c in cols if any(k in str(c).lower() for k in ['hàng', 'tên món', 'tên hàng', 'sản phẩm', 'món', 'mặt hàng', 'product', 'item'])), None)\n        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['số lượng', 'sl', 'quantity'])), None)\n        if d_c and p_c and a_c:\n            df_dct = df.copy()\n            date_col = d_c\n            prod_col = p_c\n            amt_col = a_c\n            break\n\n    if df_dct is None:\n        raise DataNotFoundError(\"Không tìm thấy bảng có cột ngày, tên hàng và số lượng\", table_name=\"đơn hàng\", available_tables=list(data.keys()))\n\n    df_dct['clean_date'] = clean_date(df_dct[date_col])\n    mask = (df_dct['clean_date'] >= pd.Timestamp('2026-03-05')) & (df_dct['clean_date'] <= pd.Timestamp('2026-03-05 23:59:59'))\n    df_period = df_dct[mask]\n    df_period = df_period[df_period[prod_col] == 'Strepsils Cool hộp 2 vỉ x 12 viên']\n    total_amount = clean_num(df_period[amt_col]).sum()\n    return int(round(total_amount))",
+  "raw_result": 0,
+  "error": null,
+  "unanswerable_source": "none",
+  "selected_tables": [],
+  "selected_columns": [
+    "clean_date"
+  ],
+  "self_correction_count": 0,
+  "business_id": "biz_122",
+  "as_of_date": "2026-07-17",
+  "original_question": "So số viên Strepsils Cool hộp 2 vỉ x 12 viên bán ra trong 30 ngày kể từ ngày 05/03/2026, ngày tăng giá lên 1.800đ, với 30 ngày ngay trước ngày đó: tăng hay giảm bao nhiêu %?",
+  "normalized_question": "So số viên Strepsils Cool hộp 2 vỉ x 12 viên bán ra trong 30 ngày kể từ ngày 05/03/2026, ngày tăng giá lên 1.800đ, với 30 ngày ngay trước ngày đó: tăng hay giảm bao nhiêu %?",
+  "expanded_abbreviations": {},
+  "intent": "rate_percentage",
+  "temporal_info": {
+    "description": "Ngày 05/03/2026 (2026-03-05)",
+    "start_date": "2026-03-05",
+    "end_date": "2026-03-05"
+  },
+  "entity_matches": [
+    "Strepsils Cool hộp 2 vỉ x 12 viên",
+    "Enervon hộp 10 vỉ x 10 viên",
+    "Tăng Bảo Tâm",
+    "Đỗ Bảo Ngọc",
+    "1,800",
+    "Panadol Extra hộp 15 vỉ x 12 viên",
+    "Panadol 500mg hộp 10 vỉ x 12 viên",
+    "Panadol 500mg Hộp 10 Vỉ X 12 Viên",
+    "PANADOL 500MG HỘP 10 VỈ X 12 VIÊN",
+    "Zyrtec 10mg hộp 1 vỉ x 10 viên",
+    "Decolgen Forte hộp 30 vỉ x 4 viên",
+    "Clarityne 10mg hộp 1 vỉ x 10 viên",
+    "Alaxan hộp 25 vỉ x 4 viên",
+    "Eugica hộp 10 vỉ x 10 viên nang",
+    "12,800",
+    "Augmentin 625mg hộp 2 vỉ x 7 viên",
+    "Panadol Cảm Cúm hộp 15 vỉ x 12 viên",
+    "Panadol  Cảm Cúm hộp 15 vỉ x 12 viên",
+    "1,400",
+    "1,600",
+    "1,300",
+    "1,100",
+    "1,000",
+    "1,200",
+    "1,700",
+    "2,800",
+    "1,500",
+    "Bisolvon 8mg hộp 3 vỉ x 10 viên",
+    "Tiffy Dey hộp 25 vỉ x 4 viên",
+    "Tăng Khoa Khoa",
+    "12,000",
+    "Fugacar 500mg hộp 1 viên",
+    "Boganic Traphaco hộp 5 vỉ x 20 viên",
+    "Pharmaton Essential hộp 30 viên"
+  ],
+  "pruned_schema": "### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):\n- Bảng 'DanhSachQuyDoi' (alias: 't_01'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'DanhSachSanPham' (alias: 't_02'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'DanhSachThuoc' (alias: 't_03'): Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)\n- Bảng 'DonHang_ChiTiet_1_[gộp: T01-2025, T02-2025, T03-2025...]' (alias: 't_04'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n- Bảng 'DonHang_ChiTiet_2026_[gộp: T06-2026, T07-2026]' (alias: 't_05'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n- Bảng 'DonHang_Lo_1' (alias: 't_06'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n- Bảng 'DonHang_Lo_2' (alias: 't_07'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n- Bảng 'DonNhapHang' (alias: 't_08'): Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)\n- Bảng 'DonNhapHang_ChiTiet' (alias: 't_09'): Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n- Bảng 'DanhSachQuyDoi' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (83 dòng):\n  Cột (4): ['Tên sản phẩm' (vd: 'Panadol Extra hộp 1...'), 'Đơn vị quy đổi' (phân loại: ['vỉ', 'hộp', 'chai', 'tuýp', 'lốc']), 'Tỉ lệ quy đổi' (vd: '12'), 'Đơn vị cơ bản' (vd: 'viên')]\n\n- Bảng 'DanhSachSanPham' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (75 dòng):\n  Cột (8): ['Tồn lớn nhất' (số/tiền, vd: '999999999'), 'Mã SKU' (vd: 'SP0001'), 'Tên sản phẩm' (vd: 'Panadol Extra hộp 1...'), 'Mã vạch EAN' (vd: '8938315949139'), 'Đơn vị' (vd: 'viên'), 'Định mức tồn tối thiểu' (số/tiền, vd: '0'), 'Loại hàng hóa' (phân loại: ['Hàng hóa']), 'Loại sản phẩm' (vd: 'giảm đau hạ sốt')]\n\n- Bảng 'DanhSachThuoc' [Vai trò: Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)] (75 dòng):\n  Cột (3): ['Mã SKU' (vd: 'SP0001'), 'Hoạt chất' (vd: 'Paracetamol + Cafein'), 'Thuốc kê đơn' (phân loại: ['False', 'True'])]\n\n- Bảng 'DonHang_ChiTiet_1_[gộp: T01-2025, T02-2025, T03-2025...]' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (94478 dòng):\n  Cột (10): ['Mã đơn hàng' (vd: 'ORD000001'), 'Ngày đặt hàng' (ngày: '2025-01-01' -> '2026-05-31'), 'Trạng thái đơn hàng' (phân loại: ['Đã hoàn thành', 'Đã hủy', 'Đã hoàn hàng']), 'Tên khách hàng' (vd: 'Tăng Hiếu Hương'), 'Tên sản phẩm' (vd: 'Lorastad 10mg Stell...'), 'Số lượng sản phẩm' (số/tiền, vd: '2'), 'Giá sản phẩm' (số/tiền, vd: '800'), 'Tổng tiền' (số/tiền, vd: '1.600đ'), 'Đơn vị tính' (vd: 'viên'), '_source_sheet' (vd: 'T01-2025')]\n\n- Bảng 'DonHang_ChiTiet_2026_[gộp: T06-2026, T07-2026]' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (9185 dòng):\n  Cột (10): ['Mã đơn hàng' (vd: 'ORD050167'), 'Ngày đặt hàng' (ngày: '2026-06-01' -> '2026-07-17'), 'Trạng thái đơn hàng' (phân loại: ['Đã hoàn thành', 'Đã hoàn hàng', 'Đã hủy', 'Đang giao dịch']), 'Tên khách hàng' (vd: 'Khách lẻ'), 'Tên sản phẩm' (vd: 'Amoxicillin 500mg D...'), 'Số lượng sản phẩm' (số/tiền, vd: '10'), 'Giá sản phẩm' (số/tiền, vd: '1000'), 'Tổng tiền' (số/tiền, vd: '10k'), 'Đơn vị tính' (vd: 'viên'), '_source_sheet' (phân loại: ['T06-2026', 'T07-2026'])]\n\n- Bảng 'DonHang_Lo_1' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (100000 dòng):\n  Cột (4): ['Mã đơn hàng' (vd: 'ORD000001'), 'Mã lô' (vd: 'J2501674'), 'Số lượng' (số/tiền, vd: '2'), 'Số lượng trả' (số/tiền, vd: '0')]\n\n- Bảng 'DonHang_Lo_2' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (5799 dòng):\n  Cột (4): ['Mã đơn hàng' (vd: 'ORD052057'), 'Mã lô' (vd: 'C2605930'), 'Số lượng' (số/tiền, vd: '2'), 'Số lượng trả' (số/tiền, vd: '0')]\n\n- Bảng 'DonNhapHang' [Vai trò: Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)] (560 dòng):\n  Cột (3): ['Mã đơn nhập' (vd: 'PN00001'), 'Ngày nhập' (ngày: '2025-01-01' -> '2026-07-17'), 'Mã nhà cung cấp' (phân loại: ['NCC001', 'NCC002', 'NCC003', 'NCC004', 'NCC005'])]\n\n- Bảng 'DonNhapHang_ChiTiet' [Vai trò: Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)] (4051 dòng):\n  Cột (5): ['Mã đơn nhập' (vd: 'PN00101'), 'Mã SKU' (vd: 'SP0001'), 'Mã lô' (vd: 'B2504124'), 'Hạn sử dụng' (vd: '18/07/2026'), 'Số lượng nhập' (số/tiền, vd: '360')]",
+  "gold_answer": {
+    "answer": -36.41,
+    "type": "percent",
+    "alias": []
+  },
+  "match_result": {
+    "is_match": false,
+    "eval_score": -1.0,
+    "eval_status_label": "SAI LỆCH ĐÁP ÁN (WRONG - -1.0)"
+  },
+  "deviation_analysis": {
+    "is_applicable": true,
+    "abs_diff": 36.41,
+    "pct_diff": 100.0,
+    "diagnostic_hypothesis": null
+  },
+  "threshold_tau_star": 0.5,
+  "grounding_eval": {
+    "entity_coverage": 1.0,
+    "temporal_coverage": 1.0,
+    "table_coverage": 1.0,
+    "entity_penalty": 0.0,
+    "temporal_penalty": 0.0,
+    "table_penalty": 0.0,
+    "total_penalty": 0.0,
+    "missed_mentions": [],
+    "offtopic_tables": [],
+    "total_valid_mentions": 1,
+    "covered_mentions": 1
+  },
+  "latency_breakdown_ms": {
+    "ingest_schema": 40053.83,
+    "feasibility": 6.42,
+    "grounding": 487.33,
+    "prompt_build": 15.41,
+    "llm_gen": 129746.85,
+    "sandbox_exec": 39128.46,
+    "normalizer": 2.64
+  },
+  "self_correction_trace": []
+}
