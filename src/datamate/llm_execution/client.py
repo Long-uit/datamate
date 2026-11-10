@@ -381,10 +381,21 @@ class LLMClient:
         else:
             quant_config = BitsAndBytesConfig(
                 load_in_8bit=True,
+                llm_int8_enable_fp32_cpu_offload=True,
             )
-            print(f"[LLMClient] Áp dụng lượng tử hóa: 8-bit INT8 (load_in_8bit=True)")
+            print(f"[LLMClient] Áp dụng lượng tử hóa: 8-bit INT8 (load_in_8bit=True, llm_int8_enable_fp32_cpu_offload=True)")
 
-        # 2. Nạp Tokenizer
+        # 2. Dọn dẹp bộ nhớ GPU trước khi nạp model
+        if has_cuda:
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
+            try:
+                torch.cuda.ipc_collect()
+            except Exception:
+                pass
+
+        # 3. Nạp Tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.model_id,
             trust_remote_code=True
@@ -392,7 +403,7 @@ class LLMClient:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        # 3. Nạp Model
+        # 4. Nạp Model
         if has_cuda:
             self.device = "cuda"
             load_kwargs = {
@@ -410,10 +421,10 @@ class LLMClient:
                 max_memory = {}
                 for g_idx in range(num_gpus):
                     vram_gb = torch.cuda.get_device_properties(g_idx).total_memory / (1024 ** 3)
-                    # Dành tối đa 65% VRAM cho trọng số model, giữ lại ít nhất 35% cho Attention/KV-Cache
-                    safe_limit_gb = max(4, int(vram_gb * 0.65))
+                    # Dành ~12GiB trên mỗi thẻ 14.5GiB cho model, giữ 2.5GiB cho Attention/KV-Cache
+                    safe_limit_gb = max(4, int(vram_gb - 2.5))
                     max_memory[g_idx] = f"{safe_limit_gb}GiB"
-                max_memory["cpu"] = "32GiB"
+                max_memory["cpu"] = "28GiB"
                 load_kwargs["max_memory"] = max_memory
                 print(f"[LLMClient] ⚖️ Bật chia tải đều qua {num_gpus} GPU: max_memory={max_memory}")
         else:
@@ -433,12 +444,56 @@ class LLMClient:
             self.model.eval()
             self.is_loaded = True
         except Exception as e:
-            # Fallback nếu nạp lượng tử hóa thất bại do môi trường hoặc driver
-            if has_cuda and "quantization_config" in load_kwargs:
-                print(f"[LLMClient] Cảnh báo nạp lượng tử hóa thất bại ({e}). Thử fallback không lượng tử hóa (torch_dtype={compute_dtype}) trên CUDA...")
+            import gc
+            gc.collect()
+            if has_cuda:
+                torch.cuda.empty_cache()
+
+            print(f"[LLMClient] Cảnh báo bước đầu nạp mô hình gặp lỗi: {e}")
+
+            # FALLBACK CẤP 1: NẾU ĐANG CHẠY 8-BIT THẤT BẠI HOẶC BỊ OOM -> CHUYỂN SANG 4-BIT NF4
+            if has_cuda and quant_mode not in ("4bit", "4-bit", "nf4"):
+                print(f"[LLMClient] 🛡️ Fallback cấp 1: Chuyển sang lượng tử hóa 4-bit NF4 (tiết kiệm ~50% VRAM, bảo đảm không OOM)...")
+                try:
+                    quant_4bit = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_quant_type="nf4",
+                        bnb_4bit_use_double_quant=True,
+                        bnb_4bit_compute_dtype=compute_dtype,
+                    )
+                    load_kwargs["quantization_config"] = quant_4bit
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        self.model_id,
+                        **load_kwargs
+                    )
+                    self.model.eval()
+                    self.is_loaded = True
+                    print(f"[LLMClient] ✅ Fallback 4-bit NF4 thành công trên {self.device}!")
+                except Exception as e_4bit:
+                    print(f"[LLMClient] Fallback 4-bit với max_memory thất bại ({e_4bit}), thử auto device_map hoàn toàn...")
+                    try:
+                        gc.collect()
+                        torch.cuda.empty_cache()
+                        load_kwargs.pop("max_memory", None)
+                        load_kwargs["device_map"] = "auto"
+                        self.model = AutoModelForCausalLM.from_pretrained(
+                            self.model_id,
+                            **load_kwargs
+                        )
+                        self.model.eval()
+                        self.is_loaded = True
+                        print(f"[LLMClient] ✅ Fallback 4-bit auto device_map thành công!")
+                    except Exception as e_final_4bit:
+                        print(f"[Lỗi] Nạp mô hình 4-bit thất bại: {e_final_4bit}")
+                        self.is_loaded = False
+
+            # FALLBACK CẤP 2 (CHỈ DÀNH CHO MODEL NHỎ < 4B):
+            # Tuyệt đối không fallback float16 cho model 7B hoặc 14B vì 100% sẽ OOM GPU 15GB!
+            elif has_cuda and not is_14b and "7b" not in str(self.model_id).lower():
+                print(f"[LLMClient] 🛡️ Fallback cấp 2: Thử nạp không lượng tử hóa (torch_dtype={compute_dtype}) cho mô hình nhỏ...")
                 try:
                     fallback_kwargs = {
-                        "device_map": {"": 0},
+                        "device_map": "auto",
                         "torch_dtype": compute_dtype,
                         "low_cpu_mem_usage": True,
                         "trust_remote_code": True,
@@ -449,26 +504,12 @@ class LLMClient:
                     )
                     self.model.eval()
                     self.is_loaded = True
-                    print(f"[LLMClient] Nạp mô hình thành công (fallback auto device_map): {self.device}")
+                    print(f"[LLMClient] Nạp mô hình nhỏ thành công: {self.device}")
                 except Exception as e_cuda:
                     print(f"[Lỗi] Nạp mô hình thất bại: {e_cuda}")
                     self.is_loaded = False
-            elif has_cuda and ("out of memory" in str(e).lower() or "cuda" in str(e).lower()):
-                print(f"[LLMClient] Cảnh báo VRAM ({e}), thử fallback sang auto offload...")
-                try:
-                    load_kwargs["device_map"] = "auto"
-                    self.model = AutoModelForCausalLM.from_pretrained(
-                        self.model_id,
-                        **load_kwargs
-                    )
-                    self.model.eval()
-                    self.is_loaded = True
-                    print(f"[LLMClient] Nạp mô hình thành công (fallback auto offload): {self.device}")
-                except Exception as e2:
-                    print(f"[Lỗi] Nạp mô hình thất bại: {e2}")
-                    self.is_loaded = False
             else:
-                print(f"[Lỗi] Nạp mô hình thất bại: {e}")
+                print(f"[Lỗi] Không thể nạp mô hình {self.model_id}: {e}")
                 self.is_loaded = False
 
         if self.is_loaded:
