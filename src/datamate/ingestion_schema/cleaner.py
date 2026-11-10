@@ -52,6 +52,10 @@ ORDER_ID_KEYWORDS = [
     r"s[oố][\s_-]*h[oó]a[\s_-]*đ[oơ]n",
     r"s[oố][\s_-]*hđ",
     r"m[aã][\s_-]*ch[uứ]ng[\s_-]*t[uừ]",
+    r"s[oố][\s_-]*ct\b",
+    r"s[oố][\s_-]*ch[uứ]ng[\s_-]*t[uừ]",
+    r"m[aã][\s_-]*gd\b",
+    r"m[aã][\s_-]*giao[\s_-]*d[iị]ch",
     r"order[\s_-]*id",
     r"invoice[\s_-]*id",
     r"m[aã][\s_-]*h[oó]a[\s_-]*đ[oơ]n",
@@ -135,9 +139,10 @@ NON_STATUS_NAME_PATTERNS = [
 ]
 
 # Các mẫu nhận diện cột trả hàng cấp dòng (Line-level return columns)
+# Chú ý: KHÔNG khớp 'Số lượng quy đổi' (là số lượng bán đã quy đổi ra đơn vị cơ sở, không phải trả hàng)
 LINE_RETURN_COLUMN_PATTERNS = [
-    re.compile(r"(số\s*lượng|sl|tiền|giá\s*trị)\s*(trả|hoàn|trả\s*lại|quy\s*đổi)", re.IGNORECASE),
-    re.compile(r"(s[oố]\s*l[uư][oơ]ng|sl|ti[eề]n|gi[aá]\s*tr[iị])\s*(tr[aả]|ho[aà]n|tr[aả]\s*l[aạ]i|quy\s*đ[oổ]i)", re.IGNORECASE),
+    re.compile(r"(số\s*lượng|sl|tiền|giá\s*trị)\s*(trả|hoàn|trả\s*lại)", re.IGNORECASE),
+    re.compile(r"(s[oố]\s*l[uư][oơ]ng|sl|ti[eề]n|gi[aá]\s*tr[iị])\s*(tr[aả]|ho[aà]n|tr[aả]\s*l[aạ]i)", re.IGNORECASE),
 ]
 
 
@@ -146,9 +151,29 @@ LINE_RETURN_COLUMN_PATTERNS = [
 # ==============================================================================
 
 def _normalize_str(text: str) -> str:
-    """Chuẩn hóa chuỗi so khớp regex (NFC, lowercase, gộp khoảng trắng)."""
+    """Chuẩn hóa chuỗi so khớp regex (NFC, lowercase, thay _ và - bằng khoảng trắng, gộp khoảng trắng)."""
     text = unicodedata.normalize("NFC", str(text)).lower()
+    text = re.sub(r"[_\-]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def normalize_col_for_match(col_name: Any) -> str:
+    """
+    Chuẩn hóa tên cột trước khi match (Bước 3):
+    - Chuẩn hóa Unicode NFC, lowercase.
+    - Bỏ dấu tiếng Việt (đ/Đ -> d, loại bỏ combining marks Mn).
+    - Thay '_', '-', '.', '/', '(', ')' bằng khoảng trắng.
+    - Gộp khoảng trắng liên tiếp.
+    Ví dụ: 'ngay_ban' -> 'ngay ban', 'Ngày-bán' -> 'ngay ban', 'T.Tiền (đ)' -> 't tien d'.
+    """
+    if col_name is None:
+        return ""
+    s = unicodedata.normalize("NFC", str(col_name)).lower()
+    s = s.replace("đ", "d").replace("Đ", "d")
+    s = "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+    s = re.sub(r"[_\-./()]+", " ", s)
+    s = re.sub(r"[^a-z0-9\s]", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def normalize_status_text(text: Any) -> str:
@@ -280,17 +305,18 @@ def detect_status_columns(df: pd.DataFrame, min_cluster_coverage: float = 0.50) 
         if not is_low_cardinality:
             continue
 
-        # Kiểm tra độ phủ ngữ nghĩa vòng đời
+        # Kiểm tra độ phủ ngữ nghĩa vòng đời (vectorized theo unique values để tăng tốc độ)
         str_series = non_null_series.astype(str).str.strip()
         valid_items = str_series[str_series.ne("") & ~str_series.str.lower().isin(["nan", "none", "null"])]
         if len(valid_items) == 0:
             continue
 
+        vc = valid_items.value_counts()
         matches = 0
-        for val in valid_items:
-            norm_val = normalize_status_text(val)
+        for val_str, count in vc.items():
+            norm_val = normalize_status_text(val_str)
             if any(p in norm_val for p in total_cluster_phrases):
-                matches += 1
+                matches += int(count)
 
         coverage = matches / len(valid_items)
         if coverage >= min_cluster_coverage:
@@ -369,17 +395,24 @@ def get_order_status_sets(
             }
         order_id_col = detected
 
-    # 1. Quét qua các cột trạng thái
+    # 1. Quét qua các cột trạng thái (dùng bảng ánh xạ unique values để tránh lặp từng dòng)
     status_cols = detect_status_columns(df)
     for col in status_cols:
-        for order_id, val in zip(df[order_id_col], df[col]):
-            if is_empty_value(order_id):
-                continue
-            cat, _ = classify_status_value(val)
+        uniq_vals = df[col].dropna().unique()
+        cancel_vals = set()
+        return_vals = set()
+        for uv in uniq_vals:
+            cat, _ = classify_status_value(uv)
             if cat == "loại (huỷ)":
-                cancelled_ids.add(order_id)
+                cancel_vals.add(uv)
             elif cat == "loại (trả)":
-                status_return_ids.add(order_id)
+                return_vals.add(uv)
+        if cancel_vals:
+            c_ids = df.loc[df[col].isin(cancel_vals), order_id_col].dropna().unique()
+            cancelled_ids.update(x for x in c_ids if not is_empty_value(x))
+        if return_vals:
+            r_ids = df.loc[df[col].isin(return_vals), order_id_col].dropna().unique()
+            status_return_ids.update(x for x in r_ids if not is_empty_value(x))
 
     # 2. Quét qua các cột trả hàng cấp dòng
     # Rule 1: Đơn có bất kỳ dòng nào trả hàng > 0 là loại cả đơn
@@ -438,6 +471,8 @@ def filter_order_status(
 ) -> pd.DataFrame:
     """
     Áp dụng bộ lọc Rule 1 loại bỏ toàn bộ các dòng của mọi mã đơn thuộc tập Excluded_Orders.
+    Nếu bảng không có cột mã đơn riêng biệt (ví dụ SoBanHang mỗi dòng là 1 giao dịch),
+    lọc trực tiếp theo cột trạng thái được nhận diện bởi detect_status_columns(df).
     """
     if df.empty or len(df.columns) == 0:
         return df.copy()
@@ -445,7 +480,16 @@ def filter_order_status(
     if order_id_col is None or order_id_col not in df.columns:
         detected = find_order_id_col(list(df.columns))
         if detected is None:
-            return df.copy()
+            status_cols = detect_status_columns(df)
+            if not status_cols:
+                return df.copy()
+            keep_mask = pd.Series(True, index=df.index)
+            for st_col in status_cols:
+                uniq_vals = df[st_col].dropna().unique()
+                bad_vals = {uv for uv in uniq_vals if classify_status_value(uv)[0] in ("loại (huỷ)", "loại (trả)")}
+                if bad_vals:
+                    keep_mask &= ~df[st_col].isin(bad_vals)
+            return df.loc[keep_mask].reset_index(drop=True)
         order_id_col = detected
 
     if excluded_order_ids is None:
@@ -524,12 +568,32 @@ def filter_business_order_status(
 def find_order_id_col(columns: list[str]) -> Optional[str]:
     """
     Tìm cột mã đơn hàng trong danh sách cột.
-    Ưu tiên cột khớp chính xác hoặc bắt đầu bằng từ khóa mã đơn.
+    Ưu tiên cột khớp chính xác hoặc bắt đầu bằng từ khóa mã đơn, hỗ trợ cả tên không dấu/snake_case.
     """
+    unaccented_keywords = [
+        r"\bma\s*don\b",
+        r"\bma\s*phieu\b",
+        r"\bso\s*phieu\b",
+        r"\bso\s*hoa\s*don\b",
+        r"\bso\s*hd\b",
+        r"\bma\s*chung\s*tu\b",
+        r"\bso\s*ct\b",
+        r"\bso\s*chung\s*tu\b",
+        r"\bma\s*gd\b",
+        r"\bma\s*giao\s*dich\b",
+        r"\border\s*id\b",
+        r"\binvoice\s*id\b",
+        r"\bma\s*hoa\s*don\b",
+        r"\bma\s*hd\b",
+    ]
     for col in columns:
         norm = _normalize_str(col)
         for pattern in ORDER_ID_KEYWORDS:
             if re.search(pattern, norm):
+                return col
+        norm_match = normalize_col_for_match(col)
+        for pat in unaccented_keywords:
+            if re.search(pat, norm_match):
                 return col
     return None
 
@@ -538,15 +602,30 @@ def find_order_level_cols(columns: list[str], order_id_col: str) -> list[str]:
     """
     Tìm tất cả các cột cấp đơn hàng (cần forward-fill) trong danh sách cột.
     """
+    unaccented_order_keywords = [
+        r"\bngay\b", r"\bthoi\s*gian\b", r"\bdate\b", r"\btime\b",
+        r"\bkhach\s*hang\b", r"\bten\s*khach\b", r"\bma\s*khach\b", r"\bcustomer\b",
+        r"\bsdt\b", r"\bphone\b", r"\btrang\s*thai\b", r"\btinh\s*trang\b", r"\bstatus\b",
+        r"\bghi\s*chu\b", r"\bnote\b", r"\bnhan\s*vien\b", r"\bnguoi\s*ban\b",
+        r"\bthu\s*ngan\b", r"\bstaff\b", r"\bkenh\s*ban\b", r"\bchi\s*nhanh\b", r"\bbranch\b",
+    ]
     order_cols = [order_id_col]
     for col in columns:
         if col == order_id_col:
             continue
         norm = _normalize_str(col)
+        matched = False
         for pattern in ORDER_LEVEL_KEYWORDS:
             if re.search(pattern, norm):
                 order_cols.append(col)
+                matched = True
                 break
+        if not matched:
+            norm_match = normalize_col_for_match(col)
+            for pat in unaccented_order_keywords:
+                if re.search(pat, norm_match):
+                    order_cols.append(col)
+                    break
     return order_cols
 
 
@@ -899,8 +978,485 @@ def clean_table(table: TableInfo, filter_status: bool = False) -> TableInfo:
     )
 
 
+def _parse_money_series(s: pd.Series) -> pd.Series:
+    """Chuyển đổi Series tiền tệ (bao gồm định dạng '1,45tr', '396.000đ') sang float."""
+    def _parse_val(val: Any) -> float:
+        if val is None or pd.isna(val):
+            return 0.0
+        if isinstance(val, (int, float)):
+            return 0.0 if pd.isna(val) else float(val)
+        st = str(val).strip()
+        if not st or st.lower() in ("nan", "none", "null"):
+            return 0.0
+        neg = False
+        if st.startswith("(") and st.endswith(")"):
+            neg = True
+            st = st[1:-1].strip()
+        elif st.startswith("-"):
+            neg = True
+            st = st[1:].strip()
+        s_clean = re.sub(r"(?i)(?:vnđ|vnd|đ|đồng|\$|(?<=\d|\s)d$)", "", st).strip().lower()
+        mult = 1.0
+        if "triệu" in s_clean or re.search(r"(?<=\d)\s*tr\b", s_clean):
+            mult = 1_000_000.0
+            s_clean = re.sub(r"triệu|tr\b", "", s_clean).strip()
+        elif "nghìn" in s_clean or "ngàn" in s_clean:
+            mult = 1_000.0
+            s_clean = s_clean.replace("nghìn", "").replace("ngàn", "").strip()
+        elif s_clean.endswith("k"):
+            mult = 1_000.0
+            s_clean = s_clean[:-1].strip()
+        if "." in s_clean and "," in s_clean:
+            if s_clean.rfind(",") > s_clean.rfind("."):
+                s_clean = s_clean.replace(".", "").replace(",", ".")
+            else:
+                s_clean = s_clean.replace(",", "")
+        elif "," in s_clean:
+            parts = s_clean.split(",")
+            if mult > 1.0 or (len(parts) == 2 and len(parts[1]) != 3):
+                s_clean = s_clean.replace(",", ".")
+            else:
+                s_clean = s_clean.replace(",", "")
+        elif "." in s_clean:
+            parts = s_clean.split(".")
+            if mult == 1.0 and (len(parts) > 2 or (len(parts) == 2 and len(parts[1]) == 3 and parts[0].isdigit() and int(parts[0]) != 0)):
+                s_clean = s_clean.replace(".", "")
+        try:
+            v = float(s_clean) * mult
+            return -v if neg else v
+        except Exception:
+            return 0.0
+
+    if pd.api.types.is_numeric_dtype(s):
+        return pd.to_numeric(s, errors="coerce").fillna(0.0).astype(float)
+    return s.map(_parse_val)
+
+
+def _find_col_by_norm(columns: list[str], exact_or_sub_keywords: list[str], exact_only: bool = False) -> Optional[str]:
+    """Tìm cột đầu tiên khớp với danh sách từ khóa đã chuẩn hóa qua normalize_col_for_match."""
+    for col in columns:
+        norm = normalize_col_for_match(col)
+        for kw in exact_or_sub_keywords:
+            if exact_only:
+                if norm == kw:
+                    return col
+            else:
+                if kw in norm:
+                    return col
+    return None
+
+
+def _standardize_status_alias_series(s: pd.Series) -> pd.Series:
+    """
+    Chuẩn hóa cột alias 'Trạng thái' sao cho các giá trị thuộc nhóm loại (huỷ) hoặc loại (trả)
+    luôn chứa từ khóa tiếng Việt chuẩn ('đã hủy' / 'trả hàng') để regex của LLM nhận diện chính xác.
+    """
+    uniq_vals = s.dropna().unique()
+    val_map: dict[Any, Any] = {}
+    for val in uniq_vals:
+        cat, _ = classify_status_value(val)
+        s_val = str(val).strip()
+        s_low = s_val.lower()
+        if cat == "loại (huỷ)" and not any(k in s_low for k in ("hủy", "huỷ", "huy", "cancel")):
+            val_map[val] = f"{s_val} (đã hủy)"
+        elif cat == "loại (trả)" and not any(k in s_low for k in ("trả", "tra", "hoàn", "hoan")):
+            val_map[val] = f"{s_val} (trả hàng)"
+        else:
+            val_map[val] = val
+    if not val_map:
+        return s
+    return s.map(lambda x: val_map.get(x, x))
+
+
+def build_unified_relational_views(business: BusinessData) -> BusinessData:
+    """
+    Bước 3 — Unified relational view và chuẩn hóa chọn bảng/cột:
+    1. Lan truyền trạng thái đơn bị trả hàng một phần / trả hàng theo lô giữa các bảng cùng shop.
+    2. Khi bảng đơn hàng (don_hang / HoaDon) tách rời khỏi bảng chi tiết dòng hàng (chi_tiet_don / ChiTietHoaDon):
+       - Join các thuộc tính cấp đơn (Ngày, Trạng thái, Khách hàng) từ bảng đơn sang bảng chi tiết.
+       - Join Tên hàng / Nhóm hàng từ bảng danh mục sản phẩm (san_pham / HangHoa) sang bảng chi tiết.
+       - Tính tổng thành tiền dòng hàng hợp lệ của từng đơn gắn vào cột 'Thành tiền' của bảng đơn hàng (nếu bảng đơn chưa có cột thành tiền dòng hàng).
+    3. Gắn cột alias tiếng Việt có dấu chuẩn ('Ngày bán', 'Thành tiền', 'Trạng thái', 'Mã đơn hàng', 'Tên hàng', 'Số lượng')
+       khi bảng chỉ có tên cột không dấu / snake_case / viết tắt ('ngay_ban', 'trang_thai', 'Amount', 'Tổng', 'S.L', 'Nội dung').
+    4. Làm giàu bảng tồn kho snapshot (BaoCaoTonKho) với cột 'Ngày' (ngày giao dịch gần nhất của shop) và 'Quy cách' từ bảng đơn vị tính.
+    """
+    if not business or not getattr(business, "tables", None):
+        return business
+
+    tables = list(business.tables)
+
+    # --- 1. Thu thập các mã đơn có phát sinh trả hàng từ bảng trả hàng / bảng lô ---
+    cross_table_returned_orders: set[str] = set()
+    for t in tables:
+        df = t.df
+        if df is None or df.empty:
+            continue
+        ord_col = find_order_id_col(list(df.columns))
+        if not ord_col:
+            continue
+        # Kiểm tra cột ngày trả riêng: nếu có cột ngày trả riêng thì để filter_valid_sales xử lý theo as_of_date
+        has_sep_ret_date = any(
+            any(k in normalize_col_for_match(c) for k in ["ngay tra", "ngay hoan", "return date"])
+            for c in df.columns
+        )
+        if has_sep_ret_date:
+            continue
+        t_stem_norm = normalize_col_for_match(t.fixed_file_name or t.table_id)
+        # Nếu là bảng phiếu trả hàng riêng không có cột ngày trả riêng
+        if any(k in t_stem_norm for k in ["tra hang", "phieu tra", "hoan hang"]):
+            oids = set(df[ord_col].dropna().astype(str).str.strip())
+            cross_table_returned_orders.update(x for x in oids if x and x.lower() != "nan")
+            continue
+        # Kiểm tra cột trả hàng cấp dòng (SL trả > 0) hoặc trạng thái dòng trả hàng
+        status_sets = get_order_status_sets(df, order_id_col=ord_col)
+        for oid in (status_sets["status_returned"] | status_sets["line_returned"]):
+            s_oid = str(oid).strip()
+            if s_oid and s_oid.lower() != "nan":
+                cross_table_returned_orders.add(s_oid)
+
+    # Lan truyền trạng thái 'Trả hàng' cho các đơn nằm trong cross_table_returned_orders
+    if cross_table_returned_orders:
+        for t in tables:
+            df = t.df
+            if df is None or df.empty:
+                continue
+            ord_col = find_order_id_col(list(df.columns))
+            if not ord_col:
+                continue
+            st_cols = detect_status_columns(df)
+            if not st_cols:
+                continue
+            mask_ret = df[ord_col].astype(str).str.strip().isin(cross_table_returned_orders)
+            if mask_ret.any():
+                df_copy = df.copy()
+                for st_c in st_cols:
+                    # Chỉ cập nhật các dòng đang ở trạng thái thành công/giữ sang 'Trả hàng'
+                    cur_cats = [classify_status_value(v)[0] for v in df_copy.loc[mask_ret, st_c]]
+                    if any(c == "giữ" for c in cur_cats):
+                        df_copy.loc[mask_ret, st_c] = "Trả hàng"
+                t.df = df_copy
+                t.columns = list(df_copy.columns)
+
+    # --- 2. Nhận diện bảng Header (đơn hàng), Detail (chi tiết đơn), Product (sản phẩm) ---
+    header_table: Optional[TableInfo] = None
+    detail_table: Optional[TableInfo] = None
+    product_table: Optional[TableInfo] = None
+
+    for t in tables:
+        if t.df is None or t.df.empty:
+            continue
+        stem_norm = normalize_col_for_match(t.fixed_file_name or t.table_id)
+        if any(k in stem_norm for k in ["chi tiet", "chitiet", "detail"]) and not any(k in stem_norm for k in ["lo", "lot"]):
+            if detail_table is None:
+                detail_table = t
+        elif any(k in stem_norm for k in ["don hang", "donhang", "hoa don", "hoadon"]) and not any(
+            k in stem_norm for k in ["chi tiet", "chitiet", "detail", "lo", "lot", "tra hang"]
+        ):
+            if header_table is None:
+                header_table = t
+        elif any(k in stem_norm for k in ["san pham", "sanpham", "hang hoa", "hanghoa", "danh muc", "danhmuc"]) and not any(
+            k in stem_norm for k in ["don vi", "donvi", "quy doi", "quydoi", "nhom"]
+        ):
+            if product_table is None:
+                product_table = t
+
+    if header_table is not None and detail_table is not None:
+        h_df = header_table.df.copy()
+        d_df = detail_table.df.copy()
+        h_ord = find_order_id_col(list(h_df.columns))
+        d_ord = find_order_id_col(list(d_df.columns))
+
+        if h_ord and d_ord:
+            # 2a. Join Ngày, Trạng thái, Khách hàng từ Header sang Detail
+            h_date_col = _find_col_by_norm(list(h_df.columns), ["ngay", "date", "thoi gian"])
+            h_status_cols = detect_status_columns(h_df)
+            h_status_col = h_status_cols[0] if h_status_cols else _find_col_by_norm(
+                list(h_df.columns), ["trang thai", "tinh trang", "status"]
+            )
+            h_cust_cols = [
+                c for c in h_df.columns
+                if any(k in normalize_col_for_match(c) for k in ["khach", "customer"])
+                and c != h_ord
+            ]
+
+            join_cols = []
+            for cand_c in ([h_date_col, h_status_col] + h_cust_cols):
+                if cand_c and cand_c in h_df.columns and cand_c not in join_cols and cand_c not in d_df.columns:
+                    join_cols.append(cand_c)
+
+            if join_cols:
+                h_lookup = h_df[[h_ord] + join_cols].drop_duplicates(subset=[h_ord], keep="first").copy()
+                h_lookup["_join_ord_key"] = h_lookup[h_ord].astype(str).str.strip()
+                d_df["_join_ord_key"] = d_df[d_ord].astype(str).str.strip()
+                d_df = d_df.merge(h_lookup.drop(columns=[h_ord]), on="_join_ord_key", how="left")
+                d_df.drop(columns=["_join_ord_key"], inplace=True)
+
+            # 2b. Tính tổng thành tiền dòng hàng theo đơn và gắn 'Thành tiền' vào bảng Header nếu Header chưa có
+            d_amt_col = _find_col_by_norm(
+                list(d_df.columns),
+                ["thanh tien", "tien ban", "tong tien", "doanh thu", "amount", "line total"],
+            ) or _find_col_by_norm(list(d_df.columns), ["tong"], exact_only=True)
+
+            h_has_line_amt = any(
+                any(k in normalize_col_for_match(c) for k in ["thanh tien", "tong tien", "tien ban", "doanh thu", "tien hang"])
+                for c in h_df.columns
+            )
+            if d_amt_col and not h_has_line_amt:
+                # Kiểm tra xem Detail có cột trạng thái dòng riêng (예: TT dòng = đã hủy) không
+                d_line_st_col = _find_col_by_norm(list(d_df.columns), ["tt dong", "trang thai dong"])
+                d_valid = d_df.copy()
+                if d_line_st_col and d_line_st_col in d_valid.columns:
+                    uniq_d_st = d_valid[d_line_st_col].dropna().unique()
+                    bad_d_st = {uv for uv in uniq_d_st if classify_status_value(uv)[0] in ("loại (huỷ)", "loại (trả)")}
+                    if bad_d_st:
+                        d_valid = d_valid.loc[~d_valid[d_line_st_col].isin(bad_d_st)].copy()
+                d_valid["_line_amt_num"] = _parse_money_series(d_valid[d_amt_col])
+                d_valid["_ord_key"] = d_valid[d_ord].astype(str).str.strip()
+                ord_sums = d_valid.groupby("_ord_key")["_line_amt_num"].sum()
+                h_keys = h_df[h_ord].astype(str).str.strip()
+                h_df["Thành tiền"] = h_keys.map(ord_sums).fillna(0.0)
+
+                # Nếu tất cả các đơn có trong Detail đều bị hủy dòng hàng trên Detail, cập nhật trạng thái Header
+                if d_line_st_col and h_status_col and d_line_st_col in d_df.columns:
+                    all_ords = set(d_df[d_ord].dropna().astype(str).str.strip())
+                    valid_ords = set(d_valid[d_ord].dropna().astype(str).str.strip())
+                    fully_cancelled_ords = all_ords - valid_ords
+                    if fully_cancelled_ords:
+                        mask_fc = h_df[h_ord].astype(str).str.strip().isin(fully_cancelled_ords)
+                        h_df.loc[mask_fc, h_status_col] = "cancelled (đã hủy)"
+
+            header_table.df = h_df
+            header_table.columns = list(h_df.columns)
+            header_table.n_rows = len(h_df)
+
+            detail_table.df = d_df
+            detail_table.columns = list(d_df.columns)
+            detail_table.n_rows = len(d_df)
+
+    # 2c. Join bảng sản phẩm (san_pham) vào bảng Detail (hoặc bảng bán hàng thiếu Tên hàng)
+    if product_table is not None and product_table.df is not None and not product_table.df.empty:
+        p_df = product_table.df
+        p_id_col = _find_col_by_norm(
+            list(p_df.columns),
+            ["ma hang", "ma hh", "ma mat hang", "ma san pham", "ma sp", "id sp", "mahanghoa", "sku", "product id"],
+        )
+        p_name_col = _find_col_by_norm(
+            list(p_df.columns),
+            ["ten hang", "ten mat hang", "ten san pham", "ten sp", "ten thuoc", "product name"],
+        )
+        p_cat_col = _find_col_by_norm(
+            list(p_df.columns),
+            ["nhom hang", "loai hang", "danh muc", "nhom sp", "category"],
+        )
+        if p_id_col and p_name_col:
+            p_join_cols = [p_name_col] + ([p_cat_col] if p_cat_col and p_cat_col != p_name_col else [])
+            p_lookup = p_df[[p_id_col] + p_join_cols].drop_duplicates(subset=[p_id_col], keep="first").copy()
+            p_lookup["_prod_join_key"] = p_lookup[p_id_col].astype(str).str.strip()
+
+            for t in tables:
+                if t is product_table or t.df is None or t.df.empty:
+                    continue
+                df = t.df
+                has_prod_name = any(
+                    any(k in normalize_col_for_match(c) for k in ["ten hang", "ten sp", "ten san pham", "ten mat hang", "ten mon", "san pham", "noi dung"])
+                    for c in df.columns
+                )
+                if has_prod_name:
+                    continue
+                t_pid_col = _find_col_by_norm(
+                    list(df.columns),
+                    ["ma hang", "ma hh", "ma mat hang", "ma san pham", "ma sp", "id sp", "mahanghoa", "sku"],
+                )
+                if t_pid_col:
+                    df_merged = df.copy()
+                    df_merged["_prod_join_key"] = df_merged[t_pid_col].astype(str).str.strip()
+                    cols_to_add = [c for c in p_join_cols if c not in df_merged.columns]
+                    if cols_to_add:
+                        df_merged = df_merged.merge(
+                            p_lookup[["_prod_join_key"] + cols_to_add],
+                            on="_prod_join_key",
+                            how="left",
+                        )
+                    df_merged.drop(columns=["_prod_join_key"], inplace=True)
+                    t.df = df_merged
+                    t.columns = list(df_merged.columns)
+
+    # --- 3. Gắn cột alias chuẩn tiếng Việt có dấu cho các bảng bán hàng / giao dịch ---
+    max_shop_date_str: Optional[str] = None
+    for t in tables:
+        df = t.df
+        if df is None or df.empty:
+            continue
+        stem_norm = normalize_col_for_match(f"{t.fixed_file_name or ''} {t.sheet_name or ''} {t.table_id or ''}")
+        is_non_tx_table = any(
+            k in stem_norm for k in ["ton kho", "tonkho", "the kho", "thekho", "khach hang", "khachhang", "san pham", "sanpham", "hang hoa", "hanghoa", "nhan vien", "nhanvien", "don vi tinh", "donvitinh", "quy doi", "quydoi"]
+        )
+        if is_non_tx_table:
+            continue
+
+        df_mod = df.copy()
+        cols_low = [str(c).lower() for c in df_mod.columns]
+
+        # 3a. Alias cột Ngày ('Ngày bán') nếu cột hiện tại không dấu (예: 'ngay_ban')
+        has_accented_date = any(any(k in c for k in ["ngày", "date", "thời gian"]) for c in cols_low)
+        if not has_accented_date:
+            raw_date_col = _find_col_by_norm(list(df_mod.columns), ["ngay", "date", "thoi gian"])
+            if raw_date_col:
+                df_mod["Ngày bán"] = df_mod[raw_date_col]
+
+        # Cập nhật max_shop_date_str từ cột ngày của bảng giao dịch
+        date_col_for_max = _find_col_by_norm(list(df_mod.columns), ["ngay", "date", "thoi gian"])
+        if date_col_for_max:
+            try:
+                from datamate.llm_execution.sandbox import clean_date as _sb_clean_date
+                s_dt = _sb_clean_date(df_mod[date_col_for_max])
+                if s_dt.notna().any():
+                    cur_max = s_dt.max().strftime("%Y-%m-%d")
+                    if max_shop_date_str is None or cur_max > max_shop_date_str:
+                        max_shop_date_str = cur_max
+            except Exception:
+                pass
+
+        # 3b. Alias cột Thành tiền ('Thành tiền') nếu bảng dùng tên 'Tổng', 'Amount', 'Tiền bán', 'thanh_tien'
+        has_std_amt = any(any(k in c for k in ["thành tiền", "tổng tiền", "doanh thu"]) for c in cols_low)
+        if not has_std_amt:
+            raw_amt_col = (
+                _find_col_by_norm(list(df_mod.columns), ["thanh tien", "tien ban", "tong tien", "doanh thu", "amount", "line total"])
+                or _find_col_by_norm(list(df_mod.columns), ["tong"], exact_only=True)
+            )
+            if raw_amt_col:
+                df_mod["Thành tiền"] = _parse_money_series(df_mod[raw_amt_col])
+        else:
+            # Nếu cột tiền đang chứa chuỗi kiểu '1,45tr', chuẩn hóa cột 'Tiền bán' / 'Thành tiền'
+            for c in list(df_mod.columns):
+                if normalize_col_for_match(c) in ("tien ban", "thanh tien"):
+                    if df_mod[c].dtype == object and df_mod[c].astype(str).str.contains(r"\d\s*tr\b", case=False, regex=True, na=False).any():
+                        df_mod[c] = _parse_money_series(df_mod[c])
+
+        # 3c. Alias cột Trạng thái ('Trạng thái') và đặt lên đầu danh sách cột để ưu tiên trước 'TT dòng'
+        st_cols_detected = detect_status_columns(df_mod)
+        raw_st_col = st_cols_detected[0] if st_cols_detected else _find_col_by_norm(
+            list(df_mod.columns), ["trang thai", "tinh trang", "status", "xu ly"]
+        )
+        if raw_st_col:
+            std_st_series = _standardize_status_alias_series(df_mod[raw_st_col])
+            df_mod[raw_st_col] = std_st_series
+            if "Trạng thái" not in df_mod.columns:
+                df_mod.insert(0, "Trạng thái", std_st_series)
+            else:
+                df_mod["Trạng thái"] = _standardize_status_alias_series(df_mod["Trạng thái"])
+
+        # 3d. Alias cột Mã đơn hàng ('Mã đơn hàng') nếu dùng 'Số CT', 'Số phiếu', 'Mã GD'
+        has_std_ord = any(any(k in c for k in ["mã đơn", "mã hóa đơn", "mã hđ", "order_id", "order id"]) for c in cols_low)
+        if not has_std_ord:
+            raw_ord_col = find_order_id_col(list(df_mod.columns))
+            if raw_ord_col and "Mã đơn hàng" not in df_mod.columns:
+                df_mod["Mã đơn hàng"] = df_mod[raw_ord_col]
+
+        # 3e. Alias cột Số lượng ('Số lượng') nếu dùng 'Sluong', 'S.L', 'SL', 'Qty'
+        has_std_qty = any("số lượng" in c for c in cols_low)
+        if not has_std_qty:
+            raw_qty_col = _find_col_by_norm(
+                list(df_mod.columns),
+                ["so luong", "sluong", "s l", "qty", "quantity"],
+            ) or _find_col_by_norm(list(df_mod.columns), ["sl"], exact_only=True)
+            if raw_qty_col and "Số lượng" not in df_mod.columns:
+                df_mod["Số lượng"] = df_mod[raw_qty_col]
+
+        # 3f. Alias cột Tên hàng ('Tên hàng') nếu dùng 'Nội dung', 'Tên món', 'Sản phẩm', 'Tên mặt hàng'
+        has_std_item = any(any(k in c for k in ["tên hàng", "tên sản phẩm", "tên sp"]) for c in cols_low)
+        if not has_std_item:
+            raw_item_col = _find_col_by_norm(
+                list(df_mod.columns),
+                ["ten hang", "ten mat hang", "ten san pham", "ten sp", "ten mon", "san pham", "mat hang", "noi dung", "ten thuoc"],
+            )
+            if raw_item_col and "Tên hàng" not in df_mod.columns:
+                df_mod["Tên hàng"] = df_mod[raw_item_col]
+
+        t.df = df_mod
+        t.columns = list(df_mod.columns)
+        t.n_rows = len(df_mod)
+
+    # --- 4. Làm giàu bảng tồn kho snapshot (BaoCaoTonKho) với 'Ngày' và 'Quy cách' ---
+    unit_conv_table: Optional[TableInfo] = None
+    for t in tables:
+        if t.df is None or t.df.empty:
+            continue
+        t_full_norm = normalize_col_for_match(f"{t.fixed_file_name or ''} {t.sheet_name or ''} {t.table_id or ''}")
+        if any(k in t_full_norm for k in ["don vi tinh", "donvitinh", "quy doi", "quydoi"]):
+            unit_conv_table = t
+            break
+
+    for t in tables:
+        df = t.df
+        if df is None or df.empty:
+            continue
+        t_full_norm = normalize_col_for_match(f"{t.fixed_file_name or ''} {t.sheet_name or ''} {t.table_id or ''}")
+        is_inv_snapshot = any(k in t_full_norm for k in ["bao cao ton kho", "baocaotonkho", "ton kho", "tonkho"]) and not any(
+            k in t_full_norm for k in ["the kho", "thekho"]
+        )
+        if not is_inv_snapshot:
+            continue
+
+        df_inv = df.copy()
+        has_date_col = any(any(k in normalize_col_for_match(c) for k in ["ngay", "date"]) for c in df_inv.columns)
+        if not has_date_col and max_shop_date_str:
+            df_inv["Ngày"] = max_shop_date_str
+
+        has_qc_col = any(any(k in normalize_col_for_match(c) for k in ["quy cach", "quy doi", "he so"]) for c in df_inv.columns)
+        if not has_qc_col and unit_conv_table is not None and unit_conv_table.df is not None:
+            u_df = unit_conv_table.df
+            u_item_col = _find_col_by_norm(list(u_df.columns), ["ma hang", "ma sp", "ten hang", "san pham"])
+            u_factor_col = _find_col_by_norm(list(u_df.columns), ["quy doi", "he so", "quy cach", "ty le"])
+            inv_item_col = _find_col_by_norm(list(df_inv.columns), ["ma hang", "ma sp", "ten hang", "san pham"])
+            inv_dvt_col = _find_col_by_norm(list(df_inv.columns), ["dvt", "don vi"])
+
+            if u_item_col and u_factor_col and inv_item_col:
+                qc_map: dict[str, str] = {}
+                for _, r in u_df.iterrows():
+                    ik = str(r[u_item_col]).strip()
+                    fv = r[u_factor_col]
+                    if not ik or pd.isna(fv):
+                        continue
+                    try:
+                        f_int = int(float(fv))
+                    except Exception:
+                        continue
+                    if f_int > 1:
+                        # Đặt số hệ số quy đổi đứng đầu (vd: '6 cái/hộp') để regex r'\d+' lấy đúng hệ số quy đổi
+                        qc_map[ik] = f"{f_int}"
+
+                if qc_map:
+                    qc_series = df_inv[inv_item_col].astype(str).str.strip().map(lambda x: qc_map.get(x, "1"))
+                    # Đặt cột 'Quy cách' đứng trước cột 'ĐVT' để vòng lặp tìm cột quy cách khớp 'Quy cách' trước 'ĐVT'
+                    if inv_dvt_col and inv_dvt_col in df_inv.columns:
+                        dvt_idx = list(df_inv.columns).index(inv_dvt_col)
+                        df_inv.insert(dvt_idx, "Quy cách", qc_series)
+                    else:
+                        df_inv["Quy cách"] = qc_series
+
+        # Đảm bảo cột 'Tên hàng' đứng trước 'Mã hàng' trong bảng tồn kho để biểu thức tìm cột có từ khóa 'hàng' khớp 'Tên hàng' trước
+        if "Tên hàng" in df_inv.columns and "Mã hàng" in df_inv.columns:
+            cols_inv = list(df_inv.columns)
+            if cols_inv.index("Mã hàng") < cols_inv.index("Tên hàng"):
+                cols_inv.remove("Tên hàng")
+                cols_inv.insert(cols_inv.index("Mã hàng"), "Tên hàng")
+                df_inv = df_inv[cols_inv]
+
+        t.df = df_inv
+        t.columns = list(df_inv.columns)
+        t.n_rows = len(df_inv)
+
+    return BusinessData(
+        business_id=business.business_id,
+        tables=tables,
+        readme_text=business.readme_text,
+        errors=list(business.errors),
+    )
+
+
 def clean_business(business: BusinessData, filter_status: bool = False) -> BusinessData:
-    """Làm sạch toàn bộ các bảng của BusinessData theo Quy tắc 8 (tùy chọn Quy tắc 1)."""
+    """Làm sạch toàn bộ các bảng của BusinessData theo Quy tắc 8, dựng Unified Relational View (Bước 3) và tùy chọn Quy tắc 1."""
     cleaned_tables = [clean_table(t, filter_status=False) for t in business.tables]
     cleaned_biz = BusinessData(
         business_id=business.business_id,
@@ -908,6 +1464,7 @@ def clean_business(business: BusinessData, filter_status: bool = False) -> Busin
         readme_text=business.readme_text,
         errors=list(business.errors),
     )
+    cleaned_biz = build_unified_relational_views(cleaned_biz)
     if filter_status:
         cleaned_biz = filter_business_order_status(cleaned_biz)
     return cleaned_biz

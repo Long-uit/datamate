@@ -624,9 +624,9 @@ def clean_num(series_or_val: Any) -> Any:
         s_clean = re.sub(r"(?:vnđ|vnd|đ|đồng|\$|(?<=\d|\s)d$)", "", s_low).strip()
         
         multiplier = 1.0
-        if "triệu" in s_clean:
+        if "triệu" in s_clean or re.search(r"(?<=\d)\s*tr\b", s_clean):
             multiplier = 1_000_000.0
-            s_clean = s_clean.replace("triệu", "").strip()
+            s_clean = re.sub(r"triệu|tr\b", "", s_clean).strip()
         elif "nghìn" in s_clean or "ngàn" in s_clean:
             multiplier = 1_000.0
             s_clean = s_clean.replace("nghìn", "").replace("ngàn", "").strip()
@@ -644,15 +644,15 @@ def clean_num(series_or_val: Any) -> Any:
                 s_clean = s_clean.replace(",", "")
         elif "," in s_clean:
             parts = s_clean.split(",")
-            # Nếu sau dấu phẩy là 3 chữ số -> phân cách nghìn kiểu US (1,250)
-            if len(parts) == 2 and len(parts[1]) != 3:
+            # Nếu có multiplier ('1,156tr') hoặc sau dấu phẩy không phải 3 chữ số -> dấu thập phân VN
+            if multiplier > 1.0 or (len(parts) == 2 and len(parts[1]) != 3):
                 s_clean = s_clean.replace(",", ".")
             else:
                 s_clean = s_clean.replace(",", "")
         elif "." in s_clean:
             parts = s_clean.split(".")
             # Nếu có nhiều hơn 1 dấu chấm (1.250.000) hoặc có 3 chữ số sau dấu chấm (1.250) -> phân cách nghìn VN
-            if len(parts) > 2 or (len(parts) == 2 and len(parts[1]) == 3 and parts[0].isdigit() and int(parts[0]) != 0):
+            if multiplier == 1.0 and (len(parts) > 2 or (len(parts) == 2 and len(parts[1]) == 3 and parts[0].isdigit() and int(parts[0]) != 0)):
                 s_clean = s_clean.replace(".", "")
                 
         try:
@@ -820,6 +820,8 @@ def _patch_pandas_date_comparisons():
                     if isinstance(other, datetime.date) and not isinstance(other, datetime.datetime):
                         if pd.api.types.is_datetime64_any_dtype(self):
                             return orig_op(self, pd.Timestamp(other))
+                        elif self.dtype == object or str(self.dtype).startswith("string"):
+                            return orig_op(self.astype(str).str[:10], other.isoformat())
                     return orig_op(self, other)
                 _wrapped._is_date_resilient = True
                 return _wrapped
@@ -851,17 +853,45 @@ def _strip_accents(text: Any) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
 
 
+def _norm_col_key(text: Any) -> str:
+    """Chuẩn hóa tên cột trong sandbox: bỏ dấu, lowercase, thay _ và - bằng khoảng trắng."""
+    s = _strip_accents(text).lower()
+    s = re.sub(r"[_\-./()]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def should_retry_self_correction(
+    exec_err: Optional[str],
+    sanity_err: Optional[str],
+    err_type: Optional[str] = None,
+) -> bool:
+    """
+    Bước 3: Với lỗi DataNotFoundError (lỗi schema / không tìm thấy bảng hoặc cột)
+    thì KHÔNG chạy vòng tự sửa lỗi bằng LLM, vì các retry sinh lại đúng code cũ và tốn thời gian.
+    """
+    if err_type == "DataNotFoundError":
+        return False
+    err_str = str(exec_err or "")
+    if "DataNotFoundError" in err_str or "Không tìm thấy bảng" in err_str or "Không tìm thấy cột" in err_str:
+        return False
+    return bool(exec_err or sanity_err)
+
+
 def filter_valid_sales(
     df: pd.DataFrame,
     data: Optional[Dict[str, Any]] = None,
     as_of_date: Optional[str] = None,
+    *args: Any,
+    **kwargs: Any,
 ) -> pd.DataFrame:
     """
     Hàm tiện ích chuẩn hóa đơn hàng hợp lệ theo Điều 1 Rulebook:
-    1. Loại bỏ đơn hủy, trả hàng, hoàn, nháp theo cột trạng thái (nếu có).
+    1. Loại bỏ đơn hủy, trả hàng, hoàn hàng, không giao được, nháp theo cột trạng thái (nếu có).
+       (Chú ý: KHÔNG loại 'Đã hoàn thành' / 'Hoàn tất').
     2. Nếu một mã đơn có dòng bị trả 1 phần -> loại bỏ toàn bộ mã đơn đó.
     3. Nếu cửa hàng có bảng/sheet trả hàng riêng trong `data`, loại bỏ mọi mã đơn
        xuất hiện trong bảng trả hàng có ngày trả <= as_of_date.
+    4. Hỗ trợ tương thích khi mã LLM truyền `(df, date_col, start_date, end_date)`.
     """
     if df is None or df.empty:
         return df
@@ -869,21 +899,22 @@ def filter_valid_sales(
     out = df.copy()
     cols = list(out.columns)
     order_col = next(
-        (c for c in cols if any(k in _strip_accents(str(c)).lower() for k in [
-            "ma don", "ma hoa don", "ma hd", "order_id", "order id", "ma chung tu", "ma gd", "so phieu"
+        (c for c in cols if any(k in _norm_col_key(c) for k in [
+            "ma don", "ma hoa don", "ma hd", "order id", "ma chung tu", "so ct", "ma gd", "so phieu"
         ])),
         None,
     )
     status_col = next(
-        (c for c in cols if any(k in _strip_accents(str(c)).lower() for k in [
+        (c for c in cols if any(k in _norm_col_key(c) for k in [
             "trang thai", "tinh trang", "status", "ghi chu tt", "xu ly"
         ])),
         None,
     )
 
     if status_col:
+        # Tránh khớp nhầm chữ 'hoàn' trong 'Đã hoàn thành' / 'Hoàn tất'
         inv_mask = out[status_col].astype(str).str.contains(
-            r"hủy|huỷ|huy|trả|tra|hoàn|hoan|nháp|nhap|cancel|return|draft",
+            r"hủy|huỷ|huy|trả|tra|hoàn(?!\s*(?:thành|tất))|hoan(?!\s*(?:thanh|tat))|không\s*giao\s*được|khong\s*giao\s*duoc|nháp|nhap|cancel|return|draft",
             case=False,
             na=False,
         )
@@ -896,18 +927,33 @@ def filter_valid_sales(
         else:
             out = out[~inv_mask]
 
+    # Nếu LLM gọi filter_valid_sales(df, date_col, start_date, end_date)
+    if isinstance(data, str) and data in out.columns and as_of_date is not None and len(args) >= 1:
+        date_col_arg = data
+        start_arg = as_of_date
+        end_arg = args[0]
+        try:
+            dt_col = clean_date(out[date_col_arg])
+            s_ts = clean_date(start_arg)
+            e_ts = clean_date(end_arg)
+            if pd.notna(s_ts) and pd.notna(e_ts):
+                out = out[(dt_col >= s_ts) & (dt_col <= e_ts)]
+        except Exception:
+            pass
+        return out
+
     # Kiểm tra bảng trả hàng riêng trong `data` (Luật §1: chỉ coi là đã trả nếu ngày trả <= as_of_date)
     if data and order_col and isinstance(data, dict):
         returned_orders = set()
         for t_name, t_df in data.items():
             if not isinstance(t_df, pd.DataFrame) or t_df.empty:
                 continue
-            tn_norm = _strip_accents(str(t_name)).lower()
-            if any(k in tn_norm for k in ["tra_hang", "trahang", "phieutra", "hoanhang", "return"]):
+            tn_norm = _norm_col_key(t_name)
+            if any(k in tn_norm for k in ["tra hang", "trahang", "phieutra", "hoanhang", "return"]):
                 r_cols = list(t_df.columns)
                 r_ord = next(
-                    (c for c in r_cols if any(k in _strip_accents(str(c)).lower() for k in [
-                        "ma don", "ma hoa don", "ma hd", "order_id", "order id", "ma chung tu", "ma gd", "so phieu"
+                    (c for c in r_cols if any(k in _norm_col_key(c) for k in [
+                        "ma don", "ma hoa don", "ma hd", "order id", "ma chung tu", "so ct", "ma gd", "so phieu"
                     ])),
                     None,
                 )
@@ -916,7 +962,7 @@ def filter_valid_sales(
                 sub_ret = t_df
                 if as_of_date:
                     r_date = next(
-                        (c for c in r_cols if any(k in _strip_accents(str(c)).lower() for k in [
+                        (c for c in r_cols if any(k in _norm_col_key(c) for k in [
                             "ngay", "date", "thoi gian"
                         ])),
                         None,
@@ -1094,6 +1140,7 @@ __all__ = [
     "clean_date",
     "filter_valid_sales",
     "convert_to_base_qty",
+    "should_retry_self_correction",
     "sanitize_code_syntax",
     "_strip_accents",
     "_patch_pandas_date_comparisons",

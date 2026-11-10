@@ -255,6 +255,7 @@ def evaluate_semantic_rule_compliance(
     code_text: str,
     question: str = "",
     sub_ans: Optional[Dict[str, Any]] = None,
+    as_of_date: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Kiểm tra tính tuân thủ ngữ nghĩa Rulebook và tính hợp lệ tất định của đoạn mã Python sinh ra:
@@ -344,6 +345,38 @@ def evaluate_semantic_rule_compliance(
         if clean_c and not re.search(r"huy|cancel|cancelled_orders", clean_c_no_acc):
             violations.append("Câu hỏi đếm đơn bị hủy nhưng code không lọc điều kiện trạng thái hủy")
             semantic_penalty += 0.60
+
+    # 8. Câu hỏi hỏi số lượng sản phẩm bán ra (số đĩa, mấy cái, bao nhiêu hộp/gói/chai...) nhưng code chỉ cộng cột tiền mà không dùng cột số lượng
+    asks_item_qty = bool(
+        re.search(
+            r"\b(?:so\s*luong|so\s*dia|so\s*phan|so\s*suat|so\s*to|so\s*ly|so\s*chai|so\s*hop|so\s*goi|so\s*cai|so\s*chiec|may\s*dia|may\s*phan|may\s*hop|may\s*chai|bao\s*nhieu\s*(?:dia|phan|suat|to|ly|chai|hop|goi))\b",
+            q_no_acc,
+        )
+    )
+    if asks_item_qty and not asks_money and clean_c:
+        uses_amt_only = bool(re.search(r"\bamt_col\b|thanh\s*tien|tong\s*tien|tien\s*ban|doanh\s*thu", clean_c_no_acc))
+        uses_qty = bool(re.search(r"\bqty_col\b|so\s*luong|sluong|\bs\.l\b|\bsl\b|quantity|convert_to_base_qty", clean_c_no_acc))
+        if uses_amt_only and not uses_qty:
+            violations.append("Câu hỏi hỏi số lượng món/sản phẩm bán được nhưng code lại cộng cột tiền mà không dùng cột số lượng")
+            semantic_penalty += 0.60
+
+    # 9. Câu hỏi hỏi tiền khách trả bớt nợ / thu nợ nhưng code không truy cập bảng thanh toán / công nợ hay cột nợ
+    asks_debt_repayment = bool(re.search(r"tra\s*bot\s*no|thu\s*no|tra\s*no|mua\s*chiu|cong\s*no", q_no_acc))
+    if asks_debt_repayment and clean_c:
+        uses_debt_or_pay = bool(re.search(r"thanh_toan|thanh\s*toan|cong_no|cong\s*no|so_no|du\s*no|\bno\b|phieu\s*thu|tra\s*no", clean_c_no_acc))
+        if not uses_debt_or_pay:
+            violations.append("Câu hỏi hỏi về công nợ / tiền trả nợ nhưng code chỉ tính doanh thu bán hàng chung mà không xét bảng/cột thanh toán hoặc công nợ")
+            semantic_penalty += 0.60
+
+    # 10. Câu hỏi hỏi 'hôm qua' / 'bữa qua' nhưng code lọc cứng dt.day == as_of_date.day (lấy nhầm ngày hôm nay)
+    if as_of_date and re.search(r"\b(?:hom\s*qua|bua\s*qua|ngay\s*hom\s*qua)\b", q_no_acc) and clean_c:
+        try:
+            aod_day = int(str(as_of_date).strip().split("-")[2][:2])
+            if re.search(rf"dt\.day\s*==\s*{aod_day}\b", clean_c) and not re.search(rf"dt\.day\s*==\s*{aod_day - 1}\b", clean_c):
+                violations.append(f"Câu hỏi hỏi 'hôm qua / bữa qua' (as_of_date={as_of_date}) nhưng code lọc nhầm ngày hôm nay (dt.day == {aod_day})")
+                semantic_penalty += 0.60
+        except Exception:
+            pass
 
     semantic_penalty = round(min(0.80, semantic_penalty), 4)
     return {
@@ -527,7 +560,13 @@ def compute_confidence_score(
         )
 
     total_penalty = grounding_eval.get("total_penalty", 0.0) if grounding_eval else 0.0
-    sem_eval = evaluate_semantic_rule_compliance(code_text=code_text, question=question, sub_ans=sub_ans)
+    aod_str = str(temporal_info.get("as_of_date", "")) if isinstance(temporal_info, dict) else None
+    sem_eval = evaluate_semantic_rule_compliance(
+        code_text=code_text,
+        question=question,
+        sub_ans=sub_ans,
+        as_of_date=aod_str,
+    )
     sem_penalty = sem_eval.get("semantic_penalty", 0.0)
 
     raw_confidence = exec_score + plausibility_score + code_score - total_penalty - sem_penalty

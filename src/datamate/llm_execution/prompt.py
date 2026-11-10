@@ -353,8 +353,7 @@ def prune_schema_by_intent(
             continue
         if is_delivery and not explicit_delivery:
             continue
-        if is_inv and not explicit_inventory and intent not in ("inventory_unit_conversion", "multitable_join"):
-            continue
+        # Bước 3(c): Không loại bảng chỉ vì tên hoặc vai trò chứa 'kho' / 'tồn kho' (is_inv)
         if is_cust and not explicit_customer and intent not in ("ranking_topk", "ranking_customer", "aggregation", "cancelled_orders", "average_order_value"):
             continue
 

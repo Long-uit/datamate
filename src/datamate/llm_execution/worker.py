@@ -588,8 +588,64 @@ def execute_code_in_env(
     DataNotFoundError: Any,
 ) -> Dict[str, Any]:
     """Thực thi mã nguồn an toàn trong môi trường namespace có dữ liệu nạp sẵn."""
-    # Tạo bản sao shallow-copy để bảo vệ DataFrame gốc trong RAM và bọc bằng SmartDataDict
-    isolated_data = {k: v.copy(deep=False) for k, v in data_dict.items()}
+    from datamate.ingestion_schema.cleaner import filter_order_status, normalize_col_for_match
+
+    clean_code_no_comment = re.sub(r"#.*", "", code_str or "").lower()
+    mentions_status_or_cancel = bool(
+        re.search(
+            r"\b(?:hủy|huỷ|huy|cancel|cancelled|trả\s*hàng|tra_hang|hoàn\s*hàng|returned|status|trạng\s*thái|tình\s*trạng|trang_thai|tinh_trang|filter_valid_sales)\b",
+            clean_code_no_comment,
+        )
+    )
+    is_unit_price_lookup = bool(
+        re.search(r"đơn\s*giá|don_gia|don\s*gia|giá\s*bán|gia\s*ban|bảng\s*giá", clean_code_no_comment)
+        and not re.search(r"thành\s*tiền|tổng\s*tiền|tiền\s*bán|doanh\s*thu", clean_code_no_comment)
+    )
+
+    # Tạo bản sao shallow-copy để bảo vệ DataFrame gốc trong RAM
+    raw_isolated: Dict[str, Any] = {}
+    for k, v in data_dict.items():
+        df_copy = v.copy(deep=False)
+        if not mentions_status_or_cancel and not is_unit_price_lookup and hasattr(df_copy, "columns"):
+            k_norm = normalize_col_for_match(k)
+            if not any(inv_k in k_norm for inv_k in ["ton kho", "tonkho", "the kho", "thekho", "san pham", "sanpham", "khach hang", "khachhang"]):
+                try:
+                    df_copy = filter_order_status(df_copy)
+                except Exception:
+                    pass
+        raw_isolated[k] = df_copy
+
+    # Sắp xếp thứ tự duyệt dict (items / values / keys) thông minh:
+    # Nếu code chỉ tính ở cấp đơn (không tham chiếu tên hàng, số lượng, nhóm hàng) thì ưu tiên bảng đơn hàng (don_hang) trước chi_tiet_don.
+    wants_line_detail = bool(
+        re.search(
+            r"tên\s*hàng|ten_hang|sản\s*phẩm|san_pham|mặt\s*hàng|mat_hang|tên\s*món|số\s*lượng|so_luong|sluong|qty|nhóm\s*hàng|loại\s*hàng",
+            clean_code_no_comment,
+        )
+    )
+    ordered_keys = list(raw_isolated.keys())
+    if not wants_line_detail:
+        def _table_priority(k_name: str) -> int:
+            kn = normalize_col_for_match(k_name)
+            if any(h in kn for h in ["don hang", "donhang", "hoa don", "hoadon", "ban hang", "banhang", "so ban hang", "sobanhang"]) and not any(
+                d in kn for d in ["chi tiet", "chitiet", "detail", "lo"]
+            ):
+                return 0
+            if any(d in kn for d in ["chi tiet", "chitiet", "detail"]):
+                return 1
+            return 2
+        ordered_keys.sort(key=_table_priority)
+    else:
+        def _table_priority_detail(k_name: str) -> int:
+            kn = normalize_col_for_match(k_name)
+            if any(d in kn for d in ["chi tiet", "chitiet", "detail", "ban hang", "banhang", "so ban hang", "sobanhang"]) and not any(
+                l_k in kn for l_k in ["lo", "lot"]
+            ):
+                return 0
+            return 1
+        ordered_keys.sort(key=_table_priority_detail)
+
+    isolated_data = {k: raw_isolated[k] for k in ordered_keys}
     smart_data = SmartDataDict(isolated_data)
 
     def _pct(a: Any, b: Any) -> float:
@@ -670,7 +726,7 @@ def execute_code_in_env(
 
         if "FINAL_RESULT" not in namespace:
             if "solution" in namespace and callable(namespace["solution"]):
-                _raw = namespace["solution"](isolated_data)
+                _raw = namespace["solution"](smart_data)
                 captured = captured_stdout.getvalue()
                 # Bắt lỗi âm thầm khi code LLM có try...except Exception và trả về None nhưng in ra lỗi
                 if (_raw is None or (isinstance(_raw, str) and not _raw.strip())) and (
@@ -799,6 +855,8 @@ def _load_shop_context(biz_dir: Path):
         t_base = Path(ti.fixed_file_name).stem if getattr(ti, "fixed_file_name", None) else ti.table_id
         t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
         data_dict[t_name] = ti.df
+        if ti.sheet_name and ti.sheet_name != "Sheet1" and ti.sheet_name not in data_dict:
+            data_dict[ti.sheet_name] = ti.df
         if t_base != t_name and t_base not in data_dict:
             data_dict[t_base] = ti.df
         if ti.table_id and ti.table_id not in data_dict:

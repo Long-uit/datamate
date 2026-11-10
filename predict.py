@@ -144,6 +144,8 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
             t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
 
             data_dict[t_name] = ti.df
+            if ti.sheet_name and ti.sheet_name != "Sheet1" and ti.sheet_name not in data_dict:
+                data_dict[ti.sheet_name] = ti.df
             if t_base != t_name and t_base not in data_dict:
                 data_dict[t_base] = ti.df
             if ti.table_id and ti.table_id not in data_dict:
@@ -187,20 +189,8 @@ def execute_solution(
     Thực thi hàm solution(data) qua sandbox subprocess độc lập (cô lập hoàn toàn, có hard timeout),
     hoặc chế độ in-process an toàn (sao chép độc lập để bảo vệ cache).
     """
-    adapter = """
-if 'FINAL_RESULT' not in globals() and 'solution' in globals() and callable(solution):
-    _raw_sol = solution(data)
-    if _raw_sol == "unanswerable" or (isinstance(_raw_sol, str) and _raw_sol.strip().lower() in ("unanswerable", "không thể trả lời")):
-        FINAL_RESULT = {"type": "unanswerable", "answer": None}
-    elif _raw_sol is None:
-        FINAL_RESULT = {"type": "abstain", "answer": None}
-    else:
-        FINAL_RESULT = _raw_sol
-"""
-    executable_code = code_text.strip() + "\n" + adapter
-
     if use_sandbox:
-        res = run_code(executable_code, business_dir=biz_dir, timeout_s=timeout_s)
+        res = run_code(code_text.strip(), business_dir=biz_dir, timeout_s=timeout_s)
         if res.ok:
             return res.final_result, None, res.elapsed_ms
         else:
@@ -212,7 +202,7 @@ if 'FINAL_RESULT' not in globals() and 'solution' in globals() and callable(solu
 
     t_start = time.perf_counter()
     res_payload = execute_code_in_env(
-        code_str=executable_code,
+        code_str=code_text.strip(),
         data_dict=data_dict,
         business=business_obj,
         con=con,
@@ -485,7 +475,12 @@ def main():
                     sanity_err = sanity_reason
                     print(f"  ⚠️ [Sanity Check] Lượt 1 vi phạm ({sanity_reason}) -> Kích hoạt Self-Correction...")
                 else:
-                    sem_eval1 = evaluate_semantic_rule_compliance(code_text=code_text, question=question_text, sub_ans=sub_ans_cand)
+                    sem_eval1 = evaluate_semantic_rule_compliance(
+                        code_text=code_text,
+                        question=question_text,
+                        sub_ans=sub_ans_cand,
+                        as_of_date=as_of_date,
+                    )
                     if not sem_eval1.get("is_compliant", True):
                         sanity_err = "; ".join(sem_eval1.get("violations", []))
                         print(f"  ⚠️ [Semantic Rule Check] Lượt 1 vi phạm ({sanity_err}) -> Kích hoạt Self-Correction...")
@@ -501,7 +496,8 @@ def main():
             should_retry_for_missed = bool(missed_mentions and not exec_err and not sanity_err and grounding_eval.get("entity_coverage", 1.0) < 0.5)
 
             # 5.2. Cơ chế Runtime Self-Correction (1 lượt tự sửa lỗi nếu gặp ngoại lệ, vi phạm Sanity Check, hoặc bỏ sót thực thể quan trọng)
-            if exec_err or sanity_err or should_retry_for_missed:
+            from src.datamate.llm_execution.sandbox import should_retry_self_correction
+            if should_retry_self_correction(exec_err, sanity_err) or should_retry_for_missed:
                 retry_count = 1
                 if exec_err:
                     err_feedback = exec_err

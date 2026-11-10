@@ -324,17 +324,19 @@ class TestLineReturnDetection(unittest.TestCase):
             "Mã đơn": ["DH01", "DH02"],
             "Số lượng trả (ĐVT cơ bản)": [1, 0],
             "SL trả": [0, 2],
-            "SLTraQuyDoi": [0.5, 0.0],
+            "SL trả quy đổi": [0.5, 0.0],
             "Tiền hoàn": [50000, 0],
             "Số lượng": [2, 3],  # Standard quantity, not return
+            "Số lượng quy đổi": [24, 36],  # Standard base quantity, NOT return!
             "Thành tiền": [100000, 150000],
         })
         detected = detect_line_return_columns(df)
         self.assertIn("Số lượng trả (ĐVT cơ bản)", detected)
         self.assertIn("SL trả", detected)
-        self.assertIn("SLTraQuyDoi", detected)
+        self.assertIn("SL trả quy đổi", detected)
         self.assertIn("Tiền hoàn", detected)
         self.assertNotIn("Số lượng", detected)
+        self.assertNotIn("Số lượng quy đổi", detected)
         self.assertNotIn("Thành tiền", detected)
 
     def test_detect_line_return_columns_ignore_zeros(self):

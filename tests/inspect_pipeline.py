@@ -139,6 +139,8 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
             t_base = Path(ti.fixed_file_name).stem if getattr(ti, "fixed_file_name", None) else ti.table_id
             t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
             data_dict[t_name] = ti.df
+            if ti.sheet_name and ti.sheet_name != "Sheet1" and ti.sheet_name not in data_dict:
+                data_dict[ti.sheet_name] = ti.df
             if t_base != t_name and t_base not in data_dict:
                 data_dict[t_base] = ti.df
             if ti.table_id and ti.table_id not in data_dict:
@@ -220,23 +222,9 @@ def execute_solution(
     use_sandbox: bool = True,
     return_details: bool = False,
 ) -> Tuple[Any, ...]:
-    """Thực thi mã nguồn mô hình sinh ra trong subprocess sandbox độc lập có hard timeout."""
-    adapter = """
-if 'FINAL_RESULT' not in globals() and 'solution' in globals() and callable(solution):
-    _raw_sol = solution(data)
-    if _raw_sol is None or (isinstance(_raw_sol, str) and not _raw_sol.strip()):
-        FINAL_RESULT = {"type": "abstain", "answer": None, "unanswerable_source": "none"}
-    elif _raw_sol == "unanswerable" or (isinstance(_raw_sol, str) and _raw_sol.strip().lower() in ("unanswerable", "không thể trả lời")):
-        FINAL_RESULT = {"type": "unanswerable", "answer": None, "unanswerable_source": "model"}
-    elif isinstance(_raw_sol, dict) and _raw_sol.get("type") == "unanswerable":
-        FINAL_RESULT = {"type": "unanswerable", "answer": None, "unanswerable_source": _raw_sol.get("unanswerable_source", "model")}
-    else:
-        FINAL_RESULT = _raw_sol
-"""
-    executable_code = code_text.strip() + "\n" + adapter
-
+    """Thực thi mã nguồn mô hình sinh ra trong subprocess sandbox hoặc môi trường in-process."""
     if use_sandbox:
-        res = run_code(executable_code, business_dir=biz_dir, timeout_s=timeout_s)
+        res = run_code(code_text.strip(), business_dir=biz_dir, timeout_s=timeout_s)
         unans_src = res.unanswerable_source
         if isinstance(res.final_result, dict):
             unans_src = res.final_result.get("unanswerable_source", unans_src)
@@ -249,12 +237,12 @@ if 'FINAL_RESULT' not in globals() and 'solution' in globals() and callable(solu
             return None, err_msg, res.elapsed_ms, res.error_type, unans_src
         return None, err_msg, res.elapsed_ms
 
-    # In-process fallback: ủy quyền trực tiếp cho execute_code_in_env để đồng nhất 100% với sandbox worker
+    # In-process fallback: truyền trực tiếp code_text cho execute_code_in_env để dùng smart_data đã lọc và sắp xếp
     from datamate.llm_execution.worker import execute_code_in_env
 
     t_start = time.perf_counter()
     res_payload = execute_code_in_env(
-        code_str=executable_code,
+        code_str=code_text.strip(),
         data_dict=data_dict,
         business=business_obj,
         con=con,
@@ -2153,11 +2141,17 @@ def run_batch_evaluation(args: argparse.Namespace):
                 elif not is_sane:
                     sanity_err = sanity_reason
                 else:
-                    sem_eval1 = evaluate_semantic_rule_compliance(code_text=code_text, question=normalized_q, sub_ans=sub_ans_cand)
+                    sem_eval1 = evaluate_semantic_rule_compliance(
+                        code_text=code_text,
+                        question=normalized_q,
+                        sub_ans=sub_ans_cand,
+                        as_of_date=as_of_date,
+                    )
                     if not sem_eval1.get("is_compliant", True):
                         sanity_err = "; ".join(sem_eval1.get("violations", []))
 
-            while (exec_err or sanity_err) and self_correction_count < max_self_corrections and err_type != "DataNotFoundError":
+            from src.datamate.llm_execution.sandbox import should_retry_self_correction
+            while should_retry_self_correction(exec_err, sanity_err, err_type) and self_correction_count < max_self_corrections:
                 self_correction_count += 1
                 current_err = exec_err or sanity_err
                 print(f"  🔄 [Self-Correction Vòng {self_correction_count}/{max_self_corrections}] Đang sửa: {current_err}")
@@ -2248,6 +2242,8 @@ def run_batch_evaluation(args: argparse.Namespace):
                     has_feasibility_pass=True,
                     unanswerable_source=unans_source,
                     grounding_eval=grounding_eval_res,
+                    temporal_info={**(temp_info or {}), "as_of_date": as_of_date},
+                    question=normalized_q,
                 )
                 sub_ans, is_abs = apply_abstention_gate(
                     sub_ans,
