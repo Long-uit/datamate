@@ -1801,7 +1801,47 @@ def run_batch_evaluation(args: argparse.Namespace):
         target_questions = [q for q in target_questions if q.get("id") == args.id]
     if args.sample is not None and args.sample < len(target_questions):
         rng = random.Random(args.seed)
-        target_questions = rng.sample(target_questions, args.sample)
+        if getattr(args, "stratified", False):
+            # Lấy mẫu phân tầng (Stratified Sampling) theo loại câu hỏi (gold type hoặc infer_expected_type)
+            from datamate.output_abstention.normalizer import infer_expected_type
+            by_type: Dict[str, List[dict]] = {}
+            for q_item in target_questions:
+                qid_item = q_item.get("id", "")
+                g_type = (gold_map.get(qid_item) or {}).get("type") if gold_map else None
+                if not g_type:
+                    g_type = infer_expected_type(q_item.get("question", ""))
+                by_type.setdefault(str(g_type), []).append(q_item)
+            sampled_list: List[dict] = []
+            total_pool = len(target_questions)
+            # Đảm bảo mỗi nhóm hiếm có ít nhất 1 câu nếu args.sample >= số nhóm
+            sorted_types = sorted(by_type.keys(), key=lambda t: len(by_type[t]))
+            remaining_quota = args.sample
+            allocations: Dict[str, int] = {}
+            for idx_t, t_name in enumerate(sorted_types):
+                group_pool = by_type[t_name]
+                if remaining_quota <= 0:
+                    allocations[t_name] = 0
+                    continue
+                prop = max(1, int(round(args.sample * (len(group_pool) / total_pool)))) if args.sample >= len(sorted_types) else int(round(args.sample * (len(group_pool) / total_pool)))
+                take_n = min(len(group_pool), prop, remaining_quota)
+                allocations[t_name] = take_n
+                remaining_quota -= take_n
+            # Phân bổ phần dư (nếu có) vào các nhóm còn phần tử chưa lấy hết
+            for t_name in reversed(sorted_types):
+                if remaining_quota <= 0:
+                    break
+                avail = len(by_type[t_name]) - allocations.get(t_name, 0)
+                if avail > 0:
+                    add_n = min(avail, remaining_quota)
+                    allocations[t_name] = allocations.get(t_name, 0) + add_n
+                    remaining_quota -= add_n
+            for t_name in sorted_types:
+                k_take = allocations.get(t_name, 0)
+                if k_take > 0:
+                    sampled_list.extend(rng.sample(by_type[t_name], k_take))
+            target_questions = sampled_list
+        else:
+            target_questions = rng.sample(target_questions, args.sample)
 
     output_path = Path(args.output_file)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2198,19 +2238,30 @@ def run_batch_evaluation(args: argparse.Namespace):
                 if not err_retry:
                     sub_ans_cand2 = normalize_output(raw_retry, question=normalized_q, code_text=retry_code)
                     is_sane2, sanity_reason2 = check_result_sanity(sub_ans_cand2, question=normalized_q, code_text=retry_code)
-                    if not is_sane2 or raw_retry == "unanswerable":
+                    if not is_sane2 or raw_retry == "unanswerable" or sub_ans_cand2.get("type") == "unanswerable":
                         sanity_err = sanity_reason2 or "Vẫn trả về unanswerable"
                         code_text = retry_code
                         round_record["sanity_error"] = str(sanity_err)
                     else:
-                        code_text = retry_code
-                        raw_result = raw_retry
-                        exec_err = None
-                        sanity_err = None
-                        round_record["success"] = True
-                        self_correction_trace.append(round_record)
-                        print(f"  ✅ [Self-Correction] Vòng {self_correction_count} thành công!")
-                        break
+                        sem_eval2 = evaluate_semantic_rule_compliance(
+                            code_text=retry_code,
+                            question=normalized_q,
+                            sub_ans=sub_ans_cand2,
+                            as_of_date=as_of_date,
+                        )
+                        if not sem_eval2.get("is_compliant", True):
+                            sanity_err = "; ".join(sem_eval2.get("violations", []))
+                            code_text = retry_code
+                            round_record["sanity_error"] = str(sanity_err)
+                        else:
+                            code_text = retry_code
+                            raw_result = raw_retry
+                            exec_err = None
+                            sanity_err = None
+                            round_record["success"] = True
+                            self_correction_trace.append(round_record)
+                            print(f"  ✅ [Self-Correction] Vòng {self_correction_count} thành công!")
+                            break
                 else:
                     code_text = retry_code
                     exec_err = err_retry
@@ -2542,6 +2593,7 @@ def main():
     parser.add_argument("--batch_size", type=int, default=20, help="Số lượng câu hỏi trong mỗi đợt (mặc định: 20)")
     parser.add_argument("--limit", type=int, default=None, help="Giới hạn số lượng câu hỏi cần chạy trong batch")
     parser.add_argument("--sample", type=int, default=None, help="Lấy ngẫu nhiên N câu hỏi để đánh giá")
+    parser.add_argument("--stratified", action="store_true", help="Lấy mẫu phân tầng (stratified) đảm bảo đủ các loại câu hỏi (number, list, string, percent, date, boolean, table, unanswerable)")
     parser.add_argument("--seed", type=int, default=42, help="Seed ngẫu nhiên khi lấy mẫu")
     parser.add_argument("--output_file", type=str, default="results/predictions.jsonl", help="File xuất kết quả dự đoán JSONL")
     parser.add_argument("--log_dir", type=str, default="results/logs", help="Thư mục lưu log chi tiết từng câu")

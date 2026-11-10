@@ -103,10 +103,15 @@ def _resolve_col_alias(df: Any, col: Any) -> Any:
             if any(_norm_col_name(a) == norm_c for a in COLUMN_CLUSTER_ALIASES[target_cluster]):
                 return c
 
-    # 3. Khớp chuỗi con nếu cả hai chuỗi đều có ít nhất 3 ký tự
+    # 3. Khớp chuỗi con an toàn (yêu cầu độ dài >= 4 và không xung đột khái niệm giảm giá / thuế / hạn / sinh)
     for c in df.columns:
         norm_c = _norm_col_name(c)
-        if (norm_target in norm_c or norm_c in norm_target) and len(norm_target) >= 3 and len(norm_c) >= 3:
+        if (norm_target in norm_c or norm_c in norm_target) and len(norm_target) >= 4 and len(norm_c) >= 4:
+            if any(
+                (kw in norm_c) != (kw in norm_target)
+                for kw in ("giam", "thue", "ngaysinh", "hansd", "hansudung", "hantra", "hanthanhtoan", "ship", "giavon", "chietkhau")
+            ):
+                continue
             return c
 
     return col
@@ -597,7 +602,7 @@ def execute_code_in_env(
     clean_code_no_comment = re.sub(r"#.*", "", code_str or "").lower()
     mentions_status_or_cancel = bool(
         re.search(
-            r"\b(?:hủy|huỷ|huy|cancel|cancelled|trả\s*hàng|tra_hang|hoàn\s*hàng|returned|status|trạng\s*thái|tình\s*trạng|trang_thai|tinh_trang|filter_valid_sales)\b",
+            r"(?:hủy|huỷ|\bhuy\b|cancel|cancelled|trả\s*hàng|tra_hang|hoàn\s*hàng|returned|status|trạng\s*thái|tình\s*trạng|trang_thai|tinh_trang|ghi\s*chú\s*tt|xử\s*lý|filter_valid_sales|count_orders)",
             clean_code_no_comment,
         )
     )
@@ -624,8 +629,16 @@ def execute_code_in_env(
                         pass
                 # Điều 5 Rulebook: bản ghi ngày sau hôm nay (as_of_date) coi như chưa xảy ra
                 if pd.notna(cutoff_dt) and not is_unit_price_lookup:
+                    _non_tx_date_kws = (
+                        "han su dung", "ngay sinh", "han thanh toan", "han tra",
+                        "ngay tao khach", "ngay tao mat hang", "ngay dang ky", "ngay vao lam", "ngay ap dung",
+                    )
                     d_col = next(
-                        (c for c in df_copy.columns if any(dk in normalize_col_for_match(c) for dk in ["ngay", "date", "thoi gian"]) and "han su dung" not in normalize_col_for_match(c) and "ngay sinh" not in normalize_col_for_match(c)),
+                        (
+                            c for c in df_copy.columns
+                            if any(dk in normalize_col_for_match(c) for dk in ["ngay", "date", "thoi gian"])
+                            and not any(ex_k in normalize_col_for_match(c) for ex_k in _non_tx_date_kws)
+                        ),
                         None,
                     )
                     if d_col:

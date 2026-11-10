@@ -427,19 +427,67 @@ def prune_schema_by_intent(
 # 4. CHỈ DẪN HỆ THỐNG ĐỘNG (INTENT-DRIVEN SYSTEM INSTRUCTION) & RETURN FORMAT ADAPTER
 # ==============================================================================
 
-def is_topk_list_question(question: str) -> bool:
-    """Kiểm tra câu hỏi có yêu cầu trả về danh sách Top-K (K >= 2 hoặc danh sách nhiều đối tượng) hay không."""
+def is_table_question(question: str) -> bool:
+    """Kiểm tra câu hỏi có yêu cầu trả về bảng (dict {'columns': [...], 'rows': [...]}) hay không."""
     if not question:
         return False
+    q_low = unicodedata.normalize("NFC", question).lower()
+    q_no_acc = re.sub(r"[^a-z0-9\s%]", " ", _strip_accents(q_low))
+    q_no_acc = re.sub(r"\s+", " ", q_no_acc).strip()
+    return bool(
+        any(k in q_low for k in ("bảng", "lập bảng", "thống kê chi tiết từng", "mỗi người còn nợ", "số nợ của từng", "kèm số tiền còn nợ", "kèm số nợ từng người"))
+        or re.search(r"(?:top\s*\d+|li[eệ]t\s*k[eê]\s*\d+|\d+\s*kh[aá]ch).*(?:m[oỗ]i\s*ng[uư][oờ]i|t[uừ]ng\s*ng(?:[uư][oờ]i|uwowif)|k[eè]m\s*s[oố]\s*(?:ti[eề]n|n[oợ]))", q_low)
+        or re.search(r"(?:moi\s*nguoi\s*con\s*no|so\s*no\s*(?:cua\s*)?tung|tung\s*nguoi\s*con\s*no|kem\s*so\s*(?:tien\s*con\s*)?no|(?<!tra\s)\bbang\s+(?:hoa\s*hong|tien\s*hoa\s*hong|\d+\s*khach))", q_no_acc)
+    )
+
+
+def is_date_question(question: str) -> bool:
+    """Kiểm tra câu hỏi có yêu cầu trả về ngày ('YYYY-MM-DD') hoặc tháng ('YYYY-MM') hay không."""
+    if not question:
+        return False
+    q_low = unicodedata.normalize("NFC", question).lower()
+    return bool(
+        any(k in q_low for k in ("ngày nào", "ngay nao", "ngayf nào", "thời điểm nào", "tháng nào", "thang nao"))
+        or re.search(r"\b(?:ng[aà]yf?|th[aá]ng)\s+n(?:[aà]o|aof)\b", q_low)
+    )
+
+
+def is_numeric_list_question(question: str) -> bool:
+    """Kiểm tra câu hỏi có yêu cầu trả về danh sách các số nguyên [x1, x2, ...] (như quy đổi [chẵn, lẻ], doanh thu từng tháng/nhóm lần lượt, nợ thêm & trả được, 3 nhóm tuổi nợ) hay không."""
+    if not question or is_table_question(question):
+        return False
+    q_low = unicodedata.normalize("NFC", question).lower()
+    q_no_acc = re.sub(r"[^a-z0-9\s%]", " ", _strip_accents(q_low))
+    q_no_acc = re.sub(r"\s+", " ", q_no_acc).strip()
+    return bool(
+        re.search(r"\b(?:chan|nguyen)\b.*\ble\b", q_no_acc)
+        or re.search(r"\b(?:lan\s*luot|luwowtj|moi\s*loai\s*(?:la\s*)?(?:bao\s*nhieu|bnhiu|bao\s*nhiu|bn|nhieu)|moi\s*ben|moi\s*nhom|tu\s*thang\s*cu\s*den\s*thang\s*moi|ghi\s*(?:hai|2|ba|3)\s*so|tra\s*loi\s*(?:hai|2|ba|3)\s*so|theo\s*thu\s*tu\s*thoi\s*gian)\b", q_no_acc)
+        or re.search(r"\b(?:no\s*them|mua\s*chiu\s*them|chiuj\s*them)\b.*\b(?:tra\s*(?:bot\s*)?no|tra\s*(?:duoc|dc|dduwowcj))\b", q_no_acc)
+        or re.search(r"(?:doanh\s*thu|dthu)\s*cac\s*(?:don|ddown)\b.*?(?:doanh\s*thu|dthu|\bva)\s*cac\s*don\b", q_no_acc)
+        or re.search(r"tuoi\s*no.*0.*7.*8.*15", q_no_acc)
+    )
+
+
+def is_topk_list_question(question: str) -> bool:
+    """Kiểm tra câu hỏi có yêu cầu trả về danh sách Top-K (K >= 2 hoặc danh sách nhiều đối tượng) hay không."""
+    if not question or is_table_question(question) or is_numeric_list_question(question):
+        return False
     q_low = question.lower()
+    is_count_how_many = bool(re.search(
+        r"\b(?:c[oó]\s*(?:t[oổ]ng\s*c[oộ]ng\s*)?)?(?:m[aấ]y|maays|bao\s*nhi[eê]u|nhi[eê]u)\s+(?:m[aặ]t\s*h[aà]ng|s[aả]n\s*ph[aẩ]m|sp|kh[aá]ch(?:\s*h[aà]ng)?|m[oó]n)\b",
+        q_low,
+    ))
+    if is_count_how_many:
+        return False
     patterns = [
-        r"\btop\s*\d+\b",
-        r"(?<!/)(?<!\d)\b([1-9]|[1-4]\d|50)\s+(?:mặt\s*hàng|sản\s*phẩm|sp|khách(?:\s*hàng)?|món|hàng|khach)\b",
-        r"\bliệt\s*kê\s+([1-9]|[1-4]\d|50)\b",
+        r"\btop\s*(?:[2-9]|\d{2,})\b",
+        r"(?<!/)(?<!\d)\b([2-9]|[1-4]\d|50)\s+(?:mặt\s*hàng|mat\s*hang|sản\s*phẩm|san\s*pham|sp|khách(?:\s*hàng)?|món|mon|hàng|khach)\b",
+        r"\bliệt\s*kê\s+([2-9]|[1-4]\d|50)\b",
         r"\blist\s*\d+\b",
-        r"\bcho\s+(?:tôi|mình|em)?\s*([1-9]|[1-4]\d|50)\s+(?:mặt\s*hàng|sp|sản\s*phẩm|khách|hàng)\b",
+        r"\bcho\s+(?:tôi|mình|em)?\s*([2-9]|[1-4]\d|50)\s+(?:mặt\s*hàng|sp|sản\s*phẩm|khách|hàng)\b",
         r"\bnhững\s*(?:mặt\s*hàng|sản\s*phẩm|sp|khách)\s*nào\b",
         r"\bdanh\s*sách\s*(?:mặt\s*hàng|sản\s*phẩm|sp|khách)\b",
+        r"\bh[aà]ng\s+n[aà]o\s+h[eế]t\s+h[aạ]n\b",
     ]
     return any(re.search(p, q_low) for p in patterns)
 
@@ -464,9 +512,10 @@ def is_top1_string_question(question: str) -> bool:
     """Kiểm tra câu hỏi có yêu cầu trả về duy nhất 1 mặt hàng / đối tượng đứng đầu (Top-1 scalar string) hay không."""
     if not question:
         return False
-    if is_topk_list_question(question):
+    if is_table_question(question) or is_date_question(question) or is_numeric_list_question(question) or is_topk_list_question(question):
         return False
     q_low = question.lower().strip()
+    q_no_acc = _strip_accents(q_low)
     patterns = [
         r"\b(?:hàng|sp|sản\s*phẩm|mặt\s*hàng|món|hang|san\s*pham|mon)\s+n[aà]o[f]?\b",
         r"\b(?:hàng|hang)\s+n[aà]o[f]?\s+(?:chạy|chay)\b",
@@ -485,35 +534,43 @@ def is_top1_string_question(question: str) -> bool:
         r"\bl[aà]\s*(?:gì|chi|ai|gi)\s*[\?]?\s*$",
         r"\bl[aà]\s*(?:gì|chi|ai|gi)\s+(?:ạ|vậy|nhỉ|nhở|hả|ta|nhé|do|đó)\b",
     ]
-    return any(re.search(p, q_low) for p in patterns)
+    return any(re.search(p, q_low) for p in patterns) or bool(
+        re.search(r"\b(?:lon\s*nhat|nhieu\s*nhat|nhiu\s*nhat|chay\s*nhat|cao\s*nhat|thap\s*nhat|it\s*nhat)\b.*\bla\s*(?:gi|chi|ai)\b", q_no_acc)
+    )
 
 
 def get_return_format_instruction(question: str, for_retry: bool = False) -> str:
-    """Sinh chỉ dẫn định dạng trả về (Requirement 4) tương thích hoàn hảo với ý định câu hỏi."""
+    """Sinh chỉ dẫn định dạng trả về (Requirement 4) tương thích hoàn hảo với 7 kiểu đáp án."""
+    prefix = "- " if for_retry else "4. "
+    q_low = (question or "").lower()
+
     if is_boolean_question(question):
-        if for_retry:
-            return "- BẮT BUỘC trả về giá trị logic Boolean (True hoặc False). TUYỆT ĐỐI KHÔNG trả về số, chuỗi ký tự hay danh sách!"
-        return "4. BẮT BUỘC trả về giá trị logic Boolean (True hoặc False). TUYỆT ĐỐI KHÔNG trả về số, chuỗi ký tự hay danh sách!"
+        return f"{prefix}BẮT BUỘC trả về giá trị logic Boolean (True hoặc False). TUYỆT ĐỐI KHÔNG trả về số, chuỗi ký tự hay danh sách!"
+
+    if is_table_question(question):
+        if any(k in _strip_accents(q_low) for k in ("hoa hong", "tho")):
+            return f"{prefix}BẮT BUỘC trả về cấu trúc BẢNG dạng dict: {{'columns': ['ten_tho', 'tien_hoa_hong'], 'rows': [[str(ten), int(round(tien))], ...]}} sắp xếp giảm dần theo tiền hoa hồng!"
+        return f"{prefix}BẮT BUỘC trả về cấu trúc BẢNG dạng dict: {{'columns': ['khach_hang', 'so_tien_no'], 'rows': [[str(ten_khach), int(round(so_no))], ...]}} đúng số lượng K khách được hỏi, sắp xếp theo số tiền nợ giảm dần!"
+
+    if is_date_question(question):
+        if re.search(r"\bth[aá]ng\s+n(?:[aà]o|aof)\b|thang\s+nao", q_low):
+            return f"{prefix}BẮT BUỘC trả về chuỗi tháng định dạng ISO 'YYYY-MM' (ví dụ: '2025-07'). TUYỆT ĐỐI KHÔNG trả về số tiền, dict hay danh sách!"
+        return f"{prefix}BẮT BUỘC trả về chuỗi ngày định dạng ISO 'YYYY-MM-DD' (ví dụ: '2025-05-13'). TUYỆT ĐỐI KHÔNG trả về số tiền, dict hay danh sách!"
+
+    if is_numeric_list_question(question):
+        return f"{prefix}BẮT BUỘC trả về DANH SÁCH các số nguyên (list of ints: [int(round(val1)), int(round(val2)), ...]) theo đúng thứ tự các mục/tháng/nhóm được nêu trong câu hỏi. TUYỆT ĐỐI KHÔNG trả về một số đơn lẻ hay dictionary!"
 
     if is_topk_list_question(question):
-        if for_retry:
-            return "- BẮT BUỘC trả về DANH SÁCH các chuỗi tên (list of strings: ['Tên 1', 'Tên 2', ...]) đúng số lượng K được yêu cầu theo thứ tự từ cao xuống thấp. TUYỆT ĐỐI KHÔNG trả về một số, dict hay chuỗi đơn lẻ!"
-        return "4. BẮT BUỘC trả về DANH SÁCH các chuỗi tên (list of strings: ['Tên 1', 'Tên 2', ...]) đúng số lượng K được yêu cầu theo thứ tự từ cao xuống thấp. TUYỆT ĐỐI KHÔNG trả về một số hay một chuỗi đơn lẻ!"
+        return f"{prefix}BẮT BUỘC trả về DANH SÁCH các chuỗi tên (list of strings: ['Tên 1', 'Tên 2', ...]) đúng số lượng K được yêu cầu theo thứ tự từ cao xuống thấp. TUYỆT ĐỐI KHÔNG trả về một số, dict hay chuỗi đơn lẻ!"
 
     if is_top1_string_question(question):
-        if for_retry:
-            return "- BẮT BUỘC trả về một chuỗi ký tự đơn lẻ (scalar string: ví dụ 'Tên hàng' hoặc 'Tên NCC' hoặc 'Tên khách') là tên đối tượng đứng đầu. TUYỆT ĐỐI KHÔNG trả về dạng list hay dict hay số tiền!"
-        return "4. BẮT BUỘC trả về một chuỗi ký tự đơn lẻ (scalar string: ví dụ 'Tên hàng' hoặc 'Tên NCC' hoặc 'Tên khách') là tên đối tượng đứng đầu. TUYỆT ĐỐI KHÔNG trả về dạng list hay dict hay số tiền!"
+        return f"{prefix}BẮT BUỘC trả về một chuỗi ký tự đơn lẻ (scalar string: ví dụ 'Tên hàng' hoặc 'Tên NCC' hoặc 'Tên khách') là tên đối tượng đứng đầu. TUYỆT ĐỐI KHÔNG trả về dạng list hay dict hay số tiền!"
 
-    if re.search(r"(?<!\d)%|ph[ầa]n\s*tr(?:[ăa]m|awm)|\bt[ỉỷi]\s*l[ệe]\b|\bty\s*le\b|\bt[ỉỷi]\s*tr[ọo]ng\b|\bty\s*trong\b", question.lower()):
-        if for_retry:
-            return "- BẮT BUỘC trả về một số thực phần trăm trong thang 0-100 làm tròn 2 chữ số thập phân: float(round(val, 2)). TUYỆT ĐỐI KHÔNG ép kiểu số nguyên và KHÔNG kèm ký hiệu '%'!"
-        return "4. BẮT BUỘC trả về một số thực phần trăm trong thang 0-100 làm tròn 2 chữ số thập phân: float(round(val, 2)). TUYỆT ĐỐI KHÔNG ép kiểu số nguyên và KHÔNG kèm ký hiệu '%'!"
+    if re.search(r"(?<!\d)%|ph[ầa]n\s*tr(?:[ăa]m|awm)|\bt[ỉỷi]\s*l[ệe]\b|\bty\s*le\b|\bt[ỉỷi]\s*tr[ọo]ng\b|\bty\s*trong\b", q_low):
+        return f"{prefix}BẮT BUỘC trả về một số thực phần trăm trong thang 0-100 làm tròn 2 chữ số thập phân: float(round(val, 2)). TUYỆT ĐỐI KHÔNG ép kiểu số nguyên và KHÔNG kèm ký hiệu '%'!"
 
     # Mặc định: câu hỏi AOV, doanh thu, đơn giá, số lượng, số đơn
-    if for_retry:
-        return "- BẮT BUỘC trả về một số duy nhất (scalar number: int/float), làm tròn theo quy tắc làm tròn về đồng (int(round(...))). TUYỆT ĐỐI KHÔNG trả về dictionary hay list!"
-    return "4. BẮT BUỘC trả về một số duy nhất (scalar number: int/float), làm tròn theo quy tắc làm tròn về đồng (int(round(...))). TUYỆT ĐỐI KHÔNG trả về dictionary hay list!"
+    return f"{prefix}BẮT BUỘC trả về một số duy nhất (scalar number: int/float), làm tròn theo quy tắc làm tròn về đồng (int(round(...))). TUYỆT ĐỐI KHÔNG trả về dictionary hay list!"
 
 
 def build_dynamic_system_instruction(intent: str, question: str, shop_static_prefix: str = "") -> str:
@@ -650,9 +707,21 @@ NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN:
             "Dùng `apply_tie_breaker(records, sort_key, code_key, name_key)` hoặc `df.sort_values(by=[tieu_chi, ma_hoac_ten], ascending=[False, True])`."
         )
 
-    if is_boolean_question(question):
+    if is_table_question(question):
+        conditional_rules.append(
+            "- [Định dạng trả về Bảng (Table)]: BẮT BUỘC trả về dict `{'columns': ['khach_hang', 'so_tien_no'], 'rows': [['Tên khách 1', int_no_1], ...]}` (hoặc cột tương ứng nếu là bảng hoa hồng thợ), sắp xếp giảm dần theo số tiền, đồng hạng theo tên tăng dần."
+        )
+    elif is_boolean_question(question):
         conditional_rules.append(
             "- [Câu hỏi xu hướng / Đúng Sai (Boolean)]: BẮT BUỘC trả về duy nhất giá trị Boolean `True` hoặc `False` (ví dụ `return bool(r_thang7 < r_thang8 < r_thang9)`). TUYỆT ĐỐI KHÔNG trả về số, chuỗi hay dict!"
+        )
+    elif is_date_question(question):
+        conditional_rules.append(
+            "- [Định dạng trả về Ngày / Tháng (Date)]: BẮT BUỘC trả về chuỗi `'YYYY-MM-DD'` (hoặc `'YYYY-MM'` nếu hỏi tháng nào). TUYỆT ĐỐI KHÔNG trả về số tiền hay `pd.Timestamp`!"
+        )
+    elif is_numeric_list_question(question):
+        conditional_rules.append(
+            "- [Định dạng trả về Danh sách số (Numeric List)]: Khi hỏi số liệu các kỳ/nhóm `lần lượt`, hoặc `[nợ thêm, trả được]`, hoặc 3 nhóm tuổi nợ `0-7, 8-15, trên 15 ngày`, BẮT BUỘC trả về `list` các số nguyên `[int_1, int_2, ...]` theo đúng thứ tự nêu trong câu hỏi!"
         )
     elif is_topk_list_question(question):
         conditional_rules.append(
@@ -740,10 +809,15 @@ NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN:
             "- [Luật Cửa hàng Mẹ & Bé (Điều 6.3)]: Khi lọc theo số sữa hoặc size tã, BẮT BUỘC chỉ lấy từ cột `Số / Size` trong bảng Danh mục sản phẩm (bỏ qua nếu ô trống, TUYỆT ĐỐI CẤM đoán số từ tên sản phẩm!)."
         )
 
-    if any(k in q_low for k in ["hàng ế", "hang e", "không bán được", "khong ban duoc", "tăng giá", "tang gia"]):
+    if any(k in q_low for k in ["hàng ế", "hang e", "không bán được", "khong ban duoc", "tăng giá", "tang gia", "ngay trước ngày đó"]):
         conditional_rules.append(
             "- [Hàng ế & Đợt tăng giá (Điều 5)]: `'Hàng ế'` là mặt hàng đã từng bán trước kỳ nhưng có 0 đơn hợp lệ trong kỳ. "
-            "`'Ảnh hưởng của đợt tăng giá'` tính từ ngày đầu tiên `D` có giá bán cao hơn giá liền trước: so sánh `N` ngày từ `D` (gồm cả `D`) với `N` ngày liền trước `D`."
+            "`'Ảnh hưởng của đợt tăng giá'` (so sánh N ngày kể từ ngày tăng giá D với N ngày ngay trước D): lọc mặt hàng, bỏ đơn hủy/trả, tính tổng số lượng (ưu tiên cột `'Số lượng quy đổi'` nếu có, nếu không dùng `'Số lượng'`) trong kỳ sau `[START_DATE..END_DATE]` (`qty_after`) và kỳ trước `[COMP_START_DATE..COMP_END_DATE]` (`qty_before`), rồi trả về `round(float(((qty_after - qty_before) / qty_before) * 100.0), 2)`."
+        )
+
+    if any(k in q_low for k in ["tỉ trọng", "ti trong", "tỷ trọng", "ty trong", "chiếm bao nhiêu %", "chiem bao nhieu %", "chiếm mấy %"]):
+        conditional_rules.append(
+            "- [Tỉ trọng doanh thu nhóm hàng / mặt hàng / kênh]: Gọi `rev_sub = revenue(data, start_date=START_DATE, end_date=END_DATE, product='tên nhóm/mặt hàng bỏ chữ nhóm/loại')` và `rev_total = revenue(data, start_date=START_DATE, end_date=END_DATE)`, trả về `round(float(rev_sub / rev_total * 100.0), 2)`."
         )
 
     if intent in ("rate_percentage", "time_series") or any(k in q_low for k in ["%", "phần trăm", "tỉ lệ", "tỷ lệ", "so với", "tăng trưởng"]):
@@ -1572,13 +1646,14 @@ def solution(data):
     return int(round(aov))
 ```""",
 
-    "rate_percentage": """--- VÍ DỤ MINH HỌA: TÍNH TỈ LỆ PHẦN TRĂM (%) ---
+    "rate_percentage": """--- VÍ DỤ MINH HỌA: TÍNH TỈ LỆ HỦY ĐƠN (%) ---
 Câu hỏi: "Tháng 6/2026 tỉ lệ hủy đơn là bao nhiêu phần trăm?" (as_of_date = "2026-06-30")
 ```python
 def solution(data):
     df_ord = None
     date_col = None
     status_col = None
+    order_col = None
     for name, df in data.items():
         cols = df.columns.tolist()
         d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'ngaylap', 'thời gian'])), None)
@@ -1587,6 +1662,7 @@ def solution(data):
             df_ord = df.copy()
             date_col = d_c
             status_col = s_c
+            order_col = next((c for c in cols if any(k in str(c).lower() for k in ['mã đơn', 'số hđ', 'so hd', 'order id', 'mã giao dịch', 'mã phiếu', 'số phiếu'])), None)
             break
 
     if df_ord is None:
@@ -1595,13 +1671,113 @@ def solution(data):
     df_ord['clean_date'] = clean_date(df_ord[date_col])
     mask = (df_ord['clean_date'] >= pd.Timestamp("2026-06-01")) & (df_ord['clean_date'] <= pd.Timestamp("2026-06-30 23:59:59"))
     df_period = df_ord[mask]
-    total_orders = len(df_period)
-    if total_orders == 0:
+    if df_period.empty:
         return 0.0
 
-    cancelled_count = len(df_period[df_period[status_col].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|cancel')])
+    cancel_mask = df_period[status_col].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|cancel', na=False)
+    if order_col:
+        total_orders = df_period[order_col].dropna().nunique()
+        cancelled_count = df_period[cancel_mask][order_col].dropna().nunique()
+    else:
+        total_orders = len(df_period)
+        cancelled_count = int(cancel_mask.sum())
+
+    if total_orders == 0:
+        return 0.0
     rate = (cancelled_count / total_orders) * 100.0
     return round(float(rate), 2)
+```""",
+
+    "category_share_percentage": """--- VÍ DỤ MINH HỌA: TỈ TRỌNG DOANH THU NHÓM HÀNG / MẶT HÀNG (%) ---
+Câu hỏi: "Tỉ trọng của nhóm cát đá trong doanh thu tháng 8/2026 là bao nhiêu %?" (as_of_date = "2026-09-04")
+```python
+def solution(data):
+    # Dùng hàm chuẩn revenue() đã tự động xử lý chiết khấu dòng, loại đơn hủy/trả và khớp theo Tên hàng / Nhóm hàng
+    rev_group = revenue(data, start_date="2026-08-01", end_date="2026-08-31", product="Cát đá")
+    rev_total = revenue(data, start_date="2026-08-01", end_date="2026-08-31")
+    if rev_total == 0:
+        return 0.0
+    return round(float(rev_group / rev_total * 100.0), 2)
+```""",
+
+    "price_increase_impact": """--- VÍ DỤ MINH HỌA: SO SÁNH SỐ LƯỢNG BÁN TRƯỚC VÀ SAU ĐỢT TĂNG GIÁ (%) ---
+Câu hỏi: "So số ly Cà phê muối bán ra trong 30 ngày kể từ ngày 2026-04-09, ngày tăng giá Cà phê muối, với 30 ngày ngay trước ngày đó: tăng hay giảm bao nhiêu %?" (as_of_date = "2026-06-27")
+```python
+def solution(data):
+    dfs = [df for n, df in data.items() if any(k in str(n).lower() for k in ['banhang', 'donhang', 'hoadon', 'chitiet', 'ban_hang', 'don_hang'])]
+    df_sales = pd.concat(dfs, ignore_index=True) if dfs else list(data.values())[0].copy()
+    df_sales = filter_valid_sales(df_sales)
+
+    cols = df_sales.columns.tolist()
+    d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)
+    p_c = next((c for c in cols if any(k in str(c).lower() for k in ['tên hàng', 'mặt hàng', 'sản phẩm', 'tên món', 'tên thuốc'])), None)
+    q_c = next((c for c in cols if 'quy đổi' in str(c).lower()), None) or next((c for c in cols if any(k in str(c).lower() for k in ['số lượng', 'sl', 'qty'])), None)
+
+    df_sales['clean_date'] = clean_date(df_sales[d_c])
+    df_sales['clean_qty'] = clean_num(df_sales[q_c])
+    df_prod = df_sales[df_sales[p_c].astype(str).str.contains('Cà phê muối', case=False, na=False)]
+
+    # 30 ngày kể từ 2026-04-09: 2026-04-09 đến 2026-05-08; 30 ngày ngay trước: 2026-03-10 đến 2026-04-08
+    m_after = (df_prod['clean_date'] >= pd.Timestamp("2026-04-09")) & (df_prod['clean_date'] <= pd.Timestamp("2026-05-08 23:59:59"))
+    m_before = (df_prod['clean_date'] >= pd.Timestamp("2026-03-10")) & (df_prod['clean_date'] <= pd.Timestamp("2026-04-08 23:59:59"))
+
+    qty_after = df_prod[m_after]['clean_qty'].sum()
+    qty_before = df_prod[m_before]['clean_qty'].sum()
+    if qty_before == 0:
+        return 0.0
+    return round(float(((qty_after - qty_before) / qty_before) * 100.0), 2)
+```""",
+
+    "table_debt": """--- VÍ DỤ MINH HỌA: TRẢ VỀ BẢNG TOP KHÁCH HÀNG CÒN NỢ (TABLE DICT) ---
+Câu hỏi: "Cho danh sách 3 khách hàng đang nợ nhiều nhất kèm số tiền còn nợ hiện tại?" (as_of_date = "2026-06-30")
+```python
+def solution(data):
+    df_no = None
+    for name, df in data.items():
+        if any(k in str(name).lower() for k in ['no', 'congno', 'cong_no', 'khachno']):
+            df_no = df.copy()
+            break
+    if df_no is None:
+        raise DataNotFoundError("Không tìm thấy bảng công nợ", table_name="công nợ", available_tables=list(data.keys()))
+
+    cols = df_no.columns.tolist()
+    c_cust = next((c for c in cols if any(k in str(c).lower() for k in ['khách', 'người nợ', 'tên kh'])), None)
+    c_remain = next((c for c in cols if any(k in str(c).lower() for k in ['còn nợ', 'dư nợ', 'con no', 'phải thu'])), None)
+    c_borrow = next((c for c in cols if any(k in str(c).lower() for k in ['tiền nợ', 'nợ gốc', 'phát sinh', 'mua nợ'])), None)
+    c_paid = next((c for c in cols if any(k in str(c).lower() for k in ['đã trả', 'thanh toán', 'trả nợ'])), None)
+
+    if c_remain:
+        df_no['debt_val'] = clean_num(df_no[c_remain])
+    else:
+        df_no['debt_val'] = clean_num(df_no[c_borrow]) - (clean_num(df_no[c_paid]) if c_paid else 0)
+
+    grouped = df_no.groupby(c_cust, as_index=False)['debt_val'].sum()
+    grouped = grouped[grouped['debt_val'] > 0]
+    grouped = grouped.sort_values(by=['debt_val', c_cust], ascending=[False, True]).head(3)
+    rows = [[str(r[c_cust]).strip(), int(round(r['debt_val']))] for _, r in grouped.iterrows()]
+    return {'columns': ['khach_hang', 'so_tien_no'], 'rows': rows}
+```""",
+
+    "date_peak_revenue": """--- VÍ DỤ MINH HỌA: TÌM NGÀY CÓ DOANH THU CAO NHẤT ('YYYY-MM-DD') ---
+Câu hỏi: "Trong tháng 8/2025, ngày nào cửa hàng có doanh thu cao nhất?" (as_of_date = "2026-06-30")
+```python
+def solution(data):
+    dfs = [df for n, df in data.items() if any(k in str(n).lower() for k in ['banhang', 'donhang', 'hoadon', 'ban_hang', 'don_hang']) and 'chitiet' not in str(n).lower()]
+    df_sales = pd.concat(dfs, ignore_index=True) if dfs else list(data.values())[0].copy()
+    df_sales = filter_valid_sales(df_sales)
+
+    cols = df_sales.columns.tolist()
+    d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)
+    a_c = next((c for c in cols if any(k in str(c).lower() for k in ['tổng tiền hàng', 'thành tiền', 'trị giá', 'doanh thu', 'tổng tiền']) and 'thuế' not in str(c).lower()), None)
+
+    df_sales['clean_date'] = clean_date(df_sales[d_c])
+    df_sales['clean_amt'] = clean_num(df_sales[a_c])
+    mask = (df_sales['clean_date'] >= pd.Timestamp("2025-08-01")) & (df_sales['clean_date'] <= pd.Timestamp("2025-08-31 23:59:59"))
+    df_m = df_sales[mask].copy()
+    df_m['day_str'] = df_m['clean_date'].dt.strftime('%Y-%m-%d')
+    daily = df_m.groupby('day_str', as_index=False)['clean_amt'].sum()
+    daily = daily.sort_values(by=['clean_amt', 'day_str'], ascending=[False, True])
+    return str(daily.iloc[0]['day_str'])
 ```""",
 
     "inventory_unit_conversion": """--- VÍ DỤ MINH HỌA: TỒN KHO & QUY ĐỔI ĐƠN VỊ (HỘP VÀ VIÊN LẺ) ---
@@ -1728,15 +1904,23 @@ def retrieve_dynamic_few_shot(question: str, intent: str, entity_matches: Option
     """Truy hồi ví dụ minh họa tối ưu nhất cho câu hỏi."""
     q_low = question.lower()
 
-    if is_boolean_question(question):
+    if is_table_question(question):
+        example = EXEMPLAR_BANK.get("table_debt")
+    elif is_boolean_question(question):
         example = EXEMPLAR_BANK.get("boolean_trend")
+    elif is_date_question(question):
+        example = EXEMPLAR_BANK.get("date_peak_revenue")
+    elif any(k in q_low for k in ["ngày tăng giá", "đợt tăng giá", "ngay trước ngày đó"]):
+        example = EXEMPLAR_BANK.get("price_increase_impact")
+    elif any(k in q_low for k in ["tỉ trọng", "ti trong", "tỷ trọng", "ty trong", "chiếm bao nhiêu %", "chiem bao nhieu %", "chiếm mấy %"]):
+        example = EXEMPLAR_BANK.get("category_share_percentage")
     elif any(k in q_low for k in ["khách", "khach"]) and any(k in q_low for k in ["chi tiêu", "chi tieu", "mua nhiều", "nhiều nhất", "top", "cao nhất", "tiêu nhiều", "nhiều tiền"]):
         example = EXEMPLAR_BANK.get("ranking_customer")
     elif intent == "average_order_value" or re.search(r"(?:gi[aá]s?\s*tr[iị]\s*)?trung\s*b[iì]nh\s*(?:m[oộ]t|1)\s*đ[oơ]n|tb\s*(?:m[oộ]t|1)\s*đ[oơ]n|\baov\b", q_low):
         example = EXEMPLAR_BANK.get("average_order_value")
     elif any(k in q_low for k in ["hộp chẵn", "viên lẻ", "thùng và chai", "tồn kho"]):
         example = EXEMPLAR_BANK.get("inventory_unit_conversion")
-    elif any(k in q_low for k in ["tăng liên tục", "so với", "thay đổi bao nhiêu", "tăng trưởng"]):
+    elif any(k in q_low for k in ["tăng liên tục", "so với", "cùng kỳ", "cung ky", "thay đổi bao nhiêu", "tăng trưởng", "hơn hay kém", "hon hay kem"]):
         example = EXEMPLAR_BANK.get("time_series")
     elif any(k in q_low for k in ["bán chạy", "nhiều nhất", "top", "cao nhất", "ít nhất", "thấp nhất"]):
         example = EXEMPLAR_BANK.get("ranking_topk")
@@ -2013,6 +2197,13 @@ __all__ = [
     "get_tet_dates_from_calendar",
     "extract_relevant_rulebook_clauses",
     "retrieve_dynamic_few_shot",
+    "is_boolean_question",
+    "is_table_question",
+    "is_date_question",
+    "is_numeric_list_question",
+    "is_topk_list_question",
+    "is_top1_string_question",
+    "get_return_format_instruction",
     "EXEMPLAR_BANK",
     "FEW_SHOT_LIBRARY",
     "select_few_shots",

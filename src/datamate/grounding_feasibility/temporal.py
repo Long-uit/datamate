@@ -13,7 +13,10 @@ Module hợp nhất duy nhất (Single Source of Truth) chịu trách nhiệm:
 from __future__ import annotations
 
 import calendar as pycalendar
-import csv
+try:
+    import csv
+except ImportError:
+    csv = None
 from datetime import date, datetime, timedelta
 import logging
 from pathlib import Path
@@ -89,12 +92,20 @@ class LunarCalendar:
             except Exception:
                 pass
 
-        # Fallback dùng csv stdlib nếu không có pandas
+        # Fallback dùng csv stdlib hoặc pure-Python nếu không có pandas/_csv
         rows = []
         with open(path, "r", encoding="utf-8", errors="replace") as f:
-            reader = csv.DictReader(f)
-            for r in reader:
-                rows.append(r)
+            if csv is not None:
+                reader = csv.DictReader(f)
+                for r in reader:
+                    rows.append(r)
+            else:
+                lines = [ln.strip() for ln in f if ln.strip()]
+                if lines:
+                    headers = [h.strip() for h in lines[0].split(",")]
+                    for ln in lines[1:]:
+                        vals = [v.strip() for v in ln.split(",")]
+                        rows.append(dict(zip(headers, vals)))
         return cls(rows, source_path=path)
 
     def get_solar_date(self, lunar_year: int, lunar_month: int, lunar_day: int) -> Optional[str]:

@@ -1112,6 +1112,17 @@ def _patch_pandas_str_contains():
                             fallback_res_ci = orig_contains(s_unaccent.str, pat_unaccent, case=False, flags=flags, na=na, regex=regex)
                             if bool((fallback_res_ci == True).any()):
                                 return fallback_res_ci
+                        # Nếu pat có tiền tố chung như 'nhóm ', 'loại ', 'mặt hàng ', 'sản phẩm ', thử bỏ tiền tố
+                        pat_stripped = re.sub(
+                            r"^(?:nhom\s*hang|loai\s*hang|nhom|loai|mat\s*hang|san\s*pham)\s+",
+                            "",
+                            pat_unaccent.strip(),
+                            flags=re.IGNORECASE,
+                        ).strip()
+                        if pat_stripped and pat_stripped != pat_unaccent.strip():
+                            fallback_stripped = orig_contains(s_unaccent.str, pat_stripped, case=False, flags=flags, na=na, regex=regex)
+                            if bool((fallback_stripped == True).any()):
+                                return fallback_stripped
             except Exception:
                 pass
             return res
@@ -1295,7 +1306,11 @@ def revenue(
             (c for c in cols if any(k in _norm(c) for k in ["nhom hang", "loai hang", "danh muc", "nhom sp", "category"])),
             None,
         )
-        p_clean = _norm(product)
+        p_clean = re.sub(
+            r"^(?:nhom\s*hang|loai\s*hang|nhom|loai|mat\s*hang|san\s*pham)\s+",
+            "",
+            _norm(product),
+        ).strip() or _norm(product)
         masks = []
         if prod_col:
             p_norm_series = df[prod_col].astype(str).apply(_norm)

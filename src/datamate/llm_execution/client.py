@@ -300,6 +300,10 @@ class LLMClient:
 
         if model_id is None:
             model_id = os.environ.get("DATAMATE_MODEL_ID") or os.environ.get("MODEL_ID") or cfg_model_id or "Qwen/Qwen2.5-Coder-7B-Instruct"
+        # Trong môi trường Docker Offline, nếu trọng số đã được bake tại /app/weights/model hoặc DATAMATE_MODEL_ID trỏ tới thư mục có thực
+        env_model_path = os.environ.get("DATAMATE_MODEL_ID") or "/app/weights/model"
+        if not os.path.isdir(str(model_id)) and os.path.isdir(env_model_path) and os.path.exists(os.path.join(env_model_path, "config.json")):
+            model_id = env_model_path
         self.model_id = model_id
         self.backend = (backend or os.environ.get("DATAMATE_BACKEND") or cfg_backend or "transformers").lower()
         self.model = None

@@ -32,8 +32,9 @@ else:
     BusinessData = Any
 from datamate.types import Candidate, EntityMatch
 
-# Từ điển viết tắt / teencode tiếng Việt phổ biến trong bán lẻ
+# Từ điển viết tắt / teencode / lỗi gõ Telex tiếng Việt phổ biến trong bán lẻ
 VIETNAMESE_ABBREVIATIONS: dict[str, str] = {
+    # 1. Viết tắt nghiệp vụ bán lẻ & giao tiếp
     "cf": "cà phê",
     "cafe": "cà phê",
     "sp": "sản phẩm",
@@ -60,23 +61,200 @@ VIETNAMESE_ABBREVIATIONS: dict[str, str] = {
     "k": "không",
     "nv": "nhân viên",
     "ncc": "nhà cung cấp",
+    "cty": "công ty",
     "hd": "hóa đơn",
     "hđ": "hóa đơn",
     "ct": "chi tiết",
     "ck": "chiết khấu",
     "km": "khuyến mãi",
     "tt": "thành tiền",
-    "nowj": "nợ",
+    "vs": "với",
+    "z": "vậy",
+    "j": "gì",
+    # 2. Lỗi kẹt bộ gõ Telex phổ biến trong tập dữ liệu
+    "thangs": "tháng",
+    "nawm": "năm",
+    "ngayf": "ngày",
+    "hoom": "hôm",
+    "quys": "quý",
+    "sangs": "sáng",
+    "chieeuf": "chiều",
+    "toois": "tối",
+    "tuafn": "tuần",
+    "tuaanf": "tuần",
+    "truwowcs": "trước",
+    "nayf": "này",
+    "ddos": "đó",
+    "cuoois": "cuối",
+    "ddaauf": "đầu",
+    "tieenf": "tiền",
+    "hangf": "hàng",
     "cuwar": "cửa",
     "cuwa": "cửa",
     "cuar": "của",
     "nhaf": "nhà",
     "vaayj": "vậy",
     "đươc": "được",
+    "dduwowcj": "được",
+    "dduowcj": "được",
+    "đuowc": "được",
+    "đươcj": "được",
     "giumf": "giùm",
-    "tieenf": "tiền",
-    "hangf": "hàng",
+    "giups": "giúp",
+    "nowj": "nợ",
+    "laf": "là",
+    "soos": "số",
+    "ddown": "đơn",
+    "nhieeu": "nhiều",
+    "nhieeuf": "nhiều",
+    "nhiêuf": "nhiều",
+    "toongr": "tổng",
+    "bans": "bán",
+    "tooi": "tôi",
+    "nhoms": "nhóm",
+    "naof": "nào",
+    "nàoo": "nào",
+    "bieets": "biết",
+    "nhaats": "nhất",
+    "heets": "hết",
+    "gias": "giá",
+    "leen": "lên",
+    "khachs": "khách",
+    "tir": "tỉ",
+    "tyr": "tỷ",
+    "bij": "bị",
+    "maays": "mấy",
+    "cos": "có",
+    "trawm": "trăm",
+    "mawtj": "mặt",
+    "coongj": "cộng",
+    "hown": "hơn",
+    "ees": "ế",
+    "vaof": "vào",
+    "hoir": "hỏi",
+    "mooix": "mỗi",
+    "nhaapj": "nhập",
+    "veef": "về",
+    "binhf": "bình",
+    "quaan": "quân",
+    "leej": "lệ",
+    "vowis": "với",
+    "huyr": "hủy",
+    "khoong": "không",
+    "bawngf": "bằng",
+    "ddax": "đã",
+    "nhir": "nhỉ",
+    "gaanf": "gần",
+    "ddieenj": "điện",
+    "thoaij": "thoại",
+    "tawng/giamr": "tăng/giảm",
+    "tawng": "tăng",
+    "giamr": "giảm",
+    "cungf": "cùng",
+    "vaf": "và",
+    "luwowtj": "lượt",
+    "tuwf": "từ",
+    "trowr": "trở",
+    "xuaats": "xuất",
+    "its": "ít",
+    "thuoocs": "thuốc",
+    "thuoocj": "thuộc",
+    "trar": "trả",
+    "nguwowif": "người",
+    "ddeems": "đếm",
+    "mootj": "một",
+    "treen": "trên",
+    "toonf": "tồn",
+    "phaanf": "phần",
+    "tinhs": "tính",
+    "laij": "lại",
+    "ddoof": "đồ",
+    "chieems": "chiếm",
+    "ddeens": "đến",
+    "tieeu": "tiêu",
+    "conf": "còn",
+    "bowts": "bớt",
+    "thais": "thái",
+    "ddooir": "đổi",
+    "chiuj": "chịu",
+    "rooif": "rồi",
+    "laix": "lãi",
+    "chayj": "chạy",
+    "loaij": "loại",
+    "suwar": "sửa",
 }
+
+# Các từ tiếng Anh / thương hiệu không được giải mã Telex tự động
+_NON_TELEX_BRAND_WORDS: set[str] = {
+    "top", "size", "bill", "pos", "kg", "ml", "gb", "id", "ok", "vat", "vip", "online", "app", "ship", "min", "max",
+    "gas", "tiger", "fugacar", "namilux", "petrolimex", "salonpas", "plus", "plusssz", "dulux", "acyclovir", "upsa-c",
+    "power-s", "order", "weber", "weber.tai", "fix", "for", "costar", "v.rohto", "rohto", "brew", "inox", "kudos",
+    "clear", "strepsils", "cool", "kids", "powerflexx", "insee", "doppelherz", "cheese", "voucher", "thanks", "knorr",
+    "pudding", "seller", "blackmores", "vihawa", "d-nee", "air", "moony", "hippis", "huggies",
+}
+
+_TONE_TABLE: dict[str, dict[str, str]] = {
+    "a": {"s": "á", "f": "à", "r": "ả", "x": "ã", "j": "ạ"},
+    "ă": {"s": "ắ", "f": "ằ", "r": "ẳ", "x": "ẵ", "j": "ặ"},
+    "â": {"s": "ấ", "f": "ầ", "r": "ẩ", "x": "ẫ", "j": "ậ"},
+    "e": {"s": "é", "f": "è", "r": "ẻ", "x": "ẽ", "j": "ẹ"},
+    "ê": {"s": "ế", "f": "ề", "r": "ể", "x": "ễ", "j": "ệ"},
+    "i": {"s": "í", "f": "ì", "r": "ỉ", "x": "ĩ", "j": "ị"},
+    "o": {"s": "ó", "f": "ò", "r": "ỏ", "x": "õ", "j": "ọ"},
+    "ô": {"s": "ố", "f": "ồ", "r": "ổ", "x": "ỗ", "j": "ộ"},
+    "ơ": {"s": "ớ", "f": "ờ", "r": "ở", "x": "ỡ", "j": "ợ"},
+    "u": {"s": "ú", "f": "ù", "r": "ủ", "x": "ũ", "j": "ụ"},
+    "ư": {"s": "ứ", "f": "ừ", "r": "ử", "x": "ữ", "j": "ự"},
+    "y": {"s": "ý", "f": "ỳ", "r": "ỷ", "x": "ỹ", "j": "ỵ"},
+}
+
+
+def decode_telex_token(word: str) -> str:
+    """
+    Giải mã tự động một từ tiếng Việt bị lỗi bộ gõ Telex (ví dụ: 'thangs' -> 'tháng', 'dduwowcj' -> 'được').
+    Chỉ kích hoạt khi từ có dấu hiệu Telex rõ ràng (dd, aa, ee, oo, aw, ow, uw hoặc kết thúc bằng phụ âm + phím dấu)
+    và không nằm trong danh sách từ tiếng Anh / thương hiệu.
+    """
+    w = word.lower()
+    if len(w) < 2 or len(w) > 10 or w in _NON_TELEX_BRAND_WORDS:
+        return word
+    if not re.match(r"^[a-z]+$", w):
+        return word
+    has_telex_vowel_or_d = bool(re.search(r"(?:dd|aa|ee|oo|aw|ow|uw)", w))
+    if not has_telex_vowel_or_d:
+        return word
+
+    tone = None
+    if w[-1] in ("s", "f", "r", "x", "j") and len(w) >= 3:
+        tone = w[-1]
+        w = w[:-1]
+
+    if w.startswith("dd"):
+        w = "đ" + w[2:]
+    w = w.replace("uow", "ươ").replace("uwow", "ươ")
+    w = w.replace("aa", "â").replace("ee", "ê").replace("oo", "ô")
+    w = w.replace("aw", "ă").replace("ow", "ơ").replace("uw", "ư")
+
+    if tone:
+        # Ưu tiên đặt dấu thanh lên nguyên âm có mũ/móc (ă, â, ê, ô, ơ, ư), nếu có 'ươ' thì đặt lên 'ơ'
+        placed = False
+        if "ươ" in w:
+            w = w.replace("ươ", "ư" + _TONE_TABLE["ơ"][tone], 1)
+            placed = True
+        if not placed:
+            for idx in range(len(w) - 1, -1, -1):
+                if w[idx] in ("ă", "â", "ê", "ô", "ơ", "ư"):
+                    w = w[:idx] + _TONE_TABLE[w[idx]][tone] + w[idx + 1 :]
+                    placed = True
+                    break
+        if not placed:
+            # Nếu nguyên âm mở ở cuối hoặc có phụ âm cuối, tìm nguyên âm chính
+            for idx in range(len(w) - 1, -1, -1):
+                if w[idx] in _TONE_TABLE:
+                    # Trường hợp oa, oe, uy hoặc nguyên âm đôi có phụ âm cuối
+                    w = w[:idx] + _TONE_TABLE[w[idx]][tone] + w[idx + 1 :]
+                    break
+    return w
 
 # Các từ dừng / thuật ngữ kinh doanh chung tuyệt đối không được gán nhầm là tên thực thể (khách/món/NCC)
 BUSINESS_ENTITY_STOPWORDS: set[str] = {
@@ -166,10 +344,72 @@ def normalize_entity_text(text: str, strip_accents: bool = False) -> str:
     return text
 
 
+def _expand_single_token(t: str, next_token: Optional[str] = None) -> tuple[str, Optional[str]]:
+    """Giải mã một token đơn lẻ (giữ nguyên dấu câu đầu/cuối), trả về (token_mới, dạng_chuẩn_nếu_đổi)."""
+    m_punct = re.match(r"^([.,!?:;\"'()\[\]{}]*)(.*?)([.,!?:;\"'()\[\]{}]*)$", t)
+    if not m_punct:
+        return t, None
+    prefix, core, suffix = m_punct.group(1), m_punct.group(2), m_punct.group(3)
+    if not core:
+        return t, None
+
+    clean_t = core.lower()
+
+    # 1. Tra cứu trực tiếp trong từ điển VIETNAMESE_ABBREVIATIONS
+    if clean_t in VIETNAMESE_ABBREVIATIONS:
+        full_w = VIETNAMESE_ABBREVIATIONS[clean_t]
+        return f"{prefix}{full_w}{suffix}", full_w
+
+    # 2. Xử lý 'th' đứng trước số tháng (1..12 hoặc M/YYYY) hoặc 'này'/'trước', ví dụ 'th 5/2025', 'th 06'
+    if clean_t == "th" and next_token:
+        next_clean = next_token.lower().strip(".,!?:;\"'()[]{}")
+        if re.match(r"^(?:0?[1-9]|1[0-2])(?:/\d{2,4})?$", next_clean) or next_clean in ("này", "nay", "nayf", "trước", "trc", "truwowcs"):
+            return f"{prefix}tháng{suffix}", "tháng"
+
+    # 3. Xử lý viết liền 'th5/2025', 'thg5/2025', 'th08/2025'
+    m_th_num = re.match(r"^(?:thg|th)(0?[1-9]|1[0-2])(/\d{2,4})?$", clean_t)
+    if m_th_num:
+        full_w = f"tháng {m_th_num.group(1)}{m_th_num.group(2) or ''}"
+        return f"{prefix}{full_w}{suffix}", full_w
+
+    # 4. Xử lý từ ghép ngăn cách bằng dấu '/' (ví dụ 'tawng/giamr')
+    if "/" in clean_t and not any(ch.isdigit() for ch in clean_t):
+        parts = core.split("/")
+        new_parts = []
+        changed = False
+        for p in parts:
+            pl = p.lower()
+            if pl in VIETNAMESE_ABBREVIATIONS:
+                new_parts.append(VIETNAMESE_ABBREVIATIONS[pl])
+                changed = True
+            else:
+                dec = decode_telex_token(pl)
+                if dec != pl:
+                    new_parts.append(dec)
+                    changed = True
+                else:
+                    new_parts.append(p)
+        if changed:
+            full_w = "/".join(new_parts)
+            return f"{prefix}{full_w}{suffix}", full_w
+
+    # 5. Giải mã Telex tự động theo quy tắc âm vị nếu có tổ hợp Telex rõ ràng
+    decoded = decode_telex_token(clean_t)
+    if decoded != clean_t:
+        return f"{prefix}{decoded}{suffix}", decoded
+
+    return t, None
+
+
 def expand_abbreviations(text: str) -> str:
-    """Mở rộng các từ viết tắt / teencode trong câu."""
+    """Mở rộng các từ viết tắt / teencode / lỗi gõ Telex trong câu (giữ nguyên dấu câu)."""
     tokens = text.split()
-    expanded = [VIETNAMESE_ABBREVIATIONS.get(t.lower().strip(".,!?:;\"'()[]{}"), t) for t in tokens]
+    expanded = []
+    n = len(tokens)
+    for i, t in enumerate(tokens):
+        nxt = tokens[i + 1] if i + 1 < n else None
+        new_t, _ = _expand_single_token(t, next_token=nxt)
+        expanded.append(new_t)
     return " ".join(expanded)
 
 
@@ -181,14 +421,13 @@ def explain_and_expand_abbreviations(text: str) -> tuple[str, dict[str, str]]:
     tokens = text.split()
     replaced = {}
     expanded = []
-    for t in tokens:
-        clean_t = t.lower().strip(".,!?:;\"'()[]{}")
-        if clean_t in VIETNAMESE_ABBREVIATIONS:
-            full_word = VIETNAMESE_ABBREVIATIONS[clean_t]
+    n = len(tokens)
+    for i, t in enumerate(tokens):
+        nxt = tokens[i + 1] if i + 1 < n else None
+        new_t, full_word = _expand_single_token(t, next_token=nxt)
+        if full_word is not None:
             replaced[t] = full_word
-            expanded.append(full_word)
-        else:
-            expanded.append(t)
+        expanded.append(new_t)
     return " ".join(expanded), replaced
 
 

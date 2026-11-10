@@ -438,7 +438,7 @@ def main():
             sys_prompt, user_prompt = build_prompt(
                 schema_str=pruned_schema,
                 as_of_date=as_of_date,
-                question=question_text,
+                question=normalized_q,
                 rulebook_content=rulebook_content,
                 business_note=biz_readme,
                 candidates=candidates,
@@ -469,8 +469,8 @@ def main():
             # 5.1. Kiểm tra tính hợp lý hậu thực thi (Sanity Check Lượt 1) & Feasibility Authority
             sanity_err = None
             if not exec_err:
-                sub_ans_cand = normalize_output(raw_result, question=question_text, code_text=code_text)
-                is_sane, sanity_reason = check_result_sanity(sub_ans_cand, question=question_text, code_text=code_text)
+                sub_ans_cand = normalize_output(raw_result, question=normalized_q, code_text=code_text)
+                is_sane, sanity_reason = check_result_sanity(sub_ans_cand, question=normalized_q, code_text=code_text)
                 if raw_result == "unanswerable" or sub_ans_cand.get("type") == "unanswerable":
                     sanity_err = "Cơ sở dữ liệu của cửa hàng CÓ ĐẦY ĐỦ số liệu để trả lời câu hỏi này (KHÔNG ĐƯỢC trả về 'unanswerable'!). Hãy kiểm tra lại danh sách bảng và cột để tính toán và trả về kết quả số/danh sách cụ thể."
                     print("  ⚠️ [Feasibility Authority] Phát hiện code trả về unanswerable trên câu hỏi khả thi -> Kích hoạt Self-Correction...")
@@ -480,7 +480,7 @@ def main():
                 else:
                     sem_eval1 = evaluate_semantic_rule_compliance(
                         code_text=code_text,
-                        question=question_text,
+                        question=normalized_q,
                         sub_ans=sub_ans_cand,
                         as_of_date=as_of_date,
                     )
@@ -491,17 +491,18 @@ def main():
             # Đánh giá độ phủ thực thể & thời gian (Grounding Coverage) ở Lượt 1
             grounding_eval = evaluate_grounding_coverage(
                 code_text=code_text,
-                question=question_text,
+                question=normalized_q,
                 entity_matches=entity_matches,
                 temporal_info=temporal_res,
             )
             missed_mentions = grounding_eval.get("missed_mentions", [])
             should_retry_for_missed = bool(missed_mentions and not exec_err and not sanity_err and grounding_eval.get("entity_coverage", 1.0) < 0.5)
 
-            # 5.2. Cơ chế Runtime Self-Correction (1 lượt tự sửa lỗi nếu gặp ngoại lệ, vi phạm Sanity Check, hoặc bỏ sót thực thể quan trọng)
+            # 5.2. Cơ chế Runtime Self-Correction (tối đa 2 vòng tự sửa lỗi đồng bộ với inspect_pipeline.py)
             from src.datamate.llm_execution.sandbox import should_retry_self_correction
-            if should_retry_self_correction(exec_err, sanity_err) or should_retry_for_missed:
-                retry_count = 1
+            max_self_corrections = 2
+            while (should_retry_self_correction(exec_err, sanity_err) or (should_retry_for_missed and retry_count == 0)) and retry_count < max_self_corrections:
+                retry_count += 1
                 if exec_err:
                     err_feedback = exec_err
                 elif sanity_err:
@@ -509,16 +510,16 @@ def main():
                 else:
                     first_m = missed_mentions[0]
                     err_feedback = f"Mã nguồn chưa lọc theo thực thể được hỏi: '{first_m['term']}' (giá trị thực tế: '{first_m['candidate']}')"
-                    print(f"  🔍 [Grounding Feedback] Phát hiện bỏ sót thực thể quan trọng -> Kích hoạt Self-Correction Turn 2...")
+                    print(f"  🔍 [Grounding Feedback] Phát hiện bỏ sót thực thể quan trọng -> Kích hoạt Self-Correction Vòng {retry_count}...")
 
-                print(f"  🔄 [Self-Correction] Yêu cầu LLM tự sửa mã ({err_feedback})...")
+                print(f"  🔄 [Self-Correction Vòng {retry_count}/{max_self_corrections}] Yêu cầu LLM tự sửa mã ({err_feedback})...")
                 retry_sys_prompt, retry_user_prompt = build_retry_prompt(
-                    question=question_text,
+                    question=normalized_q,
                     failed_code=code_text,
                     error_message=err_feedback,
                     schema_str=pruned_schema,
                     as_of_date=as_of_date,
-                    retry_round=1,
+                    retry_round=retry_count,
                     temporal_text=temporal_text,
                     missed_mentions=missed_mentions,
                 )
@@ -533,6 +534,7 @@ def main():
                     business_obj=bd,
                     timeout_s=args.timeout,
                     use_sandbox=not args.in_process,
+                    as_of_date=as_of_date,
                 )
                 exec_ms += ms_retry
                 if not err_retry:
@@ -540,17 +542,27 @@ def main():
                     raw_result = raw_retry
                     exec_err = None
                     sanity_err = None
-                    # Kiểm tra lại Sanity Check ở Lượt 2
-                    sub_ans_cand2 = normalize_output(raw_result, question=question_text, code_text=code_text)
-                    is_sane2, sanity_reason2 = check_result_sanity(sub_ans_cand2, question=question_text, code_text=code_text)
+                    # Kiểm tra lại Sanity Check & Semantic Rule Check sau khi sửa mã
+                    sub_ans_cand2 = normalize_output(raw_result, question=normalized_q, code_text=code_text)
+                    is_sane2, sanity_reason2 = check_result_sanity(sub_ans_cand2, question=normalized_q, code_text=code_text)
                     if raw_result == "unanswerable" or sub_ans_cand2.get("type") == "unanswerable":
                         sanity_err = "Sau khi thử lại, mô hình vẫn trả về 'unanswerable' trên câu hỏi khả thi."
-                        print("  🛡️ [Feasibility Authority] Lượt 2 vẫn trả về unanswerable -> Ép về 'abstain' an toàn (0 điểm)")
-                    elif is_sane2:
-                        print("  ✓ [Self-Correction] Khắc phục lỗi và thỏa mãn Sanity Check ở lượt 2!")
-                    else:
+                    elif not is_sane2:
                         sanity_err = sanity_reason2
-                        print(f"  🛡️ [Sanity Check] Lượt 2 vẫn vi phạm ({sanity_reason2}) -> Ép về 'abstain' an toàn (0 điểm)")
+                    else:
+                        sem_eval2 = evaluate_semantic_rule_compliance(
+                            code_text=code_text,
+                            question=normalized_q,
+                            sub_ans=sub_ans_cand2,
+                            as_of_date=as_of_date,
+                        )
+                        if not sem_eval2.get("is_compliant", True):
+                            sanity_err = "; ".join(sem_eval2.get("violations", []))
+                    if sanity_err is None:
+                        print(f"  ✓ [Self-Correction] Khắc phục lỗi và thỏa mãn Sanity Check ở vòng {retry_count}!")
+                        break
+                    else:
+                        print(f"  ⚠️ [Self-Correction Vòng {retry_count}] Vẫn vi phạm ({sanity_err})")
                 else:
                     code_text = retry_code
                     exec_err = err_retry
@@ -558,7 +570,7 @@ def main():
             # Đánh giá lại Grounding Coverage sau lượt thử lại (nếu có)
             grounding_eval = evaluate_grounding_coverage(
                 code_text=code_text,
-                question=question_text,
+                question=normalized_q,
                 entity_matches=entity_matches,
                 temporal_info=temporal_res,
             )
@@ -572,7 +584,7 @@ def main():
                 sub_ans = make_abstain(f"Sanity Check: {sanity_err}")
                 print(f"  🛡️ Kết quả vô lý ({sanity_err}) -> Abstain an toàn (0 điểm)")
             else:
-                sub_ans = normalize_output(raw_result, question=question_text, code_text=code_text)
+                sub_ans = normalize_output(raw_result, question=normalized_q, code_text=code_text)
                 if sub_ans.get("type") == "unanswerable":
                     print(f"  🛡️ [Feasibility Authority Guard] Chặn false unanswerable -> Ép về 'abstain' để tránh bị phạt -1 điểm!")
                     sub_ans = make_abstain("False unanswerable override: Feasibility passed")
@@ -587,6 +599,8 @@ def main():
                         code_text=code_text,
                         has_feasibility_pass=True,
                         grounding_eval=grounding_eval,
+                        temporal_info={**(temporal_res or {}), "as_of_date": as_of_date},
+                        question=normalized_q,
                     )
                     sub_ans, is_abstained = apply_abstention_gate(sub_ans, confidence=confidence, threshold=args.tau_star)
                     penalty = grounding_eval.get("total_penalty", 0.0)

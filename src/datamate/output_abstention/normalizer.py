@@ -564,16 +564,26 @@ def infer_expected_type(question: Optional[str] = None) -> Optional[str]:
 
     # 4. Table (yêu cầu lập bảng hoặc liệt kê nhiều đối tượng kèm số tiền/số lượng từng người)
     if (
-        any(k in q_low for k in ("bảng", "lập bảng", "thống kê chi tiết từng", "mỗi người còn nợ", "số nợ của từng", "kèm số tiền còn nợ"))
-        or re.search(r"(?:top\s*\d+|li[eệ]t\s*k[eê]\s*\d+|\d+\s*kh[aá]ch).*(?:m[oỗ]i\s*ng[uư][oờ]i|t[uừ]ng\s*ng(?:[uư][oờ]i|uwowif)|k[eè]m\s*s[oố]\s*ti[eề]n)", q_low)
-        or re.search(r"(?:moi\s*nguoi\s*con\s*no|so\s*no\s*cua\s*tung|kem\s*so\s*tien\s*con\s*no)", q_no_acc)
+        any(k in q_low for k in ("bảng", "lập bảng", "thống kê chi tiết từng", "mỗi người còn nợ", "số nợ của từng", "kèm số tiền còn nợ", "kèm số nợ từng người"))
+        or re.search(r"(?:top\s*\d+|li[eệ]t\s*k[eê]\s*\d+|\d+\s*kh[aá]ch).*(?:m[oỗ]i\s*ng[uư][oờ]i|t[uừ]ng\s*ng(?:[uư][oờ]i|uwowif)|k[eè]m\s*s[oố]\s*(?:ti[eề]n|n[oợ]))", q_low)
+        or re.search(r"(?:moi\s*nguoi\s*con\s*no|so\s*no\s*(?:cua\s*)?tung|tung\s*nguoi\s*con\s*no|kem\s*so\s*(?:tien\s*con\s*)?no|(?<!tra\s)\bbang\s+(?:hoa\s*hong|tien\s*hoa\s*hong|\d+\s*khach))", q_no_acc)
     ):
         return "table"
 
     # 5. List (Top-K với K >= 2, danh sách nhiều đối tượng, hoặc cặp [chẵn, lẻ] / mỗi loại lần lượt)
+    # 5a. Numeric list patterns (quy đổi chẵn/lẻ, nhiều kỳ/nhóm lần lượt, nợ thêm & trả nợ, tuổi nợ 3 nhóm)
+    if (
+        re.search(r"\b(?:chan|nguyen)\b.*\ble\b", q_no_acc)
+        or re.search(r"\b(?:lan\s*luot|luwowtj|moi\s*loai\s*(?:la\s*)?(?:bao\s*nhieu|bnhiu|bao\s*nhiu|bn|nhieu)|moi\s*ben|moi\s*nhom|tu\s*thang\s*cu\s*den\s*thang\s*moi|ghi\s*(?:hai|2|ba|3)\s*so|tra\s*loi\s*(?:hai|2|ba|3)\s*so|theo\s*thu\s*tu\s*thoi\s*gian)\b", q_no_acc)
+        or re.search(r"\b(?:no\s*them|mua\s*chiu\s*them|chiuj\s*them)\b.*\b(?:tra\s*(?:bot\s*)?no|tra\s*(?:duoc|dc|dduwowcj))\b", q_no_acc)
+        or re.search(r"(?:doanh\s*thu|dthu)\s*cac\s*(?:don|ddown)\b.*?(?:doanh\s*thu|dthu|\bva)\s*cac\s*don\b", q_no_acc)
+        or re.search(r"tuoi\s*no.*0.*7.*8.*15", q_no_acc)
+    ):
+        return "list"
+
     # Lưu ý: không bắt 'mấy mặt hàng ế / mấy khách mua từ X đơn' (đó là câu hỏi đếm số lượng -> number)
     is_count_how_many = bool(re.search(
-        r"\b(?:c[oó]\s*(?:t[oổ]ng\s*c[oộ]ng\s*)?)?(?:m[aấ]y|bao\s*nhi[eê]u|nhi[eê]u)\s+(?:m[aặ]t\s*h[aà]ng|s[aả]n\s*ph[aẩ]m|sp|kh[aá]ch(?:\s*h[aà]ng)?|m[oó]n)\b",
+        r"\b(?:c[oó]\s*(?:t[oổ]ng\s*c[oộ]ng\s*)?)?(?:m[aấ]y|maays|bao\s*nhi[eê]u|nhi[eê]u)\s+(?:m[aặ]t\s*h[aà]ng|s[aả]n\s*ph[aẩ]m|sp|kh[aá]ch(?:\s*h[aà]ng)?|m[oó]n)\b",
         q_low,
     ))
     if not is_count_how_many and (
@@ -595,9 +605,10 @@ def infer_expected_type(question: Optional[str] = None) -> Optional[str]:
     if not is_count_how_many and (
         re.search(r"\b(?:hàng|sp|món|sản\s*phẩm|mặt\s*hàng|hang|mon|san\s*pham|mat\s*hang)\s+n(?:[aà]o|aof)\b", q_low)
         or re.search(r"\b(?:khách(?:\s*hàng)?|khach(?:\s*hang)?|nhà\s*cung\s*cấp|nhaf\s*cung\s*cấp|nha\s*cung\s*cap|ncc|nhân\s*viên|nhan\s*vien)\s+n(?:[aà]o|aof)\b", q_low)
-        or re.search(r"\bai\s+(?:mua|bán|ban|nợ|no|chi\s*tiêu|l[aà]\s+(?:kh[aá]ch|ng[uư][oờ]i))\b", q_low)
+        or re.search(r"\bai\s+(?:mua|bán|ban|nợ|no|chi\s*tiêu|l[aà]\s+(?:kh[aá]ch|ng[uư][oờ]i|th[oợ]|nh[aâ]n))\b", q_low)
         or re.search(r"\b(?:l[aà]\s+ai|la\s+ai)\b", q_low)
         or re.search(r"\b(?:bán\s*(?:chạy|nhiều|hot)|chi\s*tiêu\s*nhiều|chay|hot)\s*nhất\s*l[aà]\s*(?:gì|ai|chi|những\s*gì|mặt\s*hàng\s*nào|sp\s*nào|gi|mat\s*hang\s*nao)\b", q_low)
+        or re.search(r"\b(?:lon\s*nhat|nhieu\s*nhat|nhiu\s*nhat|chay\s*nhat|cao\s*nhat|thap\s*nhat|it\s*nhat)\b.*\bla\s*(?:gi|chi|ai)\b", q_no_acc)
         or re.search(r"\b(?:sản\s*phẩm|sp|mặt\s*hàng)\s+b[aá]n\s+(?:dc|đc|được|duoc)?\s*(?:nhiều|nhieu|nhieeuf)\s*nhất\b", q_low)
         or re.search(r"\btop\s*1\b", q_low)
     ):
@@ -607,7 +618,7 @@ def infer_expected_type(question: Optional[str] = None) -> Optional[str]:
     if (
         any(k in q_low for k in ("bao nhiêu", "bnhiu", "bao nhiu", "bn ", "nhiêu", "mấy", "đếm số", "tổng cộng", "doanh thu", "dthu", "tiền", "số lượng", "số đơn", "giá trị"))
         or re.search(r"\b(?:bn|nhiêu)$", q_low)
-        or re.search(r"\b(?:bao\s*nhieu|may|tong\s*cong|doanh\s*thu|tien|so\s*luong|so\s*don|gia\s*tri|gia\s*ban|dem\s*so)\b", q_no_acc)
+        or re.search(r"\b(?:bao\s*nhieu|bao\s*nhieeu|may|maays|tong\s*cong|doanh\s*thu|revenue|lai\s*gop|loi\s*gop|tien|so\s*luong|so\s*don|soos\s*don|so\s*ddown|gia\s*tri|gia\s*ban|dem\s*so|ddeems\s*soos|dem\s*giup|bill)\b", q_no_acc)
         or re.search(r"\bgiá\s*trị\s*trung\s*bình\s*một\s*đơn\b", q_low)
         or re.search(r"(?:gi[aá]s?\s*tr[iị]\s*)?trung\s*b[iì]nh\s*(?:m[oộ]t|1)\s*đ[oơ]n|tb\s*(?:m[oộ]t|1)\s*đ[oơ]n|\baov\b", q_low)
     ):
