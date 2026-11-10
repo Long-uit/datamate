@@ -52,6 +52,14 @@ class EntityMatch:
     entity_type: str         # "sku", "product", "customer", "category"
     score: float             # Điểm tương đồng 0.0 -> 1.0
     metadata: dict[str, Any] = field(default_factory=dict)
+    source_table: str = ""
+    source_col: str = ""
+
+    def __post_init__(self):
+        if not self.source_table and self.metadata:
+            self.source_table = str(self.metadata.get("source_table", ""))
+        if not self.source_col and self.metadata:
+            self.source_col = str(self.metadata.get("source_col", ""))
 
 
 @dataclass

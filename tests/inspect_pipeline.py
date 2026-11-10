@@ -130,6 +130,29 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
     if not biz_dir.exists():
         return {}, None, f"Không tìm thấy thư mục shop: {biz_dir}", None, {}, []
 
+    cache_dir = Path("/kaggle/working/.cache_parquet") / biz_id if Path("/kaggle/working").exists() else Path(".cache_parquet") / biz_id
+    flag_file = cache_dir / ".ready"
+    meta_file = cache_dir / "meta.pkl"
+
+    # 1. Tận dụng Parquet Cache trên ổ đĩa nếu đã có (tốc độ < 0.1s thay vì 68s)
+    if flag_file.exists() and meta_file.exists():
+        try:
+            import pickle
+            with open(meta_file, "rb") as f_meta:
+                unpickled = pickle.load(f_meta)
+                if len(unpickled) == 4:
+                    schema_summary, shop_meta, candidates, bd = unpickled
+                else:
+                    schema_summary, shop_meta, candidates = unpickled
+                    bd = None
+            data_dict: Dict[str, pd.DataFrame] = {}
+            for p_file in cache_dir.glob("*.parquet"):
+                t_key = p_file.stem
+                data_dict[t_key] = pd.read_parquet(p_file)
+            return data_dict, None, schema_summary, bd, shop_meta, candidates
+        except Exception:
+            pass
+
     try:
         raw_bd = load_business(biz_dir)
         bd = clean_business(raw_bd)
@@ -150,6 +173,20 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
         schema_summary = profile_business_schema(bd, max_cols=25)
         shop_meta = extract_shop_metadata(business_obj=bd, data_dict=data_dict)
         candidates = extract_candidates_from_business(bd)
+
+        # Lưu Parquet Cache để nạp tức thì trong các lượt sau
+        try:
+            import pickle
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            for k, df_table in data_dict.items():
+                if isinstance(df_table, pd.DataFrame):
+                    df_table.to_parquet(cache_dir / f"{k}.parquet", index=False)
+            with open(meta_file, "wb") as f_meta:
+                pickle.dump((schema_summary, shop_meta, candidates, bd), f_meta)
+            flag_file.touch()
+        except Exception:
+            pass
+
         return data_dict, con, schema_summary, bd, shop_meta, candidates
     except Exception as exc:
         return {}, None, f"Lỗi nạp dữ liệu: {exc}", None, {}, []
@@ -1064,9 +1101,11 @@ def run_single_inspection(
         for m in entity_matches[:8]:
             mention = getattr(m, "mention", getattr(m, "matched_value", ""))[:20]
             val = getattr(m, "matched_value", "")[:20]
-            src = f"{getattr(m, 'source_table', '')}.{getattr(m, 'source_col', '')}"[:18]
+            src_t = getattr(m, "source_table", "") or (m.metadata.get("source_table", "") if getattr(m, "metadata", None) else "")
+            src_c = getattr(m, "source_col", "") or (m.metadata.get("source_col", "") if getattr(m, "metadata", None) else "")
+            src = f"{src_t}.{src_c}" if (src_t or src_c) else "(Chưa gán)"
             score = getattr(m, "score", 0.0)
-            print(f"│ {mention:<22} | {val:<22} | {src:<18} | {score:>6.2f} │")
+            print(f"│ {mention:<22} | {val:<22} | {src[:18]:<18} | {score:>6.2f} │")
     else:
         print("│ • Không phát hiện thực thể tên riêng biệt (Mã/Tên SP, Khách hàng) trong câu. │")
     print("└──────────────────────────────────────────────────────────────────────────────┘")
@@ -1093,16 +1132,21 @@ def run_single_inspection(
     print("├──────────────────────────────────────────────────────────────────────────────┤")
     print(f"│ • Ý định phân loại : '{intent}'")
     print(f"│ • Kích thước Schema: {raw_len} ký tự -> {pruned_len} ký tự (Giảm {reduc_pct:.1f}% nhiễu)")
-    # Liệt kê bảng giữ lại
+    
+    # Liệt kê chính xác bảng giữ lại và bảng lược bỏ từ schema
+    all_schema_tables = []
+    for line in raw_schema_str.splitlines():
+        if line.startswith("- Bảng '") and "'" in line[8:]:
+            all_schema_tables.append(line[8:].split("'")[0])
+
     retained_tables = []
     for line in pruned_schema.splitlines():
         if line.startswith("- Bảng '") and "'" in line[8:]:
-            tname = line[8:].split("'")[0]
-            retained_tables.append(tname)
-    all_table_names = list(data_dict.keys())
-    dropped_tables = [t for t in all_table_names if t not in retained_tables and not any(t == rt.split("_")[0] for rt in retained_tables)]
-    print(f"│ • Bảng giữ lại     : {', '.join(retained_tables[:6])}")
-    print(f"│ • Bảng lược bỏ     : {', '.join(dropped_tables[:6]) if dropped_tables else '(Không có)'}")
+            retained_tables.append(line[8:].split("'")[0])
+
+    dropped_tables = [t for t in all_schema_tables if t not in retained_tables]
+    print(f"│ • Bảng giữ lại     : {', '.join(retained_tables) if retained_tables else '(Không có)'}")
+    print(f"│ • Bảng lược bỏ     : {', '.join(dropped_tables) if dropped_tables else '(Không có)'}")
     print("└──────────────────────────────────────────────────────────────────────────────┘")
 
     # --------------------------------------------------------------------------
@@ -1125,16 +1169,22 @@ def run_single_inspection(
     latencies["prompt_build"] = ms_prompt
 
     exemplar_title = few_shot.splitlines()[0] if few_shot else "Mặc định (Aggregation)"
+    sys_tok = len(sys_prompt) // 3
+    schema_tok = len(pruned_schema) // 3
+    fewshot_tok = len(few_shot) // 3
+    user_tok = len(user_prompt) // 3
+    total_tok = sys_tok + user_tok
 
     print(f"\n--- [BƯỚC 4] PROMPT BUILDER & TOKEN BUDGET (⏱️ {ms_prompt:.2f} ms) ---")
     print("┌──────────────────────────────────────────────────────────────────────────────┐")
     print("│ [MỤC 6] GIẢI PHẪU PROMPT & PHÂN BỔ NGÂN SÁCH TOKEN (TOKEN BUDGET)            │")
     print("├──────────────────────────────────────────────────────────────────────────────┤")
-    print(f"│ • Ví dụ Few-Shot đã chọn : {exemplar_title[:60]}")
-    print(f"│ • System Prompt          : {len(sys_prompt)} ký tự (~{len(sys_prompt)//4} tokens)")
-    print(f"│ • Pruned Schema          : {len(pruned_schema)} ký tự (~{len(pruned_schema)//4} tokens)")
-    print(f"│ • Few-Shot Exemplar      : {len(few_shot)} ký tự (~{len(few_shot)//4} tokens)")
-    print(f"│ • Tổng User Prompt       : {len(user_prompt)} ký tự (~{len(user_prompt)//4} tokens)")
+    print(f"│ • Ví dụ Few-Shot đã chọn : {exemplar_title[:56]}")
+    print(f"│ • System Prompt (Cache)  : {len(sys_prompt):>5} ký tự (~{sys_tok:>4} tokens)")
+    print(f"│   ├─ Lược đồ (Pruned)    : {len(pruned_schema):>5} ký tự (~{schema_tok:>4} tokens)")
+    print(f"│   └─ Ví dụ (Few-Shot)    : {len(few_shot):>5} ký tự (~{fewshot_tok:>4} tokens)")
+    print(f"│ • User Prompt            : {len(user_prompt):>5} ký tự (~{user_tok:>4} tokens)")
+    print(f"│ 👉 TỔNG PROMPT (GỬI LLM) : {len(sys_prompt) + len(user_prompt):>5} ký tự (~{total_tok:>4} tokens)")
     print("└──────────────────────────────────────────────────────────────────────────────┘")
 
     # --------------------------------------------------------------------------
@@ -1236,13 +1286,16 @@ def run_single_inspection(
                 self_correction_trace.append(f"Vòng 2 Vẫn lỗi: {r_err}")
     else:
         raw_result = "abstain"
-        exec_ms = 1.0
+        exec_ms = 0.0
 
     ms_sandbox = (time.perf_counter() - t0) * 1000
     latencies["sandbox_exec"] = ms_sandbox
 
     print(f"\n--- [BƯỚC 6] EXECUTION SANDBOX (⏱️ {ms_sandbox:.2f} ms) ---")
-    print(f"  • Thời gian chạy code: {exec_ms:.2f} ms")
+    if args.with_llm:
+        print(f"  • Thời gian chạy code: {exec_ms:.2f} ms")
+    else:
+        print(f"  • Thời gian chạy code: {exec_ms:.2f} ms (Chế độ Mock)")
     print(f"  • Lỗi Sandbox (nếu)  : {exec_err or 'Không có (Thực thi thành công)'}")
     print(f"  • Kết quả thô (Raw)  : {raw_result} (Kiểu: {type(raw_result).__name__})")
 
@@ -1294,19 +1347,32 @@ def run_single_inspection(
     print("\n┌──────────────────────────────────────────────────────────────────────────────┐")
     print("│ [MỤC 8] GIẢI PHẪU TOÁN HỌC ĐIỂM TỰ TIN (CALIBRATED CONFIDENCE BREAKDOWN)      │")
     print("├──────────────────────────────────────────────────────────────────────────────┤")
-    base_score = 1.0 if not exec_err and not sanity_err else 0.0
+    if not args.with_llm and is_feasible:
+        base_score = 0.0
+        print(f"│ • Chế độ Dry-Run Mock   : Mã giả lập 'abstain' -> C ép về 0.00               │")
+        print(f"│ • Điểm cơ sở (C_base)   : {base_score:.2f} (Không nạp GPU/LLM)                              │")
+    else:
+        c_exec = 0.40 if not exec_err else 0.00
+        c_sanity = 0.35 if not sanity_err else 0.00
+        c_ast = 0.25 if is_safe_ast else 0.00
+        base_score = c_exec + c_sanity + c_ast
+        print(f"│ • Điểm cơ sở (C_base)   : {base_score:.2f} (Exec={c_exec:.2f}, Sanity={c_sanity:.2f}, AST={c_ast:.2f})")
+
     e_pen = grounding_eval.get("entity_penalty", 0.0)
     t_pen = grounding_eval.get("temporal_penalty", 0.0)
     tab_pen = grounding_eval.get("table_penalty", 0.0)
     tot_pen = grounding_eval.get("total_penalty", 0.0)
     missed_m = [m.get("term", "") for m in grounding_eval.get("missed_mentions", [])]
 
-    print(f"│ • Điểm cơ sở (C_base)   : {base_score:.2f} (Exec=0.40, Sanity=0.35, AST=0.25)")
     print(f"│ • Phạt thực thể (P_ent) : -{e_pen:.2f} (Độ phủ: {grounding_eval.get('entity_coverage', 1.0)*100:.0f}%)")
     if missed_m:
         print(f"│   └─ Thực thể bỏ sót    : {', '.join(missed_m)}")
     print(f"│ • Phạt thời gian (P_tem): -{t_pen:.2f} (Độ phủ: {grounding_eval.get('temporal_coverage', 1.0)*100:.0f}%)")
     print(f"│ • Phạt bảng ngoài (P_tb): -{tab_pen:.2f}")
+
+    if final_ans.get("type") == "abstain":
+        print(f"│ • Luật an toàn Abstain  : Output = 'abstain' -> Ép điểm tin cậy C = 0.00      │")
+
     print(f"│ • ĐỘ TIN CẬY CUỐI CÙNG  : C = {confidence:.2f} (So với ngưỡng tau* = 0.50)")
     gate_decision = "CHO PHÉP NỘP ĐÁP ÁN" if confidence >= 0.50 else "LÁ CHẮN ÉP VỀ ABSTAIN (0 ĐIỂM AN TOÀN)"
     print(f"│ 👉 QUYẾT ĐỊNH CỦA CỔNG  : {gate_decision}")
@@ -1338,18 +1404,19 @@ def run_single_inspection(
 
     dev_analysis = analyze_numerical_deviation(pred_val, gold_val, pred_type, gold_type)
 
-    print("\n" + "=" * 80)
-    print(" 🎯  GIẢI THÍCH THỐNG KÊ KẾT QUẢ & PHÂN TÍCH SAI SỐ ĐỊNH LƯỢNG")
-    print("=" * 80)
-    print(f"• DỰ ĐOÁN (PRED) : {pred_val} (Type: {pred_type})")
-    print(f"• CHUẨN   (GOLD) : {gold_val} (Type: {gold_type})")
-    print(f"• KẾT LUẬN       : {eval_label}")
+    print("\n┌──────────────────────────────────────────────────────────────────────────────┐")
+    print("│ [MỤC 9] GIẢI THÍCH THỐNG KÊ KẾT QUẢ & SO SÁNH VỚI ĐÁP ÁN CHUẨN (GOLD)        │")
+    print("├──────────────────────────────────────────────────────────────────────────────┤")
+    print(f"│ • DỰ ĐOÁN (PRED) : {str(pred_val)[:58]} (Type: {pred_type})")
+    print(f"│ • CHUẨN   (GOLD) : {str(gold_val)[:58]} (Type: {gold_type})")
+    print(f"│ • KẾT LUẬN       : {eval_label}")
     if dev_analysis.get("is_applicable") and not is_match and pred_type != "abstain":
-        print("-" * 80)
-        print(f"• Sai số tuyệt đối: {dev_analysis['abs_diff']}")
-        print(f"• Sai số phần trăm: {dev_analysis['pct_diff']:.2f}%")
+        print("├──────────────────────────────────────────────────────────────────────────────┤")
+        print(f"│ • Sai số tuyệt đối: {dev_analysis['abs_diff']}")
+        print(f"│ • Sai số phần trăm: {dev_analysis['pct_diff']:.2f}%")
         if dev_analysis.get("diagnostic_hypothesis"):
-            print(f"💡 CHẨN ĐOÁN LỖI TỰ ĐỘNG: {dev_analysis['diagnostic_hypothesis']}")
+            print(f"│ 💡 CHẨN ĐOÁN LỖI TỰ ĐỘNG: {dev_analysis['diagnostic_hypothesis']}")
+    print("└──────────────────────────────────────────────────────────────────────────────┘")
     print("-" * 80)
     print("BẢNG ĐỘ TRỄ CHI TIẾT TỪNG MODULE:")
     for m_name, m_lat in [

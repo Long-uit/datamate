@@ -596,6 +596,21 @@ def fuzzy_entity_match_score(query: str, target: str) -> float:
         return 0.0
 
     common = t_tokens.intersection(q_tokens)
+
+    # NGUYÊN TẮC BẢO VỆ TỪ ĐƠN NGẮN (<= 5 ký tự):
+    # Với từ đơn lẻ như 'bánh' (banh), 'bò' (bo), 'gà' (ga), 'mì' (mi):
+    # Tuyệt đối KHÔNG dùng fuzzy edit-distance (tránh 'ban' trong 'bán ra' khớp nhầm 'bánh' 0.86).
+    # Bắt buộc từ này phải xuất hiện trọn vẹn trong câu hỏi!
+    if len(t_tokens) == 1:
+        single_tk = list(t_tokens)[0]
+        if len(single_tk) <= 5:
+            if single_tk in q_tokens:
+                return 0.95
+            return 0.0
+
+    if not common:
+        return 0.0
+
     # Ngăn chặn khớp nhầm khi chỉ trùng tiền tố chung (ví dụ 'Trà đào' chỉ trùng 'trà' với 'Trà sữa...')
     distinguishing_tokens = t_tokens - GENERIC_PRODUCT_PREFIXES
     if distinguishing_tokens and not distinguishing_tokens.intersection(q_tokens):
@@ -677,6 +692,8 @@ def link_entities(
                     "source_col": cand.source_col,
                     "row_context": getattr(cand, "row_context", {}),
                 },
+                source_table=cand.source_table,
+                source_col=cand.source_col,
             ))
 
     # Sắp xếp theo độ tin cậy giảm dần và loại bỏ trùng lặp giá trị

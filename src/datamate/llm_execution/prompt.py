@@ -317,7 +317,15 @@ def prune_schema_by_intent(
             kept_names.add(p["name"])
             continue
 
-        if is_product and any(k in q_low for k in ["sản phẩm", "mặt hàng", "thuốc", "bảng giá", "giá bán", "đơn giá", "món"]):
+        product_indicators = [
+            "sản phẩm", "san pham", "mặt hàng", "mat hang", "thuốc", "thuoc",
+            "bảng giá", "bang gia", "giá bán", "gia ban", "đơn giá", "don gia",
+            "món", "mon", "cac mon", "tất cả các món", "size", "sz", "ly", "cốc", "coc",
+            "chai", "lon", "thùng", "thung", "hộp", "hop", "bánh", "banh", "nước", "nuoc",
+            "cà phê", "ca phe", "cf", "trà", "tra", "combo", "topping", "danh mục", "danh muc",
+            "nhóm hàng", "nhom hang", "loại"
+        ]
+        if is_product and (any(k in q_low for k in product_indicators) or any(k in q_norm for k in product_indicators)):
             kept_names.add(p["name"])
             continue
 
@@ -355,8 +363,11 @@ def prune_schema_by_intent(
             continue
         if is_delivery and not explicit_delivery:
             continue
-        # Bước 3(c): Không loại bảng chỉ vì tên hoặc vai trò chứa 'kho' / 'tồn kho' (is_inv)
-        if is_cust and not explicit_customer and intent not in ("ranking_topk", "ranking_customer", "aggregation", "cancelled_orders", "average_order_value"):
+        if is_inv and not explicit_inventory and intent not in ("inventory_unit_conversion",):
+            continue
+        if any(k in p["name"].lower() for k in ["donvitinh", "dvt"]) and not any(k in q_low for k in ["đơn vị tính", "đvt", "dvt", "quy đổi", "quydoi"]):
+            continue
+        if is_cust and not explicit_customer and intent not in ("ranking_customer", "customer_lookup", "cong_no"):
             continue
 
         kept_names.add(p["name"])
@@ -373,13 +384,12 @@ def prune_schema_by_intent(
                 kept_names.add(p["name"])
                 break
 
-    # --- NGUYÊN TẮC VÀNG 3: QUAN HỆ KHÓA NGOẠI (Foreign Key Relational Closure) ---
-    # Nếu giữ bảng chi tiết dòng hàng (chi_tiet_don, DanhSachHoaDonChiTiet), bắt buộc giữ bảng đơn hàng (don_hang, DanhSachHoaDon)
+    # --- NGUYÊN TẮC VÀNG 3: QUAN HỆ KHÓA NGOẠI & BẢO TOÀN CẶP BẢNG ---
+    # 3.1. Nếu giữ bảng chi tiết dòng hàng (chi_tiet_don, DanhSachHoaDonChiTiet), bắt buộc giữ bảng đơn hàng (don_hang, DanhSachHoaDon)
     for p in parsed_tables:
         if p["name"] in kept_names:
             p_low = p["name"].lower()
             if any(k in p_low for k in ["chitiet", "chi_tiet", "detail"]):
-                # Tìm bảng cha tương ứng
                 for parent_p in parsed_tables:
                     parent_low = parent_p["name"].lower()
                     if not any(k in parent_low for k in ["chitiet", "chi_tiet", "detail"]):
@@ -389,6 +399,25 @@ def prune_schema_by_intent(
                             or ("banhang" in p_low and "banhang" in parent_low)
                         ):
                             kept_names.add(parent_p["name"])
+
+    # 3.2. Bảo toàn tất cả các phần của bảng bị cắt nhỏ (ví dụ: DanhSachHoaDonChiTiet_1 và _2)
+    split_bases = set()
+    for name in list(kept_names):
+        m_part = re.match(r"^(.*?)[_\-]\d+$", name)
+        if m_part:
+            split_bases.add(m_part.group(1).lower())
+    if split_bases:
+        for p in parsed_tables:
+            m_p = re.match(r"^(.*?)[_\-]\d+$", p["name"])
+            if m_p and m_p.group(1).lower() in split_bases:
+                kept_names.add(p["name"])
+
+    # 3.3. Bảo toàn bảng danh mục sản phẩm (DanhSachSanPham) khi có chi tiết đơn hàng bán ra
+    has_order_details = any(any(k in p["name"].lower() for k in ["chitiet", "detail"]) for p in parsed_tables if p["name"] in kept_names)
+    if has_order_details:
+        for p in parsed_tables:
+            if any(k in p["name"].lower() for k in ["sanpham", "hanghoa", "danhmuc"]):
+                kept_names.add(p["name"])
 
     # Nếu giữ bảng khách hàng hoặc bảng sản phẩm, đảm bảo bảng bán hàng kết nối cũng được giữ
     has_cust_or_prod = any(
