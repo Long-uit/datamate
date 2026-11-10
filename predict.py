@@ -184,13 +184,14 @@ def execute_solution(
     business_obj: Any,
     timeout_s: int = 30,
     use_sandbox: bool = True,
+    as_of_date: Any = None,
 ) -> Tuple[Any, Optional[str], int]:
     """
     Thực thi hàm solution(data) qua sandbox subprocess độc lập (cô lập hoàn toàn, có hard timeout),
     hoặc chế độ in-process an toàn (sao chép độc lập để bảo vệ cache).
     """
     if use_sandbox:
-        res = run_code(code_text.strip(), business_dir=biz_dir, timeout_s=timeout_s)
+        res = run_code(code_text.strip(), business_dir=biz_dir, timeout_s=timeout_s, as_of_date=as_of_date)
         if res.ok:
             return res.final_result, None, res.elapsed_ms
         else:
@@ -213,6 +214,7 @@ def execute_solution(
         clean_num=clean_num,
         clean_date=clean_date,
         DataNotFoundError=DataNotFoundError,
+        as_of_date=as_of_date,
     )
     elapsed_ms = int((time.perf_counter() - t_start) * 1000)
     if res_payload.get("ok"):
@@ -461,6 +463,7 @@ def main():
                 business_obj=bd,
                 timeout_s=args.timeout,
                 use_sandbox=not args.in_process,
+                as_of_date=as_of_date,
             )
 
             # 5.1. Kiểm tra tính hợp lý hậu thực thi (Sanity Check Lượt 1) & Feasibility Authority

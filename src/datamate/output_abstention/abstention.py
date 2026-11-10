@@ -360,10 +360,10 @@ def evaluate_semantic_rule_compliance(
             violations.append("Câu hỏi hỏi số lượng món/sản phẩm bán được nhưng code lại cộng cột tiền mà không dùng cột số lượng")
             semantic_penalty += 0.60
 
-    # 9. Câu hỏi hỏi tiền khách trả bớt nợ / thu nợ nhưng code không truy cập bảng thanh toán / công nợ hay cột nợ
-    asks_debt_repayment = bool(re.search(r"tra\s*bot\s*no|thu\s*no|tra\s*no|mua\s*chiu|cong\s*no", q_no_acc))
+    # 9. Câu hỏi hỏi công nợ / còn nợ / tiền khách trả bớt nợ nhưng code không truy cập bảng thanh toán / công nợ hay cột nợ
+    asks_debt_repayment = bool(re.search(r"tra\s*bot\s*no|thu\s*no|tra\s*no|mua\s*chiu|cong\s*no|con\s*no|no\s*cua\s*hang|khach\s*no", q_no_acc))
     if asks_debt_repayment and clean_c:
-        uses_debt_or_pay = bool(re.search(r"thanh_toan|thanh\s*toan|cong_no|cong\s*no|so_no|du\s*no|\bno\b|phieu\s*thu|tra\s*no", clean_c_no_acc))
+        uses_debt_or_pay = bool(re.search(r"thanh_toan|thanh\s*toan|cong_no|cong\s*no|so_no|du\s*no|con_lai|con\s*lai|con\s*no|\bno\b|phieu\s*thu|tra\s*no|debt", clean_c_no_acc))
         if not uses_debt_or_pay:
             violations.append("Câu hỏi hỏi về công nợ / tiền trả nợ nhưng code chỉ tính doanh thu bán hàng chung mà không xét bảng/cột thanh toán hoặc công nợ")
             semantic_penalty += 0.60

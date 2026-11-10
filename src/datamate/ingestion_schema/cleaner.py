@@ -1059,7 +1059,7 @@ def _standardize_status_alias_series(s: pd.Series) -> pd.Series:
         s_low = s_val.lower()
         if cat == "loại (huỷ)" and not any(k in s_low for k in ("hủy", "huỷ", "huy", "cancel")):
             val_map[val] = f"{s_val} (đã hủy)"
-        elif cat == "loại (trả)" and not any(k in s_low for k in ("trả", "tra", "hoàn", "hoan")):
+        elif cat == "loại (trả)" and not any(k in s_low for k in ("trả", "tra")):
             val_map[val] = f"{s_val} (trả hàng)"
         else:
             val_map[val] = val
@@ -1175,7 +1175,8 @@ def build_unified_relational_views(business: BusinessData) -> BusinessData:
             )
             h_cust_cols = [
                 c for c in h_df.columns
-                if any(k in normalize_col_for_match(c) for k in ["khach", "customer"])
+                if any(k in normalize_col_for_match(c) for k in ["khach hang", "ten khach", "ma kh", "so kh", "customer"])
+                and not any(bad in normalize_col_for_match(c) for bad in ["tra", "tien", "no", "thanh toan", "bill"])
                 and c != h_ord
             ]
 
@@ -1194,7 +1195,7 @@ def build_unified_relational_views(business: BusinessData) -> BusinessData:
             # 2b. Tính tổng thành tiền dòng hàng theo đơn và gắn 'Thành tiền' vào bảng Header nếu Header chưa có
             d_amt_col = _find_col_by_norm(
                 list(d_df.columns),
-                ["thanh tien", "tien ban", "tong tien", "doanh thu", "amount", "line total"],
+                ["thanh tien", "t tien", "tien ban", "tri gia", "tong tien", "doanh thu", "amount", "line total"],
             ) or _find_col_by_norm(list(d_df.columns), ["tong"], exact_only=True)
 
             h_has_line_amt = any(
@@ -1214,7 +1215,11 @@ def build_unified_relational_views(business: BusinessData) -> BusinessData:
                 d_valid["_ord_key"] = d_valid[d_ord].astype(str).str.strip()
                 ord_sums = d_valid.groupby("_ord_key")["_line_amt_num"].sum()
                 h_keys = h_df[h_ord].astype(str).str.strip()
-                h_df["Thành tiền"] = h_keys.map(ord_sums).fillna(0.0)
+                # Đặt 'Thành tiền' trước các cột cấp đơn như 'Tổng bill' / 'Khách trả' để ưu tiên doanh thu dòng hàng
+                if "Thành tiền" not in h_df.columns:
+                    h_df.insert(0, "Thành tiền", h_keys.map(ord_sums).fillna(0.0))
+                else:
+                    h_df["Thành tiền"] = h_keys.map(ord_sums).fillna(0.0)
 
                 # Nếu tất cả các đơn có trong Detail đều bị hủy dòng hàng trên Detail, cập nhật trạng thái Header
                 if d_line_st_col and h_status_col and d_line_st_col in d_df.columns:
@@ -1317,11 +1322,11 @@ def build_unified_relational_views(business: BusinessData) -> BusinessData:
             except Exception:
                 pass
 
-        # 3b. Alias cột Thành tiền ('Thành tiền') nếu bảng dùng tên 'Tổng', 'Amount', 'Tiền bán', 'thanh_tien'
+        # 3b. Alias cột Thành tiền ('Thành tiền') nếu bảng dùng tên 'Tổng', 'Amount', 'Tiền bán', 'thanh_tien', 'T.Tiền'
         has_std_amt = any(any(k in c for k in ["thành tiền", "tổng tiền", "doanh thu"]) for c in cols_low)
         if not has_std_amt:
             raw_amt_col = (
-                _find_col_by_norm(list(df_mod.columns), ["thanh tien", "tien ban", "tong tien", "doanh thu", "amount", "line total"])
+                _find_col_by_norm(list(df_mod.columns), ["thanh tien", "t tien", "tien ban", "tri gia", "tong tien", "doanh thu", "amount", "line total"])
                 or _find_col_by_norm(list(df_mod.columns), ["tong"], exact_only=True)
             )
             if raw_amt_col:

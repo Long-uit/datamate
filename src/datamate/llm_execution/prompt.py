@@ -1879,15 +1879,15 @@ def build_prompt(
                 note_str = note_str[:500]
         biz_context = f"\nGHI CHÚ DOANH NGHIỆP:\n{note_str}\n"
 
-    req_3 = "3. Không lặp dict comprehension lọc ngày trên toàn bộ `data`. Tìm bảng cụ thể, tìm cột ngày gốc bằng `d_c = next(...)`, tự tạo `df['clean_date'] = clean_date(df[d_c])` và dùng trực tiếp `df['clean_date'].dt.year`, `df['clean_date'].dt.month`. TUYỆT ĐỐI CẤM gọi `.dt.date` trước `.dt.year` hoặc `.dt.month`."
+    req_3 = "3. Ưu tiên gọi các hàm nghiệp vụ tất định đã có sẵn trong sandbox: `revenue(data, start_date=..., end_date=..., as_of_date=...)` để tính doanh thu (tự động lấy thành tiền dòng hàng sau chiết khấu, không trừ voucher đơn, không gồm VAT/ship, loại cả đơn hủy/trả), `count_orders(data, start_date=..., end_date=..., status='valid'|'cancelled')` để đếm đơn, và `debt(data, end_date=...)` để tính công nợ, thay vì tự chọn cột tiền cấp đơn (như Tổng bill, Khách trả). Nếu cần lọc bảng trực tiếp: tìm cột ngày gốc bằng `d_c = next(...)`, tạo `df['clean_date'] = clean_date(df[d_c])` và dùng `df['clean_date'].dt.year`, `df['clean_date'].dt.month`."
     if intent in ("count_orders", "cancelled_orders"):
-        req_3 += " Khi đếm đơn (kể cả đơn hủy), BẮT BUỘC tìm cột mã đơn order_col = next(...) và đếm int(df[order_col].dropna().nunique()). TUYỆT ĐỐI CẤM dùng len(df) hay df.shape[0] vì mỗi đơn hàng gồm nhiều dòng sản phẩm! TUYỆT ĐỐI CẤM đếm theo cột ngày tháng và TUYỆT ĐỐI CẤM tính tổng doanh thu."
+        req_3 += " Khi đếm đơn (kể cả đơn hủy), gọi `count_orders(data, start_date=..., end_date=..., status='cancelled' if hủy else 'valid')` hoặc tìm cột mã đơn order_col = next(...) và đếm int(df[order_col].dropna().nunique()). TUYỆT ĐỐI CẤM dùng len(df) hay df.shape[0]!"
     elif intent == "quantity_sum":
-        req_3 += " Khi tính số lượng (ly, kg), BẮT BUỘC tìm cột số lượng qty_col = next(...) và tính tổng int(round(clean_num(df[qty_col]).sum())). TUYỆT ĐỐI CẤM tính tổng cột tiền. Phân tách rõ: 'ly' là đơn vị tính, kích cỡ '(M)' nằm ở tên hàng."
+        req_3 += " Khi tính số lượng (ly, kg), BẮT BUỘC tìm cột số lượng qty_col = next(...) và tính tổng int(round(clean_num(df[qty_col]).sum())). TUYỆT ĐỐI CẤM tính tổng cột tiền."
     elif intent == "price_lookup":
         req_3 += " Khi tra cứu giá, tìm cột đơn giá / giá bán của đúng sản phẩm. TUYỆT ĐỐI CẤM tính trung bình toàn bộ danh mục df['Giá bán'].mean() và TUYỆT ĐỐI CẤM tính tổng doanh thu."
     else:
-        req_3 += " Dùng biến cột động amt_col = next(...) và tính tổng clean_num(df[amt_col]).sum(). Nếu câu hỏi hỏi một ngày cụ thể (như hôm nay), BẮT BUỘC lọc df['clean_date'].dt.date == pd.to_datetime(target_date).date(). Nếu câu hỏi hỏi riêng một sản phẩm/món, BẮT BUỘC lọc theo cột tên hàng trước."
+        req_3 += " Khi tính doanh thu bán hàng, gọi trực tiếp `revenue(data, start_date=..., end_date=...)` (hoặc truyền thêm `product=...` nếu hỏi riêng 1 mặt hàng) để đảm bảo đúng quy tắc Rulebook §1."
 
     shop_static_prefix = (
         "==================== HỒ SƠ SCHEMA & GHI CHÚ CỬA HÀNG (STATIC SHOP PREFIX) ====================\n"

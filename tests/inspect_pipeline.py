@@ -221,10 +221,11 @@ def execute_solution(
     timeout_s: int = 30,
     use_sandbox: bool = True,
     return_details: bool = False,
+    as_of_date: Any = None,
 ) -> Tuple[Any, ...]:
     """Thực thi mã nguồn mô hình sinh ra trong subprocess sandbox hoặc môi trường in-process."""
     if use_sandbox:
-        res = run_code(code_text.strip(), business_dir=biz_dir, timeout_s=timeout_s)
+        res = run_code(code_text.strip(), business_dir=biz_dir, timeout_s=timeout_s, as_of_date=as_of_date)
         unans_src = res.unanswerable_source
         if isinstance(res.final_result, dict):
             unans_src = res.final_result.get("unanswerable_source", unans_src)
@@ -253,6 +254,7 @@ def execute_solution(
         clean_num=clean_num,
         clean_date=clean_date,
         DataNotFoundError=DataNotFoundError,
+        as_of_date=as_of_date,
     )
     elapsed_ms = int((time.perf_counter() - t_start) * 1000)
     unans_src = res_payload.get("unanswerable_source", "none")
@@ -2128,6 +2130,7 @@ def run_batch_evaluation(args: argparse.Namespace):
                 timeout_s=args.timeout,
                 use_sandbox=not args.in_process,
                 return_details=True,
+                as_of_date=as_of_date,
             )
 
             max_self_corrections = 0 if replay_logs_dir else 2
@@ -2178,6 +2181,7 @@ def run_batch_evaluation(args: argparse.Namespace):
                     timeout_s=args.timeout,
                     use_sandbox=not args.in_process,
                     return_details=True,
+                    as_of_date=as_of_date,
                 )
                 exec_ms += ms_retry
 

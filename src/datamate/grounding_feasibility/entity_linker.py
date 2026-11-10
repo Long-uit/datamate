@@ -66,6 +66,11 @@ VIETNAMESE_ABBREVIATIONS: dict[str, str] = {
     "ck": "chiết khấu",
     "km": "khuyến mãi",
     "tt": "thành tiền",
+    "nowj": "nợ",
+    "cuwar": "cửa",
+    "nhaf": "nhà",
+    "vaayj": "vậy",
+    "đươc": "được",
 }
 
 # Các cột tiềm năng chứa thực thể (Mở rộng toàn diện các trường nghiệp vụ)

@@ -133,7 +133,7 @@ class PersistentWorker:
         self.kill()
         raise TimeoutError(f"Worker nạp dữ liệu quá thời gian chờ ({timeout}s) cho shop: {self.biz_dir}")
 
-    def execute(self, code: str, timeout_s: int) -> RunResult:
+    def execute(self, code: str, timeout_s: int, as_of_date: Any = None) -> RunResult:
         """Gửi mã nguồn sang worker và đợi kết quả với thời gian timeout chỉ định."""
         if not self.is_alive or self.proc is None or self.proc.poll() is not None:
             return RunResult(
@@ -147,7 +147,7 @@ class PersistentWorker:
 
         t_start = time.perf_counter()
         clean_c = sanitize_code_syntax(code)
-        req_msg = json.dumps({"cmd": "run", "code": clean_c}, ensure_ascii=False)
+        req_msg = json.dumps({"cmd": "run", "code": clean_c, "as_of_date": as_of_date}, ensure_ascii=False)
         try:
             assert self.proc.stdin is not None
             self.proc.stdin.write(req_msg + "\n")
@@ -560,6 +560,7 @@ def run_code(
     business_dir: Path,
     timeout_s: int = 60,
     use_persistent: bool = True,
+    as_of_date: Any = None,
 ) -> RunResult:
     """
     Chạy mã Python/SQL của câu hỏi trong subprocess độc lập.
@@ -576,7 +577,7 @@ def run_code(
     if use_persistent:
         try:
             worker = get_or_create_worker(business_dir)
-            return worker.execute(code, timeout_s=timeout_s)
+            return worker.execute(code, timeout_s=timeout_s, as_of_date=as_of_date)
         except Exception as e:
             # Nếu khởi tạo persistent worker gặp sự cố, tự động fallback về One-shot
             close_sandbox_worker()
@@ -1122,9 +1123,419 @@ def _patch_pandas_str_contains():
             pass
 
 
+def _select_sales_df(data_or_df: Any, require_product: bool = False) -> tuple[Optional[pd.DataFrame], Optional[dict]]:
+    """Chọn bảng bán hàng phù hợp nhất từ dict data hoặc trả về DataFrame trực tiếp."""
+    if isinstance(data_or_df, pd.DataFrame):
+        return data_or_df.copy(), None
+    if hasattr(data_or_df, "tables"):
+        d_map = {t.table_id: t.df for t in getattr(data_or_df, "tables", []) if t.df is not None}
+    elif isinstance(data_or_df, dict):
+        d_map = data_or_df
+    else:
+        return None, None
+
+    def _norm(s: Any) -> str:
+        s_str = str(s).strip().lower().replace("đ", "d").replace("Đ", "d")
+        s_str = "".join(c for c in unicodedata.normalize("NFD", s_str) if unicodedata.category(c) != "Mn")
+        return re.sub(r"[^a-z0-9]+", " ", s_str).strip()
+
+    detail_candidates: list[tuple[str, pd.DataFrame]] = []
+    header_candidates: list[tuple[str, pd.DataFrame]] = []
+    seen_ids: set[int] = set()
+
+    for name, df in d_map.items():
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            continue
+        if id(df) in seen_ids:
+            continue
+        n_norm = _norm(name)
+        if any(k in n_norm for k in ["nhap", "ton kho", "tonkho", "the kho", "thekho", "chi phi", "chiphi", "ncc", "bang gia", "banggia", "quy doi", "quydoi", "don vi", "donvi", "khach hang", "khachhang", "san pham", "sanpham", "danh muc", "danhmuc", "thanh toan", "thanhtoan", "lo"]):
+            continue
+        cols_norm = [_norm(c) for c in df.columns]
+        has_date = any(any(k in cn for k in ["ngay", "date", "thoi gian"]) for cn in cols_norm)
+        has_amt = any(any(k in cn for k in ["thanh tien", "t tien", "tien ban", "tri gia", "tong tien", "doanh thu", "amount"]) for cn in cols_norm)
+        if not (has_date and has_amt):
+            continue
+        seen_ids.add(id(df))
+        if any(k in n_norm for k in ["chi tiet", "chitiet", "detail", "so ban hang", "sobanhang", "ban hang", "banhang"]):
+            detail_candidates.append((name, df))
+        else:
+            header_candidates.append((name, df))
+
+    target_list = detail_candidates if (detail_candidates or require_product) else header_candidates
+    if not target_list:
+        target_list = header_candidates or detail_candidates
+    if not target_list:
+        return None, d_map
+
+    if len(target_list) == 1:
+        return target_list[0][1].copy(), d_map
+
+    # Nếu có các bảng phân mảnh theo kỳ (_1, _2, _2025, _2026) cùng cấu trúc cột, gộp lại
+    first_name, first_df = target_list[0]
+    first_cols = set(first_df.columns)
+    shards = [df for _, df in target_list if set(df.columns) == first_cols]
+    if len(shards) > 1:
+        return pd.concat(shards, ignore_index=True), d_map
+    return first_df.copy(), d_map
+
+
+def _find_line_revenue_col(df: pd.DataFrame, order_col: Optional[str] = None) -> Optional[str]:
+    """
+    Chọn cột doanh thu dòng hàng theo Điều 1 Rulebook:
+    - Sau chiết khấu cấp dòng, không trừ voucher cấp đơn, không gồm VAT và phí giao hàng.
+    - Tránh chọn các cột cấp đơn bị forward-fill lặp lại trên từng dòng sản phẩm (như Tổng bill, Khách trả, Còn lại).
+    """
+    def _norm(s: Any) -> str:
+        s_str = str(s).strip().lower().replace("đ", "d").replace("Đ", "d")
+        s_str = "".join(c for c in unicodedata.normalize("NFD", s_str) if unicodedata.category(c) != "Mn")
+        return re.sub(r"[^a-z0-9]+", " ", s_str).strip()
+
+    cols = list(df.columns)
+    forbidden = ["vat", "thue", "tax", "ship", "giao hang", "van chuyen", "voucher", "khach tra", "khach dua", "con lai", "con no", "tong bill", "tong thanh toan", "gia von", "gia nhap", "don gia", "gia san pham", "gia ban", "gia le"]
+
+    # Ưu tiên 1: Cột thành tiền cấp dòng rõ ràng
+    line_priority = ["thanh tien", "t tien", "tien ban", "tri gia", "tien hang", "line total", "amount"]
+    for kw in line_priority:
+        for c in cols:
+            cn = _norm(c)
+            if kw in cn and not any(f in cn for f in forbidden):
+                return c
+
+    # Ưu tiên 2: Cột tổng tiền / doanh thu (nhưng phải kiểm tra xem có bị lặp cấp đơn không)
+    fallback_priority = ["tong tien", "doanh thu", "tong"]
+    for kw in fallback_priority:
+        for c in cols:
+            cn = _norm(c)
+            if (cn == kw or kw in cn) and not any(f in cn for f in forbidden):
+                return c
+    return None
+
+
+def revenue(
+    data_or_df: Any,
+    start_date: Any = None,
+    end_date: Any = None,
+    as_of_date: Any = None,
+    product: Optional[str] = None,
+    customer: Optional[str] = None,
+) -> int:
+    """
+    Hàm tính Doanh thu tất định theo đúng Điều 1 & Điều 5 Rulebook:
+    - Doanh thu = tổng giá trị các dòng hàng đã bán sau chiết khấu cấp dòng;
+      không trừ giảm giá/voucher cấp đơn; không gồm VAT và phí giao hàng.
+    - Loại CẢ ĐƠN nếu đơn bị hủy hoặc có bất kỳ mặt hàng nào bị trả (dù chỉ trả 1 phần).
+    - Tránh cộng lặp các cột cấp đơn (Tổng bill, Khách trả) bị forward-fill trên nhiều dòng sản phẩm.
+    - Tự động lọc bỏ bản ghi sau ngày as_of_date (nếu có).
+    """
+    df, d_map = _select_sales_df(data_or_df, require_product=bool(product))
+    if df is None or df.empty:
+        return 0
+
+    def _norm(s: Any) -> str:
+        s_str = str(s).strip().lower().replace("đ", "d").replace("Đ", "d")
+        s_str = "".join(c for c in unicodedata.normalize("NFD", s_str) if unicodedata.category(c) != "Mn")
+        return re.sub(r"[^a-z0-9]+", " ", s_str).strip()
+
+    # 1. Loại cả đơn nếu đơn bị hủy hoặc có bất kỳ mặt hàng nào bị trả (gồm cả trả 1 phần / trả theo lô / dòng âm)
+    df = filter_valid_sales(df, data=d_map, as_of_date=str(as_of_date)[:10] if as_of_date else None)
+    if df.empty:
+        return 0
+
+    cols = list(df.columns)
+    order_col = next(
+        (c for c in cols if any(k in _norm(c) for k in ["ma don", "ma hoa don", "ma hd", "order id", "ma chung tu", "so ct", "ma gd", "so phieu"])),
+        None,
+    )
+    qty_col = next(
+        (c for c in cols if any(k in _norm(c) for k in ["so luong", "sl", "qty"]) and "quy doi" not in _norm(c) and "tra" not in _norm(c)),
+        None,
+    )
+    if qty_col and order_col:
+        q_num = clean_num(df[qty_col])
+        if (q_num < 0).any():
+            neg_ords = set(df.loc[q_num < 0, order_col].dropna().astype(str).str.strip())
+            df = df[~df[order_col].astype(str).str.strip().isin(neg_ords)]
+            if df.empty:
+                return 0
+
+    # 2. Lọc theo ngày (start_date, end_date, as_of_date)
+    date_col = next(
+        (c for c in cols if any(k in _norm(c) for k in ["ngay", "date", "thoi gian"])),
+        None,
+    )
+    if date_col:
+        dt_series = clean_date(df[date_col])
+        if as_of_date is not None:
+            as_of_dt = pd.to_datetime(str(as_of_date)[:10], errors="coerce")
+            if pd.notna(as_of_dt):
+                df = df[dt_series.dt.date <= as_of_dt.date()]
+                dt_series = dt_series.loc[df.index]
+        if start_date is not None:
+            s_dt = pd.to_datetime(str(start_date)[:10], errors="coerce")
+            if pd.notna(s_dt):
+                df = df[dt_series.dt.date >= s_dt.date()]
+                dt_series = dt_series.loc[df.index]
+        if end_date is not None:
+            e_dt = pd.to_datetime(str(end_date)[:10], errors="coerce")
+            if pd.notna(e_dt):
+                df = df[dt_series.dt.date <= e_dt.date()]
+                dt_series = dt_series.loc[df.index]
+
+    if df.empty:
+        return 0
+
+    # 3. Lọc theo sản phẩm / khách hàng nếu được truyền vào
+    if product:
+        prod_col = next(
+            (c for c in cols if any(k in _norm(c) for k in ["ten hang", "ten san pham", "ten mon", "san pham", "mat hang", "hang hoa", "hang"])),
+            None,
+        )
+        if prod_col:
+            df = df[df[prod_col].astype(str).str.contains(str(product), case=False, na=False)]
+    if customer:
+        cust_col = next(
+            (c for c in cols if any(k in _norm(c) for k in ["khach hang", "ten khach", "khach", "so kh", "ma kh"])),
+            None,
+        )
+        if cust_col:
+            df = df[df[cust_col].astype(str).str.contains(str(customer), case=False, na=False)]
+
+    if df.empty:
+        return 0
+
+    amt_col = _find_line_revenue_col(df, order_col=order_col)
+    if not amt_col:
+        return 0
+
+    return int(round(float(clean_num(df[amt_col]).sum())))
+
+
+def count_orders(
+    data_or_df: Any,
+    start_date: Any = None,
+    end_date: Any = None,
+    as_of_date: Any = None,
+    status: str = "valid",
+    product: Optional[str] = None,
+    customer: Optional[str] = None,
+) -> int:
+    """
+    Hàm đếm số đơn hàng tất định theo Điều 1 Rulebook:
+    - Mặc định (status='valid'): loại bỏ toàn bộ đơn bị hủy và đơn có bất kỳ mặt hàng nào bị trả,
+      sau đó đếm số mã đơn duy nhất (nunique).
+    - Nếu status='cancelled' / 'hủy': chỉ đếm số mã đơn duy nhất bị hủy.
+    - Nếu status='returned' / 'trả': chỉ đếm số mã đơn duy nhất bị trả hàng.
+    """
+    df, d_map = _select_sales_df(data_or_df, require_product=bool(product))
+    if df is None or df.empty:
+        return 0
+
+    def _norm(s: Any) -> str:
+        s_str = str(s).strip().lower().replace("đ", "d").replace("Đ", "d")
+        s_str = "".join(c for c in unicodedata.normalize("NFD", s_str) if unicodedata.category(c) != "Mn")
+        return re.sub(r"[^a-z0-9]+", " ", s_str).strip()
+
+    cols = list(df.columns)
+    order_col = next(
+        (c for c in cols if any(k in _norm(c) for k in ["ma don", "ma hoa don", "ma hd", "order id", "ma chung tu", "so ct", "ma gd", "so phieu"])),
+        None,
+    )
+    status_col = next(
+        (c for c in cols if any(k in _norm(c) for k in ["trang thai", "tinh trang", "status", "ghi chu tt", "xu ly"])),
+        None,
+    )
+
+    st_mode = _norm(status)
+    if st_mode in ("valid", "hop le", "thanh cong", "completed"):
+        df = filter_valid_sales(df, data=d_map, as_of_date=str(as_of_date)[:10] if as_of_date else None)
+    elif any(k in st_mode for k in ["cancel", "huy"]):
+        if status_col:
+            df = df[df[status_col].astype(str).str.contains(r"hủy|huỷ|huy|cancel", case=False, na=False)]
+    elif any(k in st_mode for k in ["return", "tra", "hoan"]):
+        if status_col:
+            df = df[df[status_col].astype(str).str.contains(r"trả|tra|hoàn(?!\s*(?:thành|tất))|hoan(?!\s*(?:thanh|tat))|return", case=False, na=False)]
+
+    if df.empty:
+        return 0
+
+    date_col = next(
+        (c for c in cols if any(k in _norm(c) for k in ["ngay", "date", "thoi gian"])),
+        None,
+    )
+    if date_col:
+        dt_series = clean_date(df[date_col])
+        if as_of_date is not None:
+            as_of_dt = pd.to_datetime(str(as_of_date)[:10], errors="coerce")
+            if pd.notna(as_of_dt):
+                df = df[dt_series.dt.date <= as_of_dt.date()]
+                dt_series = dt_series.loc[df.index]
+        if start_date is not None:
+            s_dt = pd.to_datetime(str(start_date)[:10], errors="coerce")
+            if pd.notna(s_dt):
+                df = df[dt_series.dt.date >= s_dt.date()]
+                dt_series = dt_series.loc[df.index]
+        if end_date is not None:
+            e_dt = pd.to_datetime(str(end_date)[:10], errors="coerce")
+            if pd.notna(e_dt):
+                df = df[dt_series.dt.date <= e_dt.date()]
+                dt_series = dt_series.loc[df.index]
+
+    if df.empty:
+        return 0
+
+    if product:
+        prod_col = next(
+            (c for c in cols if any(k in _norm(c) for k in ["ten hang", "ten san pham", "ten mon", "san pham", "mat hang", "hang hoa", "hang"])),
+            None,
+        )
+        if prod_col:
+            df = df[df[prod_col].astype(str).str.contains(str(product), case=False, na=False)]
+    if customer:
+        cust_col = next(
+            (c for c in cols if any(k in _norm(c) for k in ["khach hang", "ten khach", "khach", "so kh", "ma kh"])),
+            None,
+        )
+        if cust_col:
+            df = df[df[cust_col].astype(str).str.contains(str(customer), case=False, na=False)]
+
+    if df.empty:
+        return 0
+
+    if order_col and order_col in df.columns:
+        return int(df[order_col].dropna().astype(str).str.strip().replace("", np.nan).dropna().nunique())
+    return int(len(df))
+
+
+def debt(
+    data_or_df: Any,
+    end_date: Any = None,
+    as_of_date: Any = None,
+    customer: Optional[str] = None,
+) -> int:
+    """
+    Hàm tính tổng công nợ còn lại của khách hàng tính đến hết ngày end_date / as_of_date:
+    - Tìm bảng có cột nợ cấp đơn ('Còn lại', 'Còn nợ', 'Dư nợ', 'Tiền nợ').
+    - Khử trùng lặp theo Mã đơn hàng nếu bảng ở cấp dòng để không bao giờ cộng lặp nợ cấp đơn.
+    - Chỉ tính các đơn đã hoàn thành / hợp lệ (loại đơn hủy, trả hàng, hoặc đang giao chưa tất toán).
+    """
+    def _norm(s: Any) -> str:
+        s_str = str(s).strip().lower().replace("đ", "d").replace("Đ", "d")
+        s_str = "".join(c for c in unicodedata.normalize("NFD", s_str) if unicodedata.category(c) != "Mn")
+        return re.sub(r"[^a-z0-9]+", " ", s_str).strip()
+
+    target_df: Optional[pd.DataFrame] = None
+    debt_col: Optional[str] = None
+
+    if isinstance(data_or_df, pd.DataFrame):
+        target_df = data_or_df.copy()
+        debt_col = next((c for c in target_df.columns if any(k in _norm(c) for k in ["con lai", "con no", "du no", "tien no"])), None)
+    elif isinstance(data_or_df, dict):
+        for name, df in data_or_df.items():
+            if not isinstance(df, pd.DataFrame) or df.empty:
+                continue
+            dc = next((c for c in df.columns if any(k in _norm(c) for k in ["con lai", "con no", "du no", "tien no"])), None)
+            if dc:
+                target_df = df.copy()
+                debt_col = dc
+                break
+
+    if target_df is None or not debt_col:
+        return 0
+
+    cols = list(target_df.columns)
+    status_col = next(
+        (c for c in cols if any(k in _norm(c) for k in ["trang thai", "tinh trang", "status", "ghi chu tt", "xu ly"])),
+        None,
+    )
+    if status_col:
+        target_df = target_df[
+            ~target_df[status_col].astype(str).str.contains(
+                r"hủy|huỷ|huy|trả|tra|hoàn(?!\s*(?:thành|tất))|hoan(?!\s*(?:thanh|tat))|cancel|return|shipping|đang\s*giao|dang\s*giao|nháp|draft",
+                case=False,
+                na=False,
+            )
+        ]
+
+    cutoff = end_date or as_of_date
+    date_col = next(
+        (c for c in cols if any(k in _norm(c) for k in ["ngay", "date", "thoi gian"])),
+        None,
+    )
+    if date_col and cutoff is not None:
+        dt_s = clean_date(target_df[date_col])
+        c_dt = pd.to_datetime(str(cutoff)[:10], errors="coerce")
+        if pd.notna(c_dt):
+            target_df = target_df[dt_s.dt.date <= c_dt.date()]
+
+    if target_df.empty:
+        return 0
+
+    order_col = next(
+        (c for c in cols if any(k in _norm(c) for k in ["ma don", "ma hoa don", "ma hd", "order id", "ma chung tu", "so ct", "ma gd", "so phieu"])),
+        None,
+    )
+    if order_col and order_col in target_df.columns:
+        target_df = target_df.drop_duplicates(subset=[order_col], keep="first")
+
+    return int(round(float(clean_num(target_df[debt_col]).sum())))
+
+
+def _patch_pandas_groupby_numeric():
+    """
+    Đảm bảo SeriesGroupBy.sum() và SeriesGroupBy.mean() tự động chuyển chuỗi số
+    qua clean_num() thay vì nối chuỗi ('100' + '200' -> '100200') khi cột đang ở kiểu object.
+    """
+    try:
+        from pandas.core.groupby.generic import SeriesGroupBy
+    except ImportError:
+        return
+
+    orig_gb_sum = getattr(SeriesGroupBy, "sum", None)
+    if orig_gb_sum and not getattr(orig_gb_sum, "_is_numeric_resilient", False):
+        def _resilient_gb_sum(self, *args, **kwargs):
+            try:
+                obj = getattr(self, "obj", None)
+                if obj is not None and (obj.dtype == object or str(obj.dtype).startswith("string")):
+                    cleaned_obj = clean_num(obj)
+                    grouper = getattr(self, "_grouper", None) or getattr(self, "grouper", None)
+                    if grouper is not None:
+                        return cleaned_obj.groupby(grouper).sum(*args, **kwargs)
+            except Exception:
+                pass
+            return orig_gb_sum(self, *args, **kwargs)
+
+        _resilient_gb_sum._is_numeric_resilient = True
+        try:
+            SeriesGroupBy.sum = _resilient_gb_sum
+        except Exception:
+            pass
+
+    orig_gb_mean = getattr(SeriesGroupBy, "mean", None)
+    if orig_gb_mean and not getattr(orig_gb_mean, "_is_numeric_resilient", False):
+        def _resilient_gb_mean(self, *args, **kwargs):
+            try:
+                obj = getattr(self, "obj", None)
+                if obj is not None and (obj.dtype == object or str(obj.dtype).startswith("string")):
+                    cleaned_obj = clean_num(obj)
+                    grouper = getattr(self, "_grouper", None) or getattr(self, "grouper", None)
+                    if grouper is not None:
+                        return cleaned_obj.groupby(grouper).mean(*args, **kwargs)
+            except Exception:
+                pass
+            return orig_gb_mean(self, *args, **kwargs)
+
+        _resilient_gb_mean._is_numeric_resilient = True
+        try:
+            SeriesGroupBy.mean = _resilient_gb_mean
+        except Exception:
+            pass
+
+
 def _patch_pandas_resilience():
     _patch_pandas_date_comparisons()
     _patch_pandas_str_contains()
+    _patch_pandas_groupby_numeric()
 
 
 _patch_pandas_resilience()
@@ -1140,11 +1551,15 @@ __all__ = [
     "clean_date",
     "filter_valid_sales",
     "convert_to_base_qty",
+    "revenue",
+    "count_orders",
+    "debt",
     "should_retry_self_correction",
     "sanitize_code_syntax",
     "_strip_accents",
     "_patch_pandas_date_comparisons",
     "_patch_pandas_str_contains",
+    "_patch_pandas_groupby_numeric",
     "_patch_pandas_resilience",
 ]
 

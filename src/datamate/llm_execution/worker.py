@@ -271,6 +271,9 @@ class _ProtectedDefsTransformer(ast.NodeTransformer):
         "clean_num",
         "filter_valid_sales",
         "convert_to_base_qty",
+        "revenue",
+        "count_orders",
+        "debt",
         "DataNotFoundError",
         "_resolve_col_alias",
         "_strip_accents",
@@ -586,6 +589,7 @@ def execute_code_in_env(
     clean_num: Any,
     clean_date: Any,
     DataNotFoundError: Any,
+    as_of_date: Any = None,
 ) -> Dict[str, Any]:
     """Thực thi mã nguồn an toàn trong môi trường namespace có dữ liệu nạp sẵn."""
     from datamate.ingestion_schema.cleaner import filter_order_status, normalize_col_for_match
@@ -601,18 +605,37 @@ def execute_code_in_env(
         re.search(r"đơn\s*giá|don_gia|don\s*gia|giá\s*bán|gia\s*ban|bảng\s*giá", clean_code_no_comment)
         and not re.search(r"thành\s*tiền|tổng\s*tiền|tiền\s*bán|doanh\s*thu", clean_code_no_comment)
     )
+    cutoff_dt = pd.to_datetime(str(as_of_date)[:10], errors="coerce") if as_of_date else pd.NaT
 
     # Tạo bản sao shallow-copy để bảo vệ DataFrame gốc trong RAM
     raw_isolated: Dict[str, Any] = {}
     for k, v in data_dict.items():
         df_copy = v.copy(deep=False)
-        if not mentions_status_or_cancel and not is_unit_price_lookup and hasattr(df_copy, "columns"):
+        if hasattr(df_copy, "columns"):
             k_norm = normalize_col_for_match(k)
-            if not any(inv_k in k_norm for inv_k in ["ton kho", "tonkho", "the kho", "thekho", "san pham", "sanpham", "khach hang", "khachhang"]):
-                try:
-                    df_copy = filter_order_status(df_copy)
-                except Exception:
-                    pass
+            is_ref_or_inv = any(
+                inv_k in k_norm for inv_k in ["ton kho", "tonkho", "the kho", "thekho", "san pham", "sanpham", "khach hang", "khachhang", "bang gia", "banggia", "quy doi", "quydoi", "don vi", "donvi"]
+            )
+            if not is_ref_or_inv:
+                if not mentions_status_or_cancel and not is_unit_price_lookup:
+                    try:
+                        df_copy = filter_order_status(df_copy)
+                    except Exception:
+                        pass
+                # Điều 5 Rulebook: bản ghi ngày sau hôm nay (as_of_date) coi như chưa xảy ra
+                if pd.notna(cutoff_dt) and not is_unit_price_lookup:
+                    d_col = next(
+                        (c for c in df_copy.columns if any(dk in normalize_col_for_match(c) for dk in ["ngay", "date", "thoi gian"]) and "han su dung" not in normalize_col_for_match(c) and "ngay sinh" not in normalize_col_for_match(c)),
+                        None,
+                    )
+                    if d_col:
+                        try:
+                            s_dt = clean_date(df_copy[d_col])
+                            mask_le = s_dt.isna() | (s_dt.dt.date <= cutoff_dt.date())
+                            if not mask_le.all():
+                                df_copy = df_copy.loc[mask_le].reset_index(drop=True)
+                        except Exception:
+                            pass
         raw_isolated[k] = df_copy
 
     # Sắp xếp thứ tự duyệt dict (items / values / keys) thông minh:
@@ -655,7 +678,22 @@ def execute_code_in_env(
         except Exception:
             return 0.0
 
-    from datamate.llm_execution.sandbox import filter_valid_sales, convert_to_base_qty
+    from datamate.llm_execution.sandbox import (
+        filter_valid_sales,
+        convert_to_base_qty,
+        revenue as _sb_revenue,
+        count_orders as _sb_count_orders,
+        debt as _sb_debt,
+    )
+
+    def _bound_revenue(data_or_df: Any = smart_data, start_date: Any = None, end_date: Any = None, as_of_date: Any = as_of_date, **kwargs: Any) -> int:
+        return _sb_revenue(data_or_df, start_date=start_date, end_date=end_date, as_of_date=as_of_date, **kwargs)
+
+    def _bound_count_orders(data_or_df: Any = smart_data, start_date: Any = None, end_date: Any = None, as_of_date: Any = as_of_date, **kwargs: Any) -> int:
+        return _sb_count_orders(data_or_df, start_date=start_date, end_date=end_date, as_of_date=as_of_date, **kwargs)
+
+    def _bound_debt(data_or_df: Any = smart_data, end_date: Any = None, as_of_date: Any = as_of_date, **kwargs: Any) -> int:
+        return _sb_debt(data_or_df, end_date=end_date, as_of_date=as_of_date, **kwargs)
 
     namespace = {
         "__builtins__": __builtins__,
@@ -663,6 +701,7 @@ def execute_code_in_env(
         "dfs": smart_data,
         "data": smart_data,
         "business": business,
+        "AS_OF_DATE": str(as_of_date)[:10] if as_of_date else None,
         "pd": pd,
         "np": np,
         "re": re,
@@ -675,6 +714,9 @@ def execute_code_in_env(
         "filter_future_data": filter_future_data,
         "filter_valid_sales": filter_valid_sales,
         "convert_to_base_qty": convert_to_base_qty,
+        "revenue": _bound_revenue,
+        "count_orders": _bound_count_orders,
+        "debt": _bound_debt,
         "clean_num": clean_num,
         "clean_date": clean_date,
         "_strip_accents": _strip_accents,
@@ -910,6 +952,7 @@ def main():
                 break
             elif cmd == "run":
                 code_text = msg.get("code", "")
+                as_of_date = msg.get("as_of_date")
                 result_payload = execute_code_in_env(
                     code_str=code_text,
                     data_dict=ctx["data_dict"],
@@ -922,6 +965,7 @@ def main():
                     clean_num=ctx["clean_num"],
                     clean_date=ctx["clean_date"],
                     DataNotFoundError=ctx["DataNotFoundError"],
+                    as_of_date=as_of_date,
                 )
                 serialized = json.dumps(result_payload, ensure_ascii=False)
                 sys.stdout.write(f"__RESULT__:{serialized}\n")
