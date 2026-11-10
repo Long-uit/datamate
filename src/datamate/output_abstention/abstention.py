@@ -378,6 +378,30 @@ def evaluate_semantic_rule_compliance(
         except Exception:
             pass
 
+    # 11. Bất cân xứng khoảng thời gian so sánh (so sánh một ngày với nửa tháng / nhiều ngày)
+    # hoặc câu hỏi hỏi 'từ đầu tháng' nhưng code chỉ lọc 1 ngày hôm nay (as_of_date)
+    if as_of_date and re.search(r"\b(?:tu\s*dau\s*thang|từ\s*đầu\s*tháng)\b", q_low + " " + q_no_acc) and clean_c:
+        try:
+            aod_str = str(as_of_date).strip()
+            parts = aod_str.split("-")
+            month_start_iso = f"{parts[0]}-{parts[1]}-01"
+            has_month_start = (
+                (month_start_iso in clean_c)
+                or ("start_date" in clean_c)
+                or ("dt.month" in clean_c and "dt.day >=" not in clean_c)
+                or ("revenue(" in clean_c and ("start_date" in clean_c or month_start_iso in clean_c))
+            )
+            is_single_aod_day = bool(
+                re.search(rf"clean_date.*?>=\s*pd\.timestamp\(['\"]{aod_str}.*?clean_date.*?<=\s*pd\.timestamp\(['\"]{aod_str}", clean_c)
+                or re.search(rf"{aod_str}.*?{aod_str}", clean_c)
+                or re.search(rf"dt\.day\s*==\s*{int(parts[2])}\b", clean_c)
+            )
+            if not has_month_start and is_single_aod_day:
+                violations.append(f"Câu hỏi yêu cầu tính 'từ đầu tháng' (as_of_date={as_of_date}) nhưng code chỉ lọc duy nhất 1 ngày hôm nay (so sánh một ngày với nửa tháng)")
+                semantic_penalty += 0.60
+        except Exception:
+            pass
+
     semantic_penalty = round(min(0.80, semantic_penalty), 4)
     return {
         "is_compliant": len(violations) == 0,

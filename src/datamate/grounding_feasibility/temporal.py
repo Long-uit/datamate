@@ -189,6 +189,13 @@ def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _strip_accents_temp(text: str) -> str:
+    """Bỏ dấu tiếng Việt để hỗ trợ giải mã thời gian trên câu hỏi không dấu / teencode."""
+    s = _normalize_text(text).replace("đ", "d")
+    s = "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+    return re.sub(r"\s+", " ", s).strip()
+
+
 def parse_date(date_str: str) -> date:
     """Chuyển đổi chuỗi ngày YYYY-MM-DD sang date object."""
     date_str = str(date_str).strip()[:10]
@@ -227,14 +234,54 @@ def resolve_temporal(
     """
     d = parse_date(as_of_date)
     q = _normalize_text(question)
+    q_no_acc = _strip_accents_temp(question)
     windows: List[TimeWindow] = []
 
     if calendar is None:
         calendar = get_calendar()
 
-    # 0a. Ngày cụ thể: ví dụ "vào ngày 01/12/2025", "ngay 01/12/2025", "ngày 01/12/2025"
+    # 0a. Khoảng N ngày kể từ ngày cụ thể (vd: "trong 30 ngày kể từ ngày 05/03/2026 ... với 30 ngày ngay trước ngày đó")
+    m_span_from_date = re.search(
+        r"(\d+)\s*ngay\s*(?:ke\s*tu|tinh\s*tu|bat\s*dau\s*tu|tu)\s*(?:ngay\s*)?(\d{1,2}[/-]\d{1,2}[/-]\d{4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})",
+        q_no_acc,
+    )
+    if m_span_from_date:
+        n_span = int(m_span_from_date.group(1))
+        d_str = m_span_from_date.group(2)
+        try:
+            parts = d_str.split("/") if "/" in d_str else d_str.split("-")
+            anchor_d = (
+                date(int(parts[0]), int(parts[1]), int(parts[2]))
+                if len(parts[0]) == 4
+                else date(int(parts[2]), int(parts[1]), int(parts[0]))
+            )
+            span_end = anchor_d + timedelta(days=n_span - 1)
+            windows.append(TimeWindow(
+                start_date=anchor_d.isoformat(),
+                end_date=span_end.isoformat(),
+                label=f"span_{n_span}_days_from_{anchor_d.isoformat()}",
+                description=f"{n_span} ngày kể từ {anchor_d.isoformat()} (đến {span_end.isoformat()})",
+            ))
+            m_prev_span = re.search(
+                r"(?:voi|so\s*voi)\s*(\d+)?\s*ngay\s*(?:ngay\s*|lien\s*)?truoc",
+                q_no_acc,
+            )
+            if m_prev_span:
+                n_prev = int(m_prev_span.group(1)) if m_prev_span.group(1) else n_span
+                prev_end = anchor_d - timedelta(days=1)
+                prev_start = anchor_d - timedelta(days=n_prev)
+                windows.append(TimeWindow(
+                    start_date=prev_start.isoformat(),
+                    end_date=prev_end.isoformat(),
+                    label=f"compared_prev_{n_prev}_days",
+                    description=f"{n_prev} ngày ngay trước {anchor_d.isoformat()} (từ {prev_start.isoformat()} đến {prev_end.isoformat()})",
+                ))
+        except Exception:
+            pass
+
+    # 0a-2. Ngày cụ thể: ví dụ "vào ngày 01/12/2025", "ngay 01/12/2025", "ngày 01/12/2025" (bỏ qua nếu đã khớp m_span_from_date)
     m_exact_date = re.search(r"(?:vào\s+ngày|vao\s+ngay|ngay|ngày)\s+(\d{1,2}[/-]\d{1,2}[/-]\d{4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})", q)
-    if m_exact_date:
+    if m_exact_date and not m_span_from_date:
         d_str = m_exact_date.group(1)
         try:
             if "/" in d_str:
@@ -254,12 +301,14 @@ def resolve_temporal(
         except Exception:
             pass
 
-    # 0b. Kiểm tra trước cụm "từ đầu năm" để tránh "hôm nay"/"hnay"/"bữa nay" bị khớp sớm
-    ytd_pattern = r"t[uừ]\s*[dđ][aầ]u\s*n[aă]m(\s*(?:cho\s*)?(t[oớ]i|[dđ][eế]n)\s*(h[eế]t\s*)?(nay|hnay|(?:ng[aà]y\s*)?h[oô]m\s*nay|b[uữ]a\s*nay))?"
-    has_ytd = bool(re.search(ytd_pattern, q))
+    # 0b. Kiểm tra trước cụm "từ đầu năm" và "từ đầu tháng" để tránh "hôm nay"/"hnay"/"bữa nay" bị khớp sớm thành 1 ngày
+    ytd_pattern = r"tu\s*dau\s*nam(\s*(?:cho\s*)?(toi|den)\s*(het\s*)?(nay|hnay|(?:ngay\s*)?hom\s*nay|bua\s*nay))?"
+    mtd_pattern = r"tu\s*dau\s*thang(\s*nay)?(\s*(?:cho\s*)?(toi|den)\s*(het\s*)?(nay|hnay|(?:ngay\s*)?hom\s*nay|bua\s*nay))?"
+    has_ytd = bool(re.search(ytd_pattern, q_no_acc))
+    has_mtd = bool(re.search(mtd_pattern, q_no_acc))
 
-    # 1. Hôm nay / ngày mốc (loại trừ nếu thuộc cụm từ đầu năm)
-    if not has_ytd and re.search(r"\bh[oô]m nay\b|\bng[aà]y m[oố]c\b|\bhnay\b|\bb[uữ]a nay\b", q):
+    # 1. Hôm nay / ngày mốc (loại trừ nếu thuộc cụm từ đầu năm hoặc từ đầu tháng)
+    if not has_ytd and not has_mtd and re.search(r"\bhom\s*nay\b|\bngay\s*moc\b|\bhnay\b|\bbua\s*nay\b", q_no_acc):
         windows.append(TimeWindow(
             start_date=d.isoformat(),
             end_date=d.isoformat(),
@@ -267,8 +316,8 @@ def resolve_temporal(
             description=f"Hôm nay ({d.isoformat()})",
         ))
 
-    # 2. Hôm qua
-    if re.search(r"\bh[oô]m qua\b", q):
+    # 2. Hôm qua / bữa qua / hqua
+    if re.search(r"\bhom\s*qua\b|\bbua\s*qua\b|\bhqua\b", q_no_acc):
         yesterday = d - timedelta(days=1)
         windows.append(TimeWindow(
             start_date=yesterday.isoformat(),
@@ -278,7 +327,7 @@ def resolve_temporal(
         ))
 
     # 3. Tuần này (Thứ Hai đầu tuần chứa D đến hết D)
-    if re.search(r"\btu[aầ]n n[aà]y\b|\btrong tu[aầ]n n[aà]y\b", q):
+    if re.search(r"\btuan\s*nay\b|\btrong\s*tuan\s*nay\b", q_no_acc):
         monday = d - timedelta(days=d.weekday())
         windows.append(TimeWindow(
             start_date=monday.isoformat(),
@@ -288,7 +337,7 @@ def resolve_temporal(
         ))
 
     # 4. Tuần trước / tuần rồi (Thứ Hai đến Chủ Nhật của tuần ngay trước)
-    if re.search(r"\btu[aầ]n tr[uư][oớ]c\b|\btu[aầ]n r[oồ]i\b", q):
+    if re.search(r"\btuan\s*truoc\b|\btuan\s*roi\b", q_no_acc):
         last_week_monday = d - timedelta(days=d.weekday() + 7)
         last_week_sunday = last_week_monday + timedelta(days=6)
         windows.append(TimeWindow(
@@ -299,7 +348,7 @@ def resolve_temporal(
         ))
 
     # 5. Tháng này (Từ 01 của tháng chứa D đến hết D)
-    has_this_month = bool(re.search(r"\bth[aá]ng n[aà]y\b|\btrong th[aá]ng n[aà]y\b|\bthang nay\b", q))
+    has_this_month = bool(has_mtd or re.search(r"\bthang\s*nay\b|\btrong\s*thang\s*nay\b", q_no_acc))
     if has_this_month:
         month_start = d.replace(day=1)
         windows.append(TimeWindow(
@@ -309,8 +358,11 @@ def resolve_temporal(
             description=f"Tháng này (từ {month_start.isoformat()} đến {d.isoformat()})",
         ))
 
-    # 6. Tháng trước / tháng rồi
-    if re.search(r"\bth[aá]ng tr[uư][oớ]c\b|\bth[aá]ng r[oồ]i\b|\bthang truoc\b|\bthang roi\b", q):
+    # 6. Tháng trước / tháng rồi (chỉ tính theo as_of_date nếu câu hỏi không nêu đích danh tháng M/YYYY khác)
+    has_explicit_month_num = bool(
+        re.search(r"\bth(?:ang|angs)\s*(\d{1,2})\b", q_no_acc)
+    )
+    if re.search(r"\bthang\s*(?:lien\s*)?(?:truoc|roi|trc)\b", q_no_acc) and (has_this_month or not has_explicit_month_num):
         if d.month == 1:
             lm_year = d.year - 1
             lm_month = 12
@@ -322,8 +374,8 @@ def resolve_temporal(
 
         is_comparison = bool(
             has_this_month
-            or re.search(r"so\s*(v[oớ]i|s[aá]nh)?\s*th[aá]ng\s*(tr[uư][oớ]c|r[oồ]i|li[eề]n\s*tr[uư][oớ]c)", q)
-            or re.search(r"(t[aă]ng|gi[aả]m|ch[eê]nh\s*l[eệ]ch|thay\s*đ[oổ]i)\b.*th[aá]ng\s*(tr[uư][oớ]c|r[oồ]i)", q)
+            or re.search(r"(?:so\s*(?:voi|sanh)?|cung\s*ky|hon\s*hay\s*kem)\s*thang\s*(?:lien\s*)?(?:truoc|roi|trc)", q_no_acc)
+            or re.search(r"(?:tang|giam|chenh\s*lech|thay\s*doi)\b.*thang\s*(?:lien\s*)?(?:truoc|roi|trc)", q_no_acc)
         )
 
         if is_comparison:
@@ -353,8 +405,8 @@ def resolve_temporal(
             description=f"Từ đầu năm đến hôm nay ({year_start.isoformat()} - {d.isoformat()})",
         ))
 
-    # 8. N ngày gần nhất / N ngày qua / N ngày vừa qua / N ngày gần đây
-    m_ndays = re.search(r"(\d+)\s*ng[aà]y\s*(g[aầ]n\s*nh[aấ]t|qua|v[uừ]a\s*qua|g[aầ]n\s*đ[aâ]y)", q)
+    # 8. N ngày gần nhất / N ngày qua / N ngày vừa qua / N ngày gần đây (hỗ trợ cả không dấu và kỳ so sánh)
+    m_ndays = re.search(r"(\d+)\s*ngay\s*(gan\s*nhat|qua|vua\s*qua|gan\s*day)", q_no_acc)
     if m_ndays:
         n = int(m_ndays.group(1))
         start_ndays = d - timedelta(days=n - 1)
@@ -364,6 +416,15 @@ def resolve_temporal(
             label=f"{n}_days_recent",
             description=f"{n} ngày gần nhất (từ {start_ndays.isoformat()} đến {d.isoformat()})",
         ))
+        if re.search(r"(?:so\s*voi|voi|hon\s*hay\s*kem)\s*(?:\d+\s*ngay\s*(?:ngay\s*|lien\s*)?truoc|ky\s*truoc|cung\s*ky)", q_no_acc):
+            prev_end = start_ndays - timedelta(days=1)
+            prev_start = start_ndays - timedelta(days=n)
+            windows.append(TimeWindow(
+                start_date=prev_start.isoformat(),
+                end_date=prev_end.isoformat(),
+                label=f"compared_prev_{n}_days",
+                description=f"{n} ngày liền trước (từ {prev_start.isoformat()} đến {prev_end.isoformat()})",
+            ))
 
     # 9. Tháng M (có hoặc không ghi năm)
     m_month = re.search(r"\bth(?:[aá]ng|ang|angs)\s*(\d{1,2})(?:\s*(?:/|n[aă]m|[\s\-])\s*(\d{4}))?\b", q)
@@ -530,9 +591,8 @@ def resolve_temporal(
             description=f"Cả năm {y_val} (từ 01/01/{y_val} đến 31/12/{y_val})",
         ))
 
-    # 11. Tết năm Y / dịp Tết / mùa Tết / trước Tết
-    m_tet = re.search(r"(so\s*v[oớ]i\s*)?(tr[uư][oớ]c\s*)?(d[iị]p\s*|m[uù]a\s*)?t[eế]t(?:\s*n[aă]m\s*(\d{4}))?", q)
-    if m_tet:
+    # 11. Tết năm Y / dịp Tết / mùa Tết / trước Tết (dùng finditer để bắt cả kỳ chính Tết và kỳ so sánh trước Tết)
+    for m_tet in re.finditer(r"(so\s*v[oớ]i\s*)?(tr[uư][oớ]c\s*)?(d[iị]p\s*|m[uù]a\s*)?t[eế]t(?:\s*n[aă]m\s*(\d{4}))?", q):
         if m_tet.group(4):
             tet_year = int(m_tet.group(4))
         else:
@@ -541,7 +601,6 @@ def resolve_temporal(
         is_pre_tet = bool(m_tet.group(2) or m_tet.group(1))
 
         tet_found: Optional[Tuple[str, str]] = None
-        # 1. Tra cứu qua calendar instance nếu có
         if calendar is not None:
             try:
                 if is_pre_tet:
@@ -551,7 +610,6 @@ def resolve_temporal(
             except Exception:
                 pass
 
-        # 2. Fallback qua TET_SOLAR_RANGES
         if not tet_found and tet_year in TET_SOLAR_RANGES:
             s_d, e_d = TET_SOLAR_RANGES[tet_year]
             if is_pre_tet:
@@ -566,20 +624,54 @@ def resolve_temporal(
 
         if tet_found:
             t_start, t_end = tet_found
-            if is_pre_tet:
+            lbl = f"pre_tet_{tet_year}" if is_pre_tet else f"tet_{tet_year}"
+            if not any(w.label == lbl for w in windows):
+                if is_pre_tet:
+                    windows.append(TimeWindow(
+                        start_date=t_start,
+                        end_date=t_end,
+                        label=lbl,
+                        description=f"Giai đoạn trước Tết năm {tet_year} ({t_start} đến {t_end})",
+                    ))
+                else:
+                    windows.append(TimeWindow(
+                        start_date=t_start,
+                        end_date=t_end,
+                        label=lbl,
+                        description=f"Tết năm {tet_year} (từ 23 Chạp đến mùng 10 Giêng: {t_start} đến {t_end})",
+                    ))
+
+    # 12. Tự động bổ sung kỳ so sánh (tháng trước / kỳ trước / cùng kỳ năm ngoái) nếu câu hỏi có kỳ chính cụ thể
+    has_comp = any(any(k in w.label for k in ["compared", "pre_tet", "last_month_compared"]) for w in windows)
+    if windows and not has_comp:
+        p_win = windows[0]
+        try:
+            p_s = parse_date(p_win.start_date)
+            p_e = parse_date(p_win.end_date)
+            # 12a. Cùng kỳ năm ngoái / cùng kỳ năm trước
+            if re.search(r"cung\s*ky\s*nam\s*(?:ngoai|truoc|trc)|so\s*voi\s*nam\s*(?:ngoai|truoc|trc)", q_no_acc):
+                cs_end_max = get_month_end(p_e.year - 1, p_e.month).day
+                cs = date(p_s.year - 1, p_s.month, min(p_s.day, get_month_end(p_s.year - 1, p_s.month).day))
+                ce = date(p_e.year - 1, p_e.month, min(p_e.day, cs_end_max))
                 windows.append(TimeWindow(
-                    start_date=t_start,
-                    end_date=t_end,
-                    label=f"pre_tet_{tet_year}",
-                    description=f"Giai đoạn trước Tết năm {tet_year} ({t_start} đến {t_end})",
+                    start_date=cs.isoformat(),
+                    end_date=ce.isoformat(),
+                    label="compared_same_period_last_year",
+                    description=f"Cùng kỳ năm trước (từ {cs.isoformat()} đến {ce.isoformat()})",
                 ))
-            else:
+            # 12b. Tháng M/YYYY so với tháng trước / kỳ trước
+            elif p_win.label.startswith("month_") and re.search(r"(?:so\s*voi|voi|hon\s*hay\s*kem|tang\s*hay\s*giam).*?(?:thang\s*(?:lien\s*)?(?:truoc|roi|trc)|ky\s*truoc)", q_no_acc):
+                prev_y, prev_m = (p_s.year - 1, 12) if p_s.month == 1 else (p_s.year, p_s.month - 1)
+                cs = date(prev_y, prev_m, 1)
+                ce = get_month_end(prev_y, prev_m)
                 windows.append(TimeWindow(
-                    start_date=t_start,
-                    end_date=t_end,
-                    label=f"tet_{tet_year}",
-                    description=f"Tết năm {tet_year} (từ 23 Chạp đến mùng 10 Giêng: {t_start} đến {t_end})",
+                    start_date=cs.isoformat(),
+                    end_date=ce.isoformat(),
+                    label="last_month_compared",
+                    description=f"Tháng trước (tháng {prev_m}/{prev_y}: từ {cs.isoformat()} đến {ce.isoformat()})",
                 ))
+        except Exception:
+            pass
 
     return windows
 
@@ -617,6 +709,10 @@ def resolve_temporal_context(
         if comp_win is not None and primary_win is not None:
             desc = f"Kỳ chính: {primary_win.description} | Kỳ đối chiếu: {comp_win.description}"
             code_hint = (
+                f"START_DATE = '{primary_win.start_date}'\n"
+                f"END_DATE = '{primary_win.end_date}'\n"
+                f"COMP_START_DATE = '{comp_win.start_date}'\n"
+                f"COMP_END_DATE = '{comp_win.end_date}'\n"
                 f"# Kỳ chính: (df[date_col] >= pd.Timestamp('{primary_win.start_date}')) & (df[date_col] <= pd.Timestamp('{primary_win.end_date} 23:59:59'))\n"
                 f"# Kỳ so sánh: (df[date_col] >= pd.Timestamp('{comp_win.start_date}')) & (df[date_col] <= pd.Timestamp('{comp_win.end_date} 23:59:59'))"
             )
@@ -631,7 +727,11 @@ def resolve_temporal_context(
                 "code_hint": code_hint,
             }
         elif primary_win is not None:
-            code_hint = f"(df[date_col] >= pd.Timestamp('{primary_win.start_date}')) & (df[date_col] <= pd.Timestamp('{primary_win.end_date} 23:59:59'))"
+            code_hint = (
+                f"START_DATE = '{primary_win.start_date}'\n"
+                f"END_DATE = '{primary_win.end_date}'\n"
+                f"(df[date_col] >= pd.Timestamp('{primary_win.start_date}')) & (df[date_col] <= pd.Timestamp('{primary_win.end_date} 23:59:59'))"
+            )
             return {
                 "as_of_date": as_of_date_str,
                 "start_date": primary_win.start_date,
@@ -760,23 +860,27 @@ def filter_future_data(
 
 
 def format_temporal_for_prompt(temporal_res: dict) -> str:
-    """Định dạng thông tin thời gian đã giải mã thành chuỗi đưa vào prompt."""
+    """Định dạng thông tin thời gian đã giải mã thành chuỗi hằng số đưa vào prompt."""
     if not temporal_res or not isinstance(temporal_res, dict):
         return ""
     lines = []
     as_of = temporal_res.get("as_of_date")
     if as_of:
-        lines.append(f"- Mốc tham chiếu (as_of_date): {as_of}")
+        lines.append(f"- Mốc tham chiếu (AS_OF_DATE): '{as_of}'")
     s_d = temporal_res.get("start_date")
     e_d = temporal_res.get("end_date")
+    c_s = temporal_res.get("comparison_start")
+    c_e = temporal_res.get("comparison_end")
     desc = temporal_res.get("description", "")
     if s_d or e_d:
-        lines.append(f"- Khoảng ngày: từ '{s_d}' đến '{e_d}' ({desc})")
+        lines.append(f"- Khoảng ngày đã giải mã: START_DATE = '{s_d}', END_DATE = '{e_d}' ({desc})")
     elif desc:
         lines.append(f"- Thời gian: {desc}")
+    if c_s and c_e:
+        lines.append(f"- Khoảng so sánh đã giải mã: COMP_START_DATE = '{c_s}', COMP_END_DATE = '{c_e}' ({temporal_res.get('comparison_desc', '')})")
     hint = temporal_res.get("code_hint")
     if hint:
-        lines.append(f"- Gợi ý lọc code: {hint}")
+        lines.append(f"- Hằng số & công thức lọc ngày bắt buộc dùng trực tiếp:\n{hint}")
     return "\n".join(lines)
 
 

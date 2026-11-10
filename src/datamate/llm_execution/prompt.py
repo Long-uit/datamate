@@ -36,6 +36,7 @@ except ImportError:
 try:
     from datamate.grounding_feasibility.temporal import (
         TET_SOLAR_RANGES,
+        format_temporal_for_prompt,
         get_calendar,
         get_tet_dates_from_calendar,
         parse_date,
@@ -45,6 +46,7 @@ try:
 except ImportError:
     resolve_temporal = None
     resolve_temporal_context = None
+    format_temporal_for_prompt = lambda x: ""
     get_calendar = None
     TET_SOLAR_RANGES = {
         2024: ("2024-02-02", "2024-02-19"),
@@ -1810,14 +1812,7 @@ def build_prompt(
         )
 
     temporal_info = resolve_temporal_context(question, as_of_date, calendar_path=calendar_path)
-    temporal_lines = [f"- Mốc tham chiếu (as_of_date / hôm nay): {temporal_info['as_of_date']}"]
-    if temporal_info.get("comparison_start") and temporal_info.get("comparison_end"):
-        temporal_lines.append(f"- Kỳ chính: từ '{temporal_info.get('start_date')}' đến '{temporal_info.get('end_date')}'")
-        temporal_lines.append(f"- Kỳ đối chiếu: từ '{temporal_info.get('comparison_start')}' đến '{temporal_info.get('comparison_end')}' ({temporal_info.get('comparison_desc', '')})")
-    else:
-        temporal_lines.append(f"- Khoảng thời gian giải mã: {temporal_info['description']}")
-    temporal_lines.append(f"- CÔNG THỨC LỌC THỜI GIAN BẮT BUỘC: {temporal_info['code_hint']}")
-    temporal_text = "\n".join(temporal_lines)
+    temporal_text = format_temporal_for_prompt(temporal_info)
 
     entity_block = ""
     matches = entity_matches
