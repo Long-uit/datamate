@@ -240,7 +240,7 @@ def main():
     parser.add_argument("--output_file", type=str, default=default_output_file, help=f"Đường dẫn file xuất kết quả (mặc định: {default_output_file})")
     parser.add_argument("--log_dir", type=str, default=default_log_dir, help=f"Thư mục lưu log chi tiết từng câu hỏi (mặc định: {default_log_dir})")
     parser.add_argument("--log_file", type=str, default=None, help="Đường dẫn tệp để tự động ghi toàn bộ nhật ký console UTF-8 (thay thế cho Tee-Object)")
-    parser.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Coder-7B-Instruct", help="Tên hoặc đường dẫn mô hình (mặc định: Qwen/Qwen2.5-Coder-7B-Instruct)")
+    parser.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Coder-14B-Instruct", help="Tên hoặc đường dẫn mô hình (mặc định: Qwen/Qwen2.5-Coder-14B-Instruct)")
     parser.add_argument("--limit", type=int, default=None, help="Giới hạn số lượng câu hỏi cần chạy suy luận bằng LLM (mặc định: toàn bộ)")
     parser.add_argument("--biz", type=str, default=None, help="Chỉ chạy câu hỏi thuộc doanh nghiệp cụ thể (ví dụ: biz_201)")
     parser.add_argument("--id", type=str, default=None, help="Chỉ chạy câu hỏi theo ID cụ thể")
@@ -251,7 +251,13 @@ def main():
     parser.add_argument("--seed", type=int, default=42, help="Cố định random seed cho tính tái lập tuyệt đối (mặc định: 42)")
     parser.add_argument("--timeout", type=int, default=30, help="Thời gian chờ tối đa khi chạy code trong sandbox (giây, mặc định: 30)")
     parser.add_argument("--in_process", action="store_true", help="Chạy code trực tiếp trong tiến trình (bảo vệ cache bằng bản sao RAM) thay vì sandbox subprocess")
+    parser.add_argument("--quantization", "--quant", type=str, default="8bit", choices=["8bit", "4bit", "none"], help="Chế độ lượng tử hóa mô hình (mặc định: 8bit)")
+    parser.add_argument("--preserve_order", action="store_true", help="Chạy đúng theo thứ tự gốc từ câu 1 đến câu cuối trong questions.jsonl (không gom nhóm theo shop)")
+    parser.add_argument("--range", type=str, default=None, help="Chỉ định khoảng câu hỏi cần chạy (1-based, ví dụ: 1-100 hoặc 501-1000)")
     args = parser.parse_args()
+
+    if args.quantization:
+        os.environ["DATAMATE_QUANTIZATION"] = args.quantization
 
     # Cố định random seed cho tính tái lập tuyệt đối
     import random
@@ -304,6 +310,15 @@ def main():
         target_questions = [q for q in target_questions if q.get("id") == args.id]
         print(f"• Lọc theo Question ID  : {args.id} ({len(target_questions)} câu)")
 
+    if getattr(args, "range", None):
+        m_range = re.match(r"^(\d+)[\-:,_](\d+)$", str(args.range).strip())
+        if m_range:
+            s_num = max(1, int(m_range.group(1)))
+            e_num = min(len(target_questions), int(m_range.group(2)))
+            if s_num <= e_num:
+                target_questions = target_questions[s_num - 1 : e_num]
+                print(f"• Chọn khoảng câu hỏi   : từ câu {s_num} đến câu {e_num} ({len(target_questions)} câu)")
+
     # Xử lý tính năng Resume nếu được kích hoạt
     existing_completed_ids = set()
     output_path = Path(args.output_file)
@@ -330,8 +345,9 @@ def main():
     total_target = len(target_questions)
     active_limit = args.limit if args.limit is not None else total_target
     active_questions = target_questions[:active_limit]
-    # Gom nhóm các câu hỏi theo shop để tận dụng tối đa RAM Cache và Persistent Sandbox Worker
-    active_questions = sorted(active_questions, key=lambda q: (q.get("business_id", ""), q.get("id", "")))
+    # Gom nhóm các câu hỏi theo shop để tận dụng tối đa RAM Cache (trừ khi bật --preserve_order để chạy tuần tự 1 -> 1000)
+    if not args.preserve_order:
+        active_questions = sorted(active_questions, key=lambda q: (q.get("business_id", ""), q.get("id", "")))
     active_qids = {q["id"] for q in active_questions} | existing_completed_ids
 
     print(f"• Số câu chạy suy luận  : {len(active_questions)} câu")

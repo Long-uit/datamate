@@ -2,7 +2,7 @@
 tests/llm_execution/test_worker.py — Kiểm thử tự động độc lập 4 tệp cốt lõi và worker trong src/datamate/llm_execution.
 
 Bao gồm:
-1. client.py: Kiểm tra validate_code, extract_python_code, cut_after_first_solution, LLMClient cấu hình Qwen2.5-Coder-7B.
+1. client.py: Kiểm tra validate_code, extract_python_code, cut_after_first_solution, LLMClient cấu hình Qwen2.5-Coder-14B.
 2. prompt.py: Kiểm tra classify_intent, prune_schema_by_intent, build_prompt, build_retry_prompt, resolve_temporal_context, retrieve_dynamic_few_shot.
 3. sandbox.py: Kiểm tra clean_num, clean_date, PersistentWorker, thực thi RunResult, One-shot fallback.
 4. worker.py: Kiểm tra serialization dữ liệu và luồng IPC qua subprocess.
@@ -54,10 +54,10 @@ class TestLLMExecutionSuite(unittest.TestCase):
         dup = "def solution(data):\n    return 1\ndef solution(data):\n    return 2"
         self.assertEqual(cut_after_first_solution(dup).strip(), "def solution(data):\n    return 1")
 
-        # Test default model configuration is Qwen2.5-Coder-7B
+        # Test default model configuration is Qwen2.5-Coder-14B
         client = LLMClient(auto_load=False)
-        self.assertIn("7B", client.model_id)
-        self.assertEqual(client.model_id, "Qwen/Qwen2.5-Coder-7B-Instruct")
+        self.assertIn("14B", client.model_id)
+        self.assertEqual(client.model_id, "Qwen/Qwen2.5-Coder-14B-Instruct")
 
     # --------------------------------------------------------------------------
     # 2. prompt.py

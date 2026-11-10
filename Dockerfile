@@ -37,10 +37,10 @@ RUN mkdir -p /app /data /result /result/logs /app/weights /app/weights/hf_cache
 COPY requirements-docker.txt /app/
 RUN pip install --no-cache-dir -r requirements-docker.txt
 
-# Tải trước (bake) trọng số mô hình Qwen/Qwen2.5-Coder-7B-Instruct vào /app/weights/model khi build image
+# Tải trước (bake) trọng số mô hình Qwen/Qwen2.5-Coder-14B-Instruct vào /app/weights/model khi build image
 # (Hoặc có thể truyền --build-arg BAKE_MODEL=0 khi chỉ muốn test khung Docker nhanh)
 ARG BAKE_MODEL=1
-ARG BASE_MODEL_ID="Qwen/Qwen2.5-Coder-7B-Instruct"
+ARG BASE_MODEL_ID="Qwen/Qwen2.5-Coder-14B-Instruct"
 RUN if [ "$BAKE_MODEL" = "1" ]; then \
         python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='${BASE_MODEL_ID}', local_dir='/app/weights/model')"; \
     fi

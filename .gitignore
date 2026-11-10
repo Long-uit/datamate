@@ -1,5 +1,7 @@
 # Competition data
 competition_data/
+*.zip
+competition_data.zip
 
 # Python cache
 __pycache__/

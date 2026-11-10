@@ -1788,6 +1788,17 @@ def run_batch_evaluation(args: argparse.Namespace):
     if replay_map and not args.sample and getattr(args, "batch_index", None) is None and not getattr(args, "batch_file", None):
         target_questions = [q for q in target_questions if q.get("id") in replay_map]
 
+    if getattr(args, "range", None):
+        # Hỗ trợ định dạng START-END (ví dụ: 1-50, 101-200, 1:50)
+        m_range = re.match(r"^(\d+)[\-:,_](\d+)$", str(args.range).strip())
+        if m_range:
+            s_num = max(1, int(m_range.group(1)))
+            e_num = min(len(all_questions), int(m_range.group(2)))
+            if s_num <= e_num:
+                target_questions = all_questions[s_num - 1 : e_num]
+                args.no_fill_abstain = True
+                print(f"• Chọn khoảng câu hỏi   : từ câu {s_num} đến câu {e_num} ({len(target_questions)} câu)")
+
     if getattr(args, "batch_index", None) is not None and 1 <= args.batch_index <= 6:
         bs = getattr(args, "batch_size", None) or 20
         start_idx = (args.batch_index - 1) * bs
@@ -1869,7 +1880,8 @@ def run_batch_evaluation(args: argparse.Namespace):
 
     active_limit = args.limit if (args.limit is not None and not existing_completed_ids) else len(target_questions)
     active_questions = target_questions[:active_limit]
-    active_questions = sorted(active_questions, key=lambda q: (q.get("business_id", ""), q.get("id", "")))
+    if not getattr(args, "preserve_order", False):
+        active_questions = sorted(active_questions, key=lambda q: (q.get("business_id", ""), q.get("id", "")))
     active_qids = {q["id"] for q in active_questions} | existing_completed_ids
 
     chart_path = Path(args.chart_file) if args.chart_file else Path("results/evaluation_dashboard.png")
@@ -2582,7 +2594,7 @@ def main():
     parser.add_argument("--id", type=str, default=None, help="Chỉ định ID câu hỏi (ví dụ: q_8d076e8b04fa)")
     parser.add_argument("--random", action="store_true", help="Chọn ngẫu nhiên 1 câu hỏi từ tập dữ liệu")
     parser.add_argument("--with_llm", action="store_true", help="Kích hoạt nạp mô hình LLM GPU thật để sinh mã")
-    parser.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Coder-7B-Instruct", help="Tên model LLM")
+    parser.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Coder-14B-Instruct", help="Tên model LLM")
     parser.add_argument("--chart_file", type=str, default=None, help="Đường dẫn file ảnh dashboard PNG")
     parser.add_argument("--telemetry_file", type=str, default=None, help="Đường dẫn file telemetry JSON")
 
@@ -2609,12 +2621,19 @@ def main():
     parser.add_argument("--in_process", action="store_true", help="Chạy code trực tiếp trong tiến trình thay vì sandbox")
     parser.add_argument("--max_new_tokens", type=int, default=1536, help="Số token tối đa sinh ra từ LLM (mặc định: 1536)")
     parser.add_argument("--replay_logs", type=str, default=None, help="Thư mục logs đã sinh để chạy lại sandbox + cổng abstention + format (bỏ qua LLM)")
+    parser.add_argument("--quantization", "--quant", type=str, default="8bit", choices=["8bit", "4bit", "none"], help="Chế độ lượng tử hóa mô hình (mặc định: 8bit)")
+    parser.add_argument("--preserve_order", action="store_true", help="Chạy đúng theo thứ tự gốc từ câu 1 đến câu cuối trong questions.jsonl (không gom nhóm theo shop)")
+    parser.add_argument("--range", type=str, default=None, help="Chỉ định khoảng câu hỏi cần chạy (1-based, ví dụ: 1-50 hoặc 101-200)")
 
     args = parser.parse_args()
+
+    if getattr(args, "quantization", None):
+        os.environ["DATAMATE_QUANTIZATION"] = args.quantization
 
     # Nhận diện chế độ: Nếu có cờ --batch, --batch_file, --batch_index, --replay_logs hoặc (limit > 1 mà không chỉ định --id cụ thể)
     is_batch_mode = (
         args.batch
+        or (args.range is not None)
         or (args.replay_logs is not None)
         or (args.batch_file is not None)
         or (args.batch_index is not None)

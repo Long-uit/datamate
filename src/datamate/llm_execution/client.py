@@ -299,7 +299,7 @@ class LLMClient:
             pass
 
         if model_id is None:
-            model_id = os.environ.get("DATAMATE_MODEL_ID") or os.environ.get("MODEL_ID") or cfg_model_id or "Qwen/Qwen2.5-Coder-7B-Instruct"
+            model_id = os.environ.get("DATAMATE_MODEL_ID") or os.environ.get("MODEL_ID") or cfg_model_id or "Qwen/Qwen2.5-Coder-14B-Instruct"
         # Trong môi trường Docker Offline, nếu trọng số đã được bake tại /app/weights/model hoặc DATAMATE_MODEL_ID trỏ tới thư mục có thực
         env_model_path = os.environ.get("DATAMATE_MODEL_ID") or "/app/weights/model"
         if not os.path.isdir(str(model_id)) and os.path.isdir(env_model_path) and os.path.exists(os.path.join(env_model_path, "config.json")):
@@ -346,18 +346,28 @@ class LLMClient:
                 print(f"[LLMClient] Không thể khởi tạo vLLM ({vllm_err}), tự động chuyển về HuggingFace Transformers...")
                 self.backend = "transformers"
 
-        # 1. Cấu hình kiểu dữ liệu tính toán (compute_dtype)
+        # 1. Cấu hình kiểu dữ liệu tính toán (compute_dtype) & Lượng tử hóa
         # Ưu tiên bfloat16 nếu GPU hỗ trợ, fallback về float16
         has_cuda = torch.cuda.is_available()
         use_bf16 = has_cuda and torch.cuda.is_bf16_supported()
         compute_dtype = torch.bfloat16 if use_bf16 else torch.float16
 
-        quant_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_compute_dtype=compute_dtype,
-        )
+        # Cấu hình lượng tử hóa: mặc định 8-bit (INT8) mạnh nhất cho 14B trên Kaggle GPU T4x2 / RTX 5090
+        # Hỗ trợ linh hoạt chuyển qua 4-bit bằng biến môi trường DATAMATE_QUANTIZATION="4bit"
+        quant_mode = (os.environ.get("DATAMATE_QUANTIZATION") or "8bit").lower().strip()
+        if quant_mode in ("4bit", "4-bit", "nf4"):
+            quant_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_compute_dtype=compute_dtype,
+            )
+            print(f"[LLMClient] Áp dụng lượng tử hóa: 4-bit NF4 (compute_dtype={compute_dtype})")
+        else:
+            quant_config = BitsAndBytesConfig(
+                load_in_8bit=True,
+            )
+            print(f"[LLMClient] Áp dụng lượng tử hóa: 8-bit INT8 mạnh nhất (load_in_8bit=True)")
 
         # 2. Nạp Tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
@@ -395,9 +405,9 @@ class LLMClient:
             self.model.eval()
             self.is_loaded = True
         except Exception as e:
-            # Fallback nếu 4-bit nạp thất bại do DLL bitsandbytes
+            # Fallback nếu nạp lượng tử hóa thất bại do môi trường hoặc driver
             if has_cuda and "quantization_config" in load_kwargs:
-                print(f"[LLMClient] Cảnh báo nạp 4-bit thất bại ({e}). Thử fallback không lượng tử hóa (torch_dtype={compute_dtype}) trên CUDA...")
+                print(f"[LLMClient] Cảnh báo nạp lượng tử hóa thất bại ({e}). Thử fallback không lượng tử hóa (torch_dtype={compute_dtype}) trên CUDA...")
                 try:
                     fallback_kwargs = {
                         "device_map": {"": 0},

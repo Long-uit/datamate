@@ -24,7 +24,7 @@ class TestConfig(unittest.TestCase):
 
     def test_default_config_loading(self):
         cfg = load_config()
-        self.assertIn(cfg.model.model_id, ["Qwen/Qwen2.5-Coder-3B-Instruct", "Qwen/Qwen2.5-Coder-7B-Instruct"])
+        self.assertIn(cfg.model.model_id, ["Qwen/Qwen2.5-Coder-3B-Instruct", "Qwen/Qwen2.5-Coder-7B-Instruct", "Qwen/Qwen2.5-Coder-14B-Instruct"])
         self.assertIn(cfg.model.backend, ("transformers", "vllm"))
         self.assertGreater(cfg.execution.timeout_seconds, 0)
         self.assertEqual(cfg.grounding.entity_linking_threshold, 0.6)
