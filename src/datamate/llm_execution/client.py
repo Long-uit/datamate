@@ -347,14 +347,29 @@ class LLMClient:
                 self.backend = "transformers"
 
         # 1. Cấu hình kiểu dữ liệu tính toán (compute_dtype) & Lượng tử hóa
-        # Ưu tiên bfloat16 nếu GPU hỗ trợ, fallback về float16
         has_cuda = torch.cuda.is_available()
-        use_bf16 = has_cuda and torch.cuda.is_bf16_supported()
-        compute_dtype = torch.bfloat16 if use_bf16 else torch.float16
+        num_gpus = torch.cuda.device_count() if has_cuda else 0
+        
+        # Bật cờ tối ưu phân bổ bộ nhớ PyTorch chống phân mảnh VRAM
+        if has_cuda:
+            os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+            # Với GPU T4 (Turing), float16 ổn định và tương thích BitsAndBytes hơn bfloat16
+            use_bf16 = torch.cuda.is_bf16_supported() and "T4" not in torch.cuda.get_device_name(0)
+            compute_dtype = torch.bfloat16 if use_bf16 else torch.float16
+        else:
+            compute_dtype = torch.float32
 
-        # Cấu hình lượng tử hóa: mặc định 8-bit (INT8) mạnh nhất cho 14B trên Kaggle GPU T4x2 / RTX 5090
-        # Hỗ trợ linh hoạt chuyển qua 4-bit bằng biến môi trường DATAMATE_QUANTIZATION="4bit"
+        # Cấu hình lượng tử hóa
         quant_mode = (os.environ.get("DATAMATE_QUANTIZATION") or "8bit").lower().strip()
+        
+        # TỰ ĐỘNG BẢO VỆ OOM: Nếu chỉ có 1 GPU (<= 16GB) mà nạp mô hình 14B, 8-bit (14GB) chắc chắn OOM
+        # -> Tự động kích hoạt 4-bit NF4 (~8.5GB) để dành 6GB VRAM cho Attention Forward!
+        is_14b = "14b" in str(self.model_id).lower()
+        if has_cuda and num_gpus == 1 and is_14b and quant_mode != "4bit":
+            print(f"[LLMClient] ⚠️ Phát hiện chỉ có 1 GPU ({torch.cuda.get_device_name(0)}) chạy mô hình 14B.")
+            print(f"[LLMClient] 🛡️ Tự động chuyển lượng tử hóa sang 4-bit NF4 để chống CUDA Out of Memory!")
+            quant_mode = "4bit"
+
         if quant_mode in ("4bit", "4-bit", "nf4"):
             quant_config = BitsAndBytesConfig(
                 load_in_4bit=True,
@@ -367,7 +382,7 @@ class LLMClient:
             quant_config = BitsAndBytesConfig(
                 load_in_8bit=True,
             )
-            print(f"[LLMClient] Áp dụng lượng tử hóa: 8-bit INT8 mạnh nhất (load_in_8bit=True)")
+            print(f"[LLMClient] Áp dụng lượng tử hóa: 8-bit INT8 (load_in_8bit=True)")
 
         # 2. Nạp Tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
@@ -388,6 +403,19 @@ class LLMClient:
                 "trust_remote_code": True,
                 "attn_implementation": "sdpa",
             }
+            # PHÂN BỔ ĐỀU BỘ NHỚ CHO ĐA GPU (GPU T4 x 2):
+            # Mặc định Accelerate sẽ nhồi đầy GPU 0 trước khi sang GPU 1 dẫn đến GPU 0 bị OOM.
+            # Ta thiết lập max_memory trần cho mỗi GPU để chia đều tải 50-50!
+            if num_gpus >= 2:
+                max_memory = {}
+                for g_idx in range(num_gpus):
+                    vram_gb = torch.cuda.get_device_properties(g_idx).total_memory / (1024 ** 3)
+                    # Dành tối đa 65% VRAM cho trọng số model, giữ lại ít nhất 35% cho Attention/KV-Cache
+                    safe_limit_gb = max(4, int(vram_gb * 0.65))
+                    max_memory[g_idx] = f"{safe_limit_gb}GiB"
+                max_memory["cpu"] = "32GiB"
+                load_kwargs["max_memory"] = max_memory
+                print(f"[LLMClient] ⚖️ Bật chia tải đều qua {num_gpus} GPU: max_memory={max_memory}")
         else:
             self.device = "cpu"
             print("[Cảnh báo] Không tìm thấy GPU CUDA. Mô hình sẽ chạy trên CPU ở chế độ float32.")
