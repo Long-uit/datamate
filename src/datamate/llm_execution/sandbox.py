@@ -878,6 +878,80 @@ def should_retry_self_correction(
     return bool(exec_err or sanity_err)
 
 
+def get_date_col(df: Any) -> Any:
+    """Tìm cột ngày tháng trong DataFrame, hỗ trợ cả tiếng Việt có dấu, không dấu và tiếng Anh."""
+    try:
+        from datamate.llm_execution.worker import get_date_col as _gdc
+        return _gdc(df)
+    except Exception:
+        if df is None or not hasattr(df, "columns"):
+            return None
+        for c in df.columns:
+            cl = str(c).lower()
+            if any(k in cl for k in ("ngày", "ngay", "date", "time", "thời gian", "thoigian")):
+                return c
+        return None
+
+
+def get_amount_col(df: Any) -> Any:
+    """Tìm cột tiền/doanh thu trong DataFrame, hỗ trợ Thành tiền, Tổng đơn, Amount, Trị giá, v.v."""
+    try:
+        from datamate.llm_execution.worker import get_amount_col as _gac
+        return _gac(df)
+    except Exception:
+        if df is None or not hasattr(df, "columns"):
+            return None
+        for c in df.columns:
+            cl = str(c).lower()
+            if any(k in cl for k in ("thành tiền", "thanhtien", "tổng tiền", "tongtien", "tổng đơn", "amount", "trị giá", "giá trị", "tiền bán", "doanh thu")):
+                return c
+        return None
+
+
+def get_qty_col(df: Any) -> Any:
+    """Tìm cột số lượng hàng bán/nhập trong DataFrame."""
+    try:
+        from datamate.llm_execution.worker import get_qty_col as _gqc
+        return _gqc(df)
+    except Exception:
+        if df is None or not hasattr(df, "columns"):
+            return None
+        for c in df.columns:
+            cl = str(c).lower()
+            if any(k in cl for k in ("số lượng", "soluong", "sl", "quantity", "qty")):
+                return c
+        return None
+
+
+def get_item_col(df: Any) -> Any:
+    """Tìm cột tên hàng/sản phẩm/món trong DataFrame."""
+    try:
+        from datamate.llm_execution.worker import get_item_col as _gic
+        return _gic(df)
+    except Exception:
+        if df is None or not hasattr(df, "columns"):
+            return None
+        for c in df.columns:
+            cl = str(c).lower()
+            if any(k in cl for k in ("tên hàng", "tenhang", "tên sp", "tensp", "sản phẩm", "mặt hàng", "tên món", "hàng")):
+                return c
+        return None
+
+
+def get_sales_table(data: Any) -> Any:
+    """Lấy bảng bán hàng tối ưu nhất từ dictionary data."""
+    try:
+        from datamate.llm_execution.worker import get_sales_table as _gst
+        return _gst(data)
+    except Exception:
+        if not data or not isinstance(data, dict):
+            return None
+        for name, df in data.items():
+            if hasattr(df, "columns"):
+                return df
+        return None
+
+
 def filter_valid_sales(
     df: pd.DataFrame,
     data: Optional[Dict[str, Any]] = None,
@@ -1585,6 +1659,11 @@ __all__ = [
     "count_orders",
     "debt",
     "should_retry_self_correction",
+    "get_date_col",
+    "get_amount_col",
+    "get_qty_col",
+    "get_item_col",
+    "get_sales_table",
     "sanitize_code_syntax",
     "_strip_accents",
     "_patch_pandas_date_comparisons",

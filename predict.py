@@ -22,6 +22,9 @@ from __future__ import annotations
 
 import os
 import sys
+
+if "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import json
 import time
 import argparse
@@ -124,6 +127,23 @@ from datamate.output_abstention.abstention import (
 # ==============================================================================
 # BỘ NHỚ ĐỆM DỮ LIỆU CỬA HÀNG (IN-MEMORY CACHE)
 # ==============================================================================
+class AliasedDict(dict):
+    """Dict hỗ trợ gán thuộc tính _aliases phục vụ SmartDataDict và nạp alias mềm dẻo."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._aliases: Dict[str, str] = {}
+
+    def __getitem__(self, key: Any) -> Any:
+        try:
+            return super().__getitem__(key)
+        except KeyError:
+            aliases = getattr(self, "_aliases", None)
+            if aliases and key in aliases:
+                target = aliases[key]
+                if target in self:
+                    return super().__getitem__(target)
+            raise
+
 _BUSINESS_CACHE: Dict[str, Tuple[Dict[str, pd.DataFrame], Any, str, Any, Dict[str, Any], List[Any]]] = {}
 
 
@@ -138,21 +158,25 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
         # Kích hoạt làm sạch Rule 8 (Group Forward-Fill & Deduplication)
         bd = clean_business(raw_bd)
         con = None  # Tối ưu hóa: LLM 100% dùng Pandas trên data, bỏ nạp kép SQLite để giảm 50% thời gian load & RAM
-        data_dict: Dict[str, pd.DataFrame] = {}
+        data_dict: Dict[str, pd.DataFrame] = AliasedDict()
+        aliases: Dict[str, str] = {}
         for ti in bd.tables:
             t_base = Path(ti.fixed_file_name).stem if getattr(ti, "fixed_file_name", None) else ti.table_id
             t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
 
+            # Chỉ lưu bảng chính tắc 1 lần duy nhất để chống cộng trùng bảng (nhân 2x/4x doanh thu)
             data_dict[t_name] = ti.df
-            if ti.sheet_name and ti.sheet_name != "Sheet1" and ti.sheet_name not in data_dict:
-                data_dict[ti.sheet_name] = ti.df
-            if t_base != t_name and t_base not in data_dict:
-                data_dict[t_base] = ti.df
-            if ti.table_id and ti.table_id not in data_dict:
-                data_dict[ti.table_id] = ti.df
+            if ti.sheet_name and ti.sheet_name != "Sheet1" and ti.sheet_name != t_name:
+                aliases[ti.sheet_name] = t_name
+            if t_base != t_name:
+                aliases[t_base] = t_name
+            if ti.table_id and ti.table_id != t_name:
+                aliases[ti.table_id] = t_name
 
-        # Sử dụng Rich Schema Profiler hiển thị kiểu dữ liệu, min-max date và giá trị mẫu
-        schema_summary = profile_business_schema(bd, max_cols=25)
+        data_dict._aliases = aliases
+
+        # Sử dụng Rich Schema Profiler hiển thị kiểu dữ liệu, min-max date và giá trị mẫu (tối ưu 15 cột)
+        schema_summary = profile_business_schema(bd, max_cols=15)
         shop_meta = extract_shop_metadata(business_obj=bd, data_dict=data_dict)
         candidates = extract_candidates_from_business(bd)
         return data_dict, con, schema_summary, bd, shop_meta, candidates
@@ -251,7 +275,7 @@ def main():
     parser.add_argument("--seed", type=int, default=42, help="Cố định random seed cho tính tái lập tuyệt đối (mặc định: 42)")
     parser.add_argument("--timeout", type=int, default=30, help="Thời gian chờ tối đa khi chạy code trong sandbox (giây, mặc định: 30)")
     parser.add_argument("--in_process", action="store_true", help="Chạy code trực tiếp trong tiến trình (bảo vệ cache bằng bản sao RAM) thay vì sandbox subprocess")
-    parser.add_argument("--quantization", "--quant", type=str, default="8bit", choices=["8bit", "4bit", "none"], help="Chế độ lượng tử hóa mô hình (mặc định: 8bit)")
+    parser.add_argument("--quantization", "--quant", type=str, default="4bit", choices=["8bit", "4bit", "none"], help="Chế độ lượng tử hóa mô hình (mặc định: 4bit)")
     parser.add_argument("--preserve_order", action="store_true", help="Chạy đúng theo thứ tự gốc từ câu 1 đến câu cuối trong questions.jsonl (không gom nhóm theo shop)")
     parser.add_argument("--range", type=str, default=None, help="Chỉ định khoảng câu hỏi cần chạy (1-based, ví dụ: 1-100 hoặc 501-1000)")
     args = parser.parse_args()

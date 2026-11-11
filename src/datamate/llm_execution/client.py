@@ -34,7 +34,7 @@ if sys.platform == "win32":
 
 # Cấu hình chống phân mảnh VRAM PyTorch CUDA (tránh lỗi OOM khi cấp phát khối liên tục)
 if "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
-    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 # Nhập torch và transformers có xử lý ngoại lệ an toàn
 try:
@@ -84,32 +84,25 @@ class CodeBlockEndStoppingCriteria(StoppingCriteria):
             return False
 
         full_text = self.tokenizer.decode(new_ids, skip_special_tokens=False)
-        if "def solution" in full_text and "return " in full_text:
-            if full_text.count("```") >= 2:
-                return True
-            if not full_text.strip().startswith("```") and full_text.count("```") >= 1:
-                return True
-            tail_text = self.tokenizer.decode(new_ids[-40:], skip_special_tokens=False)
-            if any(k in tail_text for k in [
-                "\ndef ", "\nclass ", "\nprint(", "\n# Example", "\n# Ví dụ", "\nif __name__", "\n```"
-            ]):
-                return True
-        return False
 
-        full_text = self.tokenizer.decode(new_ids, skip_special_tokens=False)
+        # Kiểm tra token kết thúc đặc biệt (ChatML hoặc EOS)
+        if any(tok in full_text for tok in ["<|im_end|>", "<|endoftext|>", "</s>"]):
+            return True
+
         if "def solution" in full_text and "return " in full_text:
+            # Trường hợp chuẩn: có mở và đóng code fence ```
             if full_text.count("```") >= 2:
                 return True
-            if not full_text.strip().startswith("```") and full_text.count("```") >= 1:
-                return True
-            tail_text = self.tokenizer.decode(new_ids[-40:], skip_special_tokens=False)
-            if (
-                "\nprint(" in tail_text
-                or "\n# Example" in tail_text
-                or "\n# Ví dụ" in tail_text
-                or "\nif __name__" in tail_text
-            ):
-                return True
+
+            # Nếu mô hình sinh mã thẳng mà KHÔNG mở ``` (count == 0),
+            # dừng khi xuất hiện khối lệnh tiếp theo ở thụt lề 0 hoặc ví dụ/chú thích
+            if full_text.count("```") == 0:
+                tail_text = self.tokenizer.decode(new_ids[-40:], skip_special_tokens=False)
+                if any(k in tail_text for k in [
+                    "\ndef ", "\nclass ", "\nprint(", "\n# Example", "\n# Ví dụ", "\nif __name__"
+                ]):
+                    return True
+
         return False
 
 
@@ -264,6 +257,108 @@ def cut_after_first_solution(code: str) -> str:
     return code
 
 
+def build_balanced_device_map(
+    model_id: str,
+    num_gpus: int,
+    trust_remote_code: bool = True
+) -> Optional[Dict[str, int]]:
+    """
+    Xây dựng device_map phân bổ tối ưu các tầng của mô hình qua nhiều GPU.
+    
+    Đặc thù mô hình Causal LM (Qwen2.5, LLaMA, Mistral, Gemma):
+    - GPU cuối cùng luôn chứa `lm_head` (chiếm ~1.5GB ở float16 với vocab 152k của Qwen) và `model.norm`.
+    - Ngoài ra, GPU cuối cùng tính toán logits ma trận [batch, seq_len, vocab_size].
+    - Vì vậy, nếu chia số tầng 50-50, GPU cuối cùng sẽ luôn bị OOM vì phải gánh thêm lm_head + activation.
+    - Giải pháp: GPU cuối cùng nhận ÍT HƠN 4-6 tầng transformer (tùy model size).
+      Số tầng này được chuyển sang GPU 0 (hoặc các GPU đầu).
+    
+    Ví dụ:
+    - Qwen2.5-Coder-14B (48 layers) trên 2 GPU:
+      • GPU 0: embed_tokens + layers 0 -> 26 (27 layers) => ~8.8 GB (INT8)
+      • GPU 1: layers 27 -> 47 (21 layers) + norm + lm_head => ~8.5 GB (INT8)
+      => Cả 2 GPU đều dư ~6 GB VRAM cho Attention/KV-Cache, hoàn toàn không bị OOM!
+    - Qwen2.5-Coder-7B (28 layers) trên 2 GPU:
+      • GPU 0: embed_tokens + layers 0 -> 15 (16 layers) => ~4.5 GB (INT8)
+      • GPU 1: layers 16 -> 27 (12 layers) + norm + lm_head => ~4.2 GB (INT8)
+    """
+    if num_gpus < 2:
+        return None
+    try:
+        from transformers import AutoConfig
+        config = AutoConfig.from_pretrained(model_id, trust_remote_code=trust_remote_code)
+        num_layers = getattr(config, "num_hidden_layers", None) or getattr(config, "n_layer", None) or getattr(config, "num_layers", None)
+        if not num_layers or not isinstance(num_layers, int) or num_layers < 2:
+            return None
+        
+        # Xác định tiền tố tầng dựa trên kiến trúc
+        model_type = str(getattr(config, "model_type", "")).lower()
+        arch = ""
+        if hasattr(config, "architectures") and config.architectures:
+            arch = str(config.architectures[0]).lower()
+        
+        if "gpt_neox" in model_type or "pythia" in model_type:
+            layer_prefix = "gpt_neox.layers"
+            embed_name = "gpt_neox.embed_in"
+            norm_name = "gpt_neox.final_layer_norm"
+            head_name = "embed_out"
+            extra_modules = []
+        elif "qwen" in model_type and "qwen2" not in model_type and "coder" not in arch and "qwen2" not in arch:
+            layer_prefix = "transformer.h"
+            embed_name = "transformer.wte"
+            norm_name = "transformer.ln_f"
+            head_name = "lm_head"
+            extra_modules = []
+        else:
+            # Chuẩn phổ biến nhất: Qwen2, Qwen2.5, LLaMA 1/2/3, Mistral, Gemma, Phi-3, Starcoder2
+            layer_prefix = "model.layers"
+            embed_name = "model.embed_tokens"
+            norm_name = "model.norm"
+            head_name = "lm_head"
+            extra_modules = ["model.rotary_emb"]
+
+        last_gpu = num_gpus - 1
+        
+        # Tính toán số tầng bớt đi ở GPU cuối để bù trừ dung lượng khổng lồ của lm_head (vocab 152k)
+        head_equiv_layers = min(6, max(2, int(num_layers * 0.12)))
+        
+        device_map: Dict[str, int] = {}
+        
+        if num_gpus == 2:
+            # Chia cho 2 GPU: GPU 0 gánh nhiều hơn head_equiv_layers tầng
+            split_idx = (num_layers // 2) + (head_equiv_layers // 2)
+            # Giới hạn an toàn split_idx không vượt quá num_layers - 1
+            split_idx = max(1, min(split_idx, num_layers - 2))
+            for i in range(num_layers):
+                device_map[f"{layer_prefix}.{i}"] = 0 if i < split_idx else 1
+            print(f"[LLMClient] ⚖️ Phân bổ tầng cân bằng 2 GPU ({num_layers} tầng): GPU 0 nhận {split_idx} tầng (0..{split_idx-1}), GPU 1 nhận {num_layers - split_idx} tầng ({split_idx}..{num_layers-1}) + lm_head")
+        else:
+            # Chia cho N > 2 GPU
+            base_layers = (num_layers - head_equiv_layers) // num_gpus
+            curr = 0
+            for g in range(num_gpus - 1):
+                cnt = base_layers + (1 if g < (num_layers - head_equiv_layers) % num_gpus else 0)
+                for _ in range(cnt):
+                    if curr < num_layers:
+                        device_map[f"{layer_prefix}.{curr}"] = g
+                        curr += 1
+            while curr < num_layers:
+                device_map[f"{layer_prefix}.{curr}"] = last_gpu
+                curr += 1
+
+        # Gán các module gốc
+        device_map[embed_name] = 0
+        device_map[norm_name] = last_gpu
+        device_map[head_name] = last_gpu
+        
+        for extra in extra_modules:
+            device_map[extra] = 0
+            
+        return device_map
+    except Exception as e:
+        print(f"[LLMClient] Lưu ý: Không tạo được balanced device_map động ({e}), chuyển sang chế độ tự động.")
+        return None
+
+
 # ==============================================================================
 # CLASS QUẢN LÝ MÔ HÌNH VÀ SUY LUẬN (LLMCLIENT)
 # ==============================================================================
@@ -300,10 +395,19 @@ class LLMClient:
 
         if model_id is None:
             model_id = os.environ.get("DATAMATE_MODEL_ID") or os.environ.get("MODEL_ID") or cfg_model_id or "Qwen/Qwen2.5-Coder-14B-Instruct"
-        # Trong môi trường Docker Offline, nếu trọng số đã được bake tại /app/weights/model hoặc DATAMATE_MODEL_ID trỏ tới thư mục có thực
-        env_model_path = os.environ.get("DATAMATE_MODEL_ID") or "/app/weights/model"
-        if not os.path.isdir(str(model_id)) and os.path.isdir(env_model_path) and os.path.exists(os.path.join(env_model_path, "config.json")):
-            model_id = env_model_path
+        
+        # Tự động nhận diện thư mục trọng số mô hình offline (hỗ trợ Docker BTC /app/weights/model, /weights, models/...)
+        for candidate_path in [
+            model_id,
+            os.environ.get("DATAMATE_MODEL_ID"),
+            "/app/weights/model",
+            "/weights",
+            "models/Qwen2.5-Coder-14B-Instruct",
+        ]:
+            if candidate_path and os.path.isdir(str(candidate_path)) and os.path.exists(os.path.join(str(candidate_path), "config.json")):
+                model_id = str(candidate_path)
+                break
+
         self.model_id = model_id
         self.backend = (backend or os.environ.get("DATAMATE_BACKEND") or cfg_backend or "transformers").lower()
         self.model = None
@@ -352,6 +456,18 @@ class LLMClient:
             num_gpus = int(torch.cuda.device_count()) if has_cuda else 0
         except Exception:
             num_gpus = 1 if has_cuda else 0
+        try:
+            total_vram_gb = float(sum(
+                torch.cuda.get_device_properties(i).total_memory / (1024 ** 3)
+                for i in range(num_gpus)
+            )) if has_cuda else 0.0
+            min_gpu_vram = float(min(
+                (torch.cuda.get_device_properties(i).total_memory / (1024 ** 3) for i in range(num_gpus)),
+                default=0.0
+            )) if has_cuda else 0.0
+        except Exception:
+            total_vram_gb = 15.0 * max(1, num_gpus)
+            min_gpu_vram = 15.0
         
         # Bật cờ tối ưu phân bổ bộ nhớ PyTorch chống phân mảnh VRAM
         if has_cuda:
@@ -361,20 +477,28 @@ class LLMClient:
                 torch.backends.cuda.enable_flash_sdp(False)
             except Exception:
                 pass
+            try:
+                gpu_names = [str(torch.cuda.get_device_name(i)) for i in range(num_gpus)]
+                print(f"[LLMClient] 🖥️ Phát hiện phần cứng: {num_gpus} GPU ({', '.join(gpu_names)}) | Tổng VRAM: {total_vram_gb:.1f} GB")
+            except Exception:
+                pass
+        
+
             # Với GPU T4 (Turing), float16 ổn định và tương thích BitsAndBytes hơn bfloat16
+            # Với GPU Blackwell RTX 5090 (máy BTC), bfloat16 hoạt động chuẩn xác với Tensor Cores thế hệ mới
             use_bf16 = torch.cuda.is_bf16_supported() and "T4" not in torch.cuda.get_device_name(0)
             compute_dtype = torch.bfloat16 if use_bf16 else torch.float16
         else:
             compute_dtype = torch.float32
 
-        # Cấu hình lượng tử hóa
-        quant_mode = (os.environ.get("DATAMATE_QUANTIZATION") or "8bit").lower().strip()
+        # Cấu hình lượng tử hóa (mặc định ưu tiên 4-bit NF4: siêu nhẹ, bảo đảm tuyệt đối không OOM)
+        quant_mode = (os.environ.get("DATAMATE_QUANTIZATION") or "4bit").lower().strip()
         
         # TỰ ĐỘNG BẢO VỆ OOM: Nếu chỉ có 1 GPU (<= 16GB) mà nạp mô hình 14B, 8-bit (14GB) chắc chắn OOM
         # -> Tự động kích hoạt 4-bit NF4 (~8.5GB) để dành 6GB VRAM cho Attention Forward!
         is_14b = "14b" in str(self.model_id).lower()
-        if has_cuda and num_gpus == 1 and is_14b and quant_mode != "4bit":
-            print(f"[LLMClient] ⚠️ Phát hiện chỉ có 1 GPU ({torch.cuda.get_device_name(0)}) chạy mô hình 14B.")
+        if has_cuda and num_gpus == 1 and is_14b and min_gpu_vram <= 20.0 and quant_mode != "4bit":
+            print(f"[LLMClient] ⚠️ Phát hiện chỉ có 1 GPU ({torch.cuda.get_device_name(0)}, {min_gpu_vram:.1f} GB) chạy mô hình 14B.")
             print(f"[LLMClient] 🛡️ Tự động chuyển lượng tử hóa sang 4-bit NF4 để chống CUDA Out of Memory!")
             quant_mode = "4bit"
 
@@ -415,7 +539,6 @@ class LLMClient:
         if has_cuda:
             self.device = "cuda"
             load_kwargs = {
-                "device_map": "auto",
                 "torch_dtype": compute_dtype,
                 "low_cpu_mem_usage": True,
                 "quantization_config": quant_config,
@@ -423,25 +546,23 @@ class LLMClient:
                 "attn_implementation": "sdpa",
             }
             # PHÂN BỔ ĐỀU BỘ NHỚ CHO ĐA GPU (GPU T4 x 2):
-            # Mặc định Accelerate sẽ nhồi đầy GPU 0 trước khi sang GPU 1 dẫn đến GPU 0 bị OOM.
-            # Ta thiết lập max_memory trần cho mỗi GPU để chia đều tải 50-50!
             if num_gpus >= 2:
-                max_memory = {}
-                for g_idx in range(num_gpus):
-                    vram_gb = torch.cuda.get_device_properties(g_idx).total_memory / (1024 ** 3)
-                    # Với GPU <= 16GB (như Kaggle T4 x 2), giới hạn mỗi GPU tối đa ~8.5GiB để chia tải 50-50
-                    # và chừa lại ít nhất 6GiB VRAM cho Attention Forward (SDPA) và KV-Cache
-                    if vram_gb <= 17:
-                        # GPU 0 gánh input embeddings và Attention prefill ma trận lớn (~5.2GB)
-                        # Do đó trần weights GPU 0 chỉ để 5GiB, chừa lại gần 10GiB VRAM cho Attention!
-                        # GPU 1 gánh phần weights còn lại (trần 11GiB)
-                        safe_limit_gb = 5 if g_idx == 0 else 11
-                    else:
-                        safe_limit_gb = max(4, int(vram_gb - 6.0))
-                    max_memory[g_idx] = f"{safe_limit_gb}GiB"
-                max_memory["cpu"] = "28GiB"
-                load_kwargs["max_memory"] = max_memory
-                print(f"[LLMClient] ⚖️ Bật chia tải đều qua {num_gpus} GPU: max_memory={max_memory}")
+                balanced_map = build_balanced_device_map(self.model_id, num_gpus, trust_remote_code=True)
+                if balanced_map:
+                    load_kwargs["device_map"] = balanced_map
+                    print(f"[LLMClient] ⚖️ Đã thiết lập Balanced Device Map ({len(balanced_map)} modules) cho {num_gpus} GPU thành công!")
+                else:
+                    # Fallback max_memory bất đối xứng: GPU 0 nhận nhiều hơn, GPU cuối nhận ít hơn vì gánh lm_head (~1.5GB)
+                    max_memory = {}
+                    for g_idx in range(num_gpus):
+                        vram_gb = torch.cuda.get_device_properties(g_idx).total_memory / (1024 ** 3)
+                        limit_gb = max(4, int(vram_gb - 5.5 if g_idx == num_gpus - 1 else vram_gb - 1.5))
+                        max_memory[g_idx] = f"{limit_gb}GiB"
+                    load_kwargs["device_map"] = "auto"
+                    load_kwargs["max_memory"] = max_memory
+                    print(f"[LLMClient] ⚖️ Bật chia tải đều qua {num_gpus} GPU: max_memory={max_memory}")
+            else:
+                load_kwargs["device_map"] = "auto"
         else:
             self.device = "cpu"
             print("[Cảnh báo] Không tìm thấy GPU CUDA. Mô hình sẽ chạy trên CPU ở chế độ float32.")
@@ -488,10 +609,36 @@ class LLMClient:
                 except Exception as e_cuda:
                     print(f"[Lỗi] Nạp mô hình thất bại: {e_cuda}")
                     self.is_loaded = False
-            # FALLBACK CẤP 1: NẾU ĐANG CHẠY 8-BIT THẤT BẠI HOẶC BỊ OOM -> CHUYỂN SANG 4-BIT NF4
-            elif has_cuda and quant_mode not in ("4bit", "4-bit", "nf4"):
-                print(f"[LLMClient] 🛡️ Fallback cấp 1: Chuyển sang lượng tử hóa 4-bit NF4 (tiết kiệm ~50% VRAM, bảo đảm không OOM)...")
+
+            # FALLBACK CẤP 1: NẾU DÙNG BALANCED DEVICE MAP THẤT BẠI -> THỬ AUTO DEVICE MAP VỚI ASYMMETRIC MAX_MEMORY
+            elif has_cuda and isinstance(load_kwargs.get("device_map"), dict):
+                print(f"[LLMClient] 🔄 Thử lại với device_map='auto' và asymmetric max_memory...")
                 try:
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    max_memory = {}
+                    for g_idx in range(num_gpus):
+                        vram_gb = torch.cuda.get_device_properties(g_idx).total_memory / (1024 ** 3)
+                        limit_gb = max(4, int(vram_gb - 5.5 if g_idx == num_gpus - 1 else vram_gb - 1.5))
+                        max_memory[g_idx] = f"{limit_gb}GiB"
+                    load_kwargs["device_map"] = "auto"
+                    load_kwargs["max_memory"] = max_memory
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        self.model_id,
+                        **load_kwargs
+                    )
+                    self.model.eval()
+                    self.is_loaded = True
+                    print(f"[LLMClient] ✅ Nạp mô hình với auto device_map thành công!")
+                except Exception as e_auto:
+                    print(f"[LLMClient] Auto device_map thất bại: {e_auto}")
+
+            # FALLBACK CẤP 2: NẾU ĐANG CHẠY 8-BIT THẤT BẠI HOẶC BỊ OOM -> CHUYỂN SANG 4-BIT NF4
+            if not self.is_loaded and has_cuda and quant_mode not in ("4bit", "4-bit", "nf4"):
+                print(f"[LLMClient] 🛡️ Fallback cấp 2: Chuyển sang lượng tử hóa 4-bit NF4 (tiết kiệm ~50% VRAM, bảo đảm không OOM)...")
+                try:
+                    gc.collect()
+                    torch.cuda.empty_cache()
                     quant_4bit = BitsAndBytesConfig(
                         load_in_4bit=True,
                         bnb_4bit_quant_type="nf4",
@@ -499,6 +646,8 @@ class LLMClient:
                         bnb_4bit_compute_dtype=compute_dtype,
                     )
                     load_kwargs["quantization_config"] = quant_4bit
+                    load_kwargs["device_map"] = "auto"
+                    load_kwargs.pop("max_memory", None)
                     self.model = AutoModelForCausalLM.from_pretrained(
                         self.model_id,
                         **load_kwargs
@@ -507,33 +656,29 @@ class LLMClient:
                     self.is_loaded = True
                     print(f"[LLMClient] ✅ Fallback 4-bit NF4 thành công trên {self.device}!")
                 except Exception as e_4bit:
-                    print(f"[LLMClient] Fallback 4-bit với max_memory thất bại ({e_4bit}), thử auto device_map hoàn toàn...")
-                    try:
-                        gc.collect()
-                        torch.cuda.empty_cache()
-                        load_kwargs.pop("max_memory", None)
-                        load_kwargs["device_map"] = "auto"
-                        self.model = AutoModelForCausalLM.from_pretrained(
-                            self.model_id,
-                            **load_kwargs
-                        )
-                        self.model.eval()
-                        self.is_loaded = True
-                        print(f"[LLMClient] ✅ Fallback 4-bit auto device_map thành công!")
-                    except Exception as e_final_4bit:
-                        print(f"[Lỗi] Nạp mô hình 4-bit thất bại: {e_final_4bit}")
-                        self.is_loaded = False
+                    print(f"[Lỗi] Nạp mô hình 4-bit thất bại: {e_4bit}")
+                    self.is_loaded = False
 
-            # FALLBACK CẤP 2 (CHỈ DÀNH CHO MODEL NHỎ < 4B):
-            # Tuyệt đối không fallback float16 cho model 7B hoặc 14B vì 100% sẽ OOM GPU 15GB!
-            elif has_cuda and not is_14b and "7b" not in str(self.model_id).lower():
-                print(f"[LLMClient] 🛡️ Fallback cấp 2: Thử nạp không lượng tử hóa (torch_dtype={compute_dtype}) cho mô hình nhỏ...")
+            # FALLBACK CẤP 3: NẾU THẤT BẠI VÀ HỆ THỐNG CÓ ĐỦ VRAM HOẶC MÔ HÌNH NHỎ
+            # Nếu chạy trên máy BTC (2x RTX 5090 = 64GB VRAM) hoặc máy trạm có VRAM lớn:
+            # Model 14B nguyên bản (bfloat16) chỉ chiếm ~28GB VRAM.
+            # Trên máy có tổng VRAM >= 36GB, hoàn toàn có thể nạp không lượng tử hóa (bfloat16) an toàn 100%!
+            can_load_unquantized = (
+                (is_14b and total_vram_gb >= 36.0) or
+                ("7b" in str(self.model_id).lower() and total_vram_gb >= 20.0) or
+                (not is_14b and "7b" not in str(self.model_id).lower() and total_vram_gb >= 8.0)
+            )
+            if not self.is_loaded and has_cuda and can_load_unquantized:
+                print(f"[LLMClient] 🛡️ Fallback cấp 3: Phát hiện hệ thống có VRAM dồi dào ({total_vram_gb:.1f} GB). Thử nạp không lượng tử hóa (torch_dtype={compute_dtype})...")
                 try:
+                    gc.collect()
+                    torch.cuda.empty_cache()
                     fallback_kwargs = {
                         "device_map": "auto",
                         "torch_dtype": compute_dtype,
                         "low_cpu_mem_usage": True,
                         "trust_remote_code": True,
+                        "attn_implementation": "sdpa",
                     }
                     self.model = AutoModelForCausalLM.from_pretrained(
                         self.model_id,
@@ -541,13 +686,14 @@ class LLMClient:
                     )
                     self.model.eval()
                     self.is_loaded = True
-                    print(f"[LLMClient] Nạp mô hình nhỏ thành công: {self.device}")
+                    print(f"[LLMClient] ✅ Nạp mô hình không lượng tử hóa thành công: {self.device}")
                 except Exception as e_cuda:
-                    print(f"[Lỗi] Nạp mô hình thất bại: {e_cuda}")
+                    print(f"[Lỗi] Nạp mô hình không lượng tử hóa thất bại: {e_cuda}")
                     self.is_loaded = False
             else:
-                print(f"[Lỗi] Không thể nạp mô hình {self.model_id}: {e}")
-                self.is_loaded = False
+                if not self.is_loaded:
+                    print(f"[Lỗi] Không thể nạp mô hình {self.model_id}: {e}")
+                    self.is_loaded = False
 
         if self.is_loaded:
             # Tự động nạp QLoRA Adapter nếu đã fine-tune
@@ -565,24 +711,41 @@ class LLMClient:
             print(f"[LLMClient] Nạp mô hình thành công trên thiết bị: {self.device}")
             self.print_gpu_stats()
 
-    def get_gpu_memory_stats(self) -> Dict[str, float]:
+    def get_gpu_memory_stats(self) -> Dict[str, Any]:
         """Trả về thông số dung lượng VRAM GPU đã sử dụng (đơn vị: GB)."""
         if TORCH_AVAILABLE and torch.cuda.is_available():
-            allocated = round(torch.cuda.memory_allocated() / (1024 ** 3), 2)
-            reserved = round(torch.cuda.memory_reserved() / (1024 ** 3), 2)
-            return {"allocated_gb": allocated, "reserved_gb": reserved}
-        return {"allocated_gb": 0.0, "reserved_gb": 0.0}
+            stats = {}
+            for i in range(torch.cuda.device_count()):
+                allocated = round(torch.cuda.memory_allocated(i) / (1024 ** 3), 2)
+                reserved = round(torch.cuda.memory_reserved(i) / (1024 ** 3), 2)
+                total = round(torch.cuda.get_device_properties(i).total_memory / (1024 ** 3), 2)
+                stats[f"gpu_{i}"] = {
+                    "allocated_gb": allocated,
+                    "reserved_gb": reserved,
+                    "total_gb": total,
+                    "free_gb": max(0.0, round(total - reserved, 2)),
+                }
+            return stats
+        return {}
 
     def print_gpu_stats(self) -> None:
-        """In thông số bộ nhớ GPU ra console."""
-        stats = self.get_gpu_memory_stats()
-        try:
-            if float(stats.get("allocated_gb", 0)) > 0:
-                print(f"[GPU Memory] Đã cấp phát: {stats['allocated_gb']} GB | Dự trữ: {stats['reserved_gb']} GB")
-            else:
-                print(f"[GPU Memory] Thiết bị hiện tại: {self.device}")
-        except Exception:
+        """In thông số bộ nhớ GPU ra console cho từng card đồ họa."""
+        if not (TORCH_AVAILABLE and torch.cuda.is_available()):
             print(f"[GPU Memory] Thiết bị hiện tại: {self.device}")
+            return
+
+        try:
+            num_g = torch.cuda.device_count()
+            parts = []
+            for i in range(num_g):
+                alloc = round(torch.cuda.memory_allocated(i) / (1024 ** 3), 2)
+                res = round(torch.cuda.memory_reserved(i) / (1024 ** 3), 2)
+                tot = round(torch.cuda.get_device_properties(i).total_memory / (1024 ** 3), 2)
+                free = max(0.0, round(tot - res, 2))
+                parts.append(f"GPU {i}: Cấp phát {alloc}GB / Dự trữ {res}GB (Trống ~{free}GB/{tot}GB)")
+            print(f"[GPU Memory] 📊 " + " | ".join(parts))
+        except Exception as e:
+            print(f"[GPU Memory] Thiết bị hiện tại: {self.device} ({e})")
 
     def _generate_raw(self, messages: List[Dict[str, str]], max_new_tokens: int = 1536) -> str:
         """Thực hiện một lần suy luận thô với cơ chế Greedy Decoding (hỗ trợ cả vLLM Prefix Caching và Transformers)."""
@@ -618,28 +781,108 @@ class LLMClient:
         inputs = self.tokenizer([chat_text], return_tensors="pt").to(self.model.device)
 
         start_len = inputs.input_ids.shape[1]
+
+        # TRÁNH BÙNG NỔ ATTENTION MATRIX TRÊN TESLA T4:
+        # Ngưỡng an toàn thích ứng phần cứng:
+        # - GPU <= 16GB (Tesla T4 trên Kaggle): giới hạn 3,584 tokens (Math SDPA ~1.02GB)
+        # - GPU >= 24GB (RTX 5090 trên máy BTC, A100, RTX 4090): giới hạn 8,192 tokens (FlashAttention native)
+        num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+        min_vram_gb = min(
+            (torch.cuda.get_device_properties(i).total_memory / (1024 ** 3) for i in range(num_gpus)),
+            default=15.0
+        ) if num_gpus > 0 else 15.0
+
+        MAX_SAFE_INPUT_TOKENS = 8192 if min_vram_gb >= 24.0 else 3584
+        if start_len > MAX_SAFE_INPUT_TOKENS:
+            head_len = 1024
+            tail_len = MAX_SAFE_INPUT_TOKENS - head_len
+            head_ids = inputs.input_ids[:, :head_len]
+            tail_ids = inputs.input_ids[:, -tail_len:]
+            inputs.input_ids = torch.cat([head_ids, tail_ids], dim=1)
+            if hasattr(inputs, "attention_mask") and inputs.attention_mask is not None:
+                head_mask = inputs.attention_mask[:, :head_len]
+                tail_mask = inputs.attention_mask[:, -tail_len:]
+                inputs.attention_mask = torch.cat([head_mask, tail_mask], dim=1)
+            print(f"[LLMClient] ⚡ Prompt dài ({start_len} tokens). Tự động cắt giữa còn {MAX_SAFE_INPUT_TOKENS} tokens (1024 đầu + {tail_len} cuối) để bảo vệ VRAM GPU.")
+            start_len = inputs.input_ids.shape[1]
+
         stopping_criteria = StoppingCriteriaList([CodeBlockEndStoppingCriteria(self.tokenizer, start_len)])
 
         # Cấu hình Greedy Decoding (T=0) chuẩn kèm StoppingCriteria tối ưu tốc độ:
         # Bật repetition_penalty=1.05 để chống lặp code
         # Giới hạn max_new_tokens tối đa 1536 để tiết kiệm VRAM KV-cache
         gen_tokens = min(max_new_tokens, 1536) if max_new_tokens > 0 else 1024
-        with torch.inference_mode():
-            output_tokens = self.model.generate(
-                **inputs,
-                max_new_tokens=gen_tokens,
-                do_sample=False,
-                temperature=None,
-                top_p=None,
-                top_k=None,
-                repetition_penalty=1.05,
-                use_cache=True,
-                stopping_criteria=stopping_criteria,
-                pad_token_id=self.tokenizer.eos_token_id,
-                eos_token_id=self.tokenizer.eos_token_id
-            )
+        try:
+            with torch.inference_mode():
+                output_tokens = self.model.generate(
+                    **inputs,
+                    max_new_tokens=gen_tokens,
+                    do_sample=False,
+                    temperature=None,
+                    top_p=None,
+                    top_k=None,
+                    repetition_penalty=1.05,
+                    use_cache=True,
+                    stopping_criteria=stopping_criteria,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id
+                )
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as oom_err:
+            if "out of memory" in str(oom_err).lower():
+                print(f"[LLMClient] ⚠️ Cảnh báo CUDA OOM khi sinh mã: {oom_err}. Đang dọn dẹp cache và cắt giảm prompt xuống 2048 tokens...")
+                import gc
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                try:
+                    cur_len = inputs.input_ids.shape[1]
+                    if cur_len > 2048:
+                        r_head = 512
+                        r_tail = 2048 - r_head
+                        retry_ids = torch.cat([inputs.input_ids[:, :r_head], inputs.input_ids[:, -r_tail:]], dim=1)
+                        retry_mask = (
+                            torch.cat([inputs.attention_mask[:, :r_head], inputs.attention_mask[:, -r_tail:]], dim=1)
+                            if hasattr(inputs, "attention_mask") and inputs.attention_mask is not None
+                            else None
+                        )
+                    else:
+                        retry_ids = inputs.input_ids
+                        retry_mask = inputs.attention_mask if hasattr(inputs, "attention_mask") else None
 
-        generated_token_ids = output_tokens[0][len(inputs.input_ids[0]):]
+                    retry_start_len = retry_ids.shape[1]
+                    retry_stopping = StoppingCriteriaList([CodeBlockEndStoppingCriteria(self.tokenizer, retry_start_len)])
+                    retry_inputs = {"input_ids": retry_ids}
+                    if retry_mask is not None:
+                        retry_inputs["attention_mask"] = retry_mask
+
+                    with torch.inference_mode():
+                        output_tokens = self.model.generate(
+                            **retry_inputs,
+                            max_new_tokens=min(gen_tokens, 384),
+                            do_sample=False,
+                            temperature=None,
+                            top_p=None,
+                            top_k=None,
+                            repetition_penalty=1.05,
+                            use_cache=True,
+                            stopping_criteria=retry_stopping,
+                            pad_token_id=self.tokenizer.eos_token_id,
+                            eos_token_id=self.tokenizer.eos_token_id
+                        )
+                    inputs = retry_inputs
+                    print(f"[LLMClient] ✅ Phục hồi OOM thành công với prompt 2048 tokens!")
+                except Exception as retry_err:
+                    print(f"[LLMClient] ❌ Thử lại sau OOM vẫn gặp lỗi ({retry_err}). Pipeline sẽ fallback an toàn.")
+                    import gc
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    return ""
+            else:
+                raise oom_err
+
+        in_ids = inputs["input_ids"] if isinstance(inputs, dict) else inputs.input_ids
+        generated_token_ids = output_tokens[0][len(in_ids[0]):]
         result_text = self.tokenizer.decode(generated_token_ids, skip_special_tokens=True)
 
         del inputs, output_tokens
