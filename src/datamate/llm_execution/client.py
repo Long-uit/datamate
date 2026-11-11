@@ -348,7 +348,10 @@ class LLMClient:
 
         # 1. Cấu hình kiểu dữ liệu tính toán (compute_dtype) & Lượng tử hóa
         has_cuda = torch.cuda.is_available()
-        num_gpus = torch.cuda.device_count() if has_cuda else 0
+        try:
+            num_gpus = int(torch.cuda.device_count()) if has_cuda else 0
+        except Exception:
+            num_gpus = 1 if has_cuda else 0
         
         # Bật cờ tối ưu phân bổ bộ nhớ PyTorch chống phân mảnh VRAM
         if has_cuda:
@@ -451,8 +454,30 @@ class LLMClient:
 
             print(f"[LLMClient] Cảnh báo bước đầu nạp mô hình gặp lỗi: {e}")
 
+            err_str = str(e).lower()
+            is_dll_error = any(k in err_str for k in ["winerror 4551", "blocked", "dll", "bitsandbytes", "libbitsandbytes", "application control"])
+
+            if has_cuda and is_dll_error:
+                print(f"[LLMClient] Cảnh báo nạp quantization thất bại do DLL ({e}). Thử fallback không lượng tử hóa (torch_dtype={compute_dtype}) trên CUDA...")
+                try:
+                    fallback_kwargs = {
+                        "device_map": {"": 0},
+                        "torch_dtype": compute_dtype,
+                        "low_cpu_mem_usage": True,
+                        "trust_remote_code": True,
+                    }
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        self.model_id,
+                        **fallback_kwargs
+                    )
+                    self.model.eval()
+                    self.is_loaded = True
+                    print(f"[LLMClient] Nạp mô hình thành công (fallback unquantized CUDA): {self.device}")
+                except Exception as e_cuda:
+                    print(f"[Lỗi] Nạp mô hình thất bại: {e_cuda}")
+                    self.is_loaded = False
             # FALLBACK CẤP 1: NẾU ĐANG CHẠY 8-BIT THẤT BẠI HOẶC BỊ OOM -> CHUYỂN SANG 4-BIT NF4
-            if has_cuda and quant_mode not in ("4bit", "4-bit", "nf4"):
+            elif has_cuda and quant_mode not in ("4bit", "4-bit", "nf4"):
                 print(f"[LLMClient] 🛡️ Fallback cấp 1: Chuyển sang lượng tử hóa 4-bit NF4 (tiết kiệm ~50% VRAM, bảo đảm không OOM)...")
                 try:
                     quant_4bit = BitsAndBytesConfig(

@@ -51,3 +51,4 @@ benchmark/
 data_synth/
 datamate_runs/
 
+.cache_parquet/

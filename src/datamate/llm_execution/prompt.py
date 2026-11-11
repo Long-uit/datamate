@@ -363,7 +363,7 @@ def prune_schema_by_intent(
             continue
         if is_delivery and not explicit_delivery:
             continue
-        if is_inv and not explicit_inventory and intent not in ("inventory_unit_conversion",):
+        if is_inv and not explicit_inventory and intent not in ("inventory_unit_conversion", "aggregation"):
             continue
         if any(k in p["name"].lower() for k in ["donvitinh", "dvt"]) and not any(k in q_low for k in ["đơn vị tính", "đvt", "dvt", "quy đổi", "quydoi"]):
             continue
@@ -1675,7 +1675,7 @@ def solution(data):
     return int(round(aov))
 ```""",
 
-    "rate_percentage": """--- VÍ DỤ MINH HỌA: TÍNH TỈ LỆ HỦY ĐƠN (%) ---
+    "rate_percentage": """--- VÍ DỤ MINH HỌA: TÍNH TỈ LỆ PHẦN TRĂM (%) ---
 Câu hỏi: "Tháng 6/2026 tỉ lệ hủy đơn là bao nhiêu phần trăm?" (as_of_date = "2026-06-30")
 ```python
 def solution(data):
