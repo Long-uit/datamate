@@ -356,6 +356,11 @@ class LLMClient:
         # Bật cờ tối ưu phân bổ bộ nhớ PyTorch chống phân mảnh VRAM
         if has_cuda:
             os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+            try:
+                torch.backends.cuda.enable_mem_efficient_sdp(True)
+                torch.backends.cuda.enable_flash_sdp(False)
+            except Exception:
+                pass
             # Với GPU T4 (Turing), float16 ổn định và tương thích BitsAndBytes hơn bfloat16
             use_bf16 = torch.cuda.is_bf16_supported() and "T4" not in torch.cuda.get_device_name(0)
             compute_dtype = torch.bfloat16 if use_bf16 else torch.float16
@@ -427,7 +432,10 @@ class LLMClient:
                     # Với GPU <= 16GB (như Kaggle T4 x 2), giới hạn mỗi GPU tối đa ~8.5GiB để chia tải 50-50
                     # và chừa lại ít nhất 6GiB VRAM cho Attention Forward (SDPA) và KV-Cache
                     if vram_gb <= 17:
-                        safe_limit_gb = max(4, int(vram_gb * 0.58))
+                        # GPU 0 gánh input embeddings và Attention prefill ma trận lớn (~5.2GB)
+                        # Do đó trần weights GPU 0 chỉ để 5GiB, chừa lại gần 10GiB VRAM cho Attention!
+                        # GPU 1 gánh phần weights còn lại (trần 11GiB)
+                        safe_limit_gb = 5 if g_idx == 0 else 11
                     else:
                         safe_limit_gb = max(4, int(vram_gb - 6.0))
                     max_memory[g_idx] = f"{safe_limit_gb}GiB"
