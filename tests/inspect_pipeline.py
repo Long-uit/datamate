@@ -140,16 +140,37 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
             import pickle
             with open(meta_file, "rb") as f_meta:
                 unpickled = pickle.load(f_meta)
-                if len(unpickled) == 4:
+                canonical_keys = None
+                aliases = {}
+                if len(unpickled) == 5:
+                    schema_summary, shop_meta, candidates, bd, meta_extra = unpickled
+                    if isinstance(meta_extra, dict):
+                        aliases = meta_extra
+                    elif isinstance(meta_extra, (list, set)):
+                        canonical_keys = set(meta_extra)
+                elif len(unpickled) == 4:
                     schema_summary, shop_meta, candidates, bd = unpickled
                 else:
                     schema_summary, shop_meta, candidates = unpickled
                     bd = None
-            data_dict: Dict[str, pd.DataFrame] = {}
-            for p_file in cache_dir.glob("*.parquet"):
-                t_key = p_file.stem
-                data_dict[t_key] = pd.read_parquet(p_file)
-            return data_dict, None, schema_summary, bd, shop_meta, candidates
+
+                data_dict: Dict[str, pd.DataFrame] = {}
+                seen_signatures = set()
+                for p_file in sorted(cache_dir.glob("*.parquet")):
+                    t_key = p_file.stem
+                    if canonical_keys and t_key not in canonical_keys:
+                        continue
+                    df_t = pd.read_parquet(p_file)
+                    # Chống nạp trùng bảng do cache cũ lưu nhiều alias cho cùng 1 file
+                    sig = (len(df_t), tuple(df_t.columns.tolist()[:10]))
+                    if not canonical_keys and sig in seen_signatures:
+                        continue
+                    seen_signatures.add(sig)
+                    data_dict[t_key] = df_t
+
+                if data_dict:
+                    setattr(data_dict, "_aliases", aliases)
+                    return data_dict, None, schema_summary, bd, shop_meta, candidates
         except Exception:
             pass
 
@@ -158,19 +179,24 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
         bd = clean_business(raw_bd)
         con = None  # Tối ưu hóa nạp kép: LLM 100% dùng Pandas trên data, bỏ nạp SQLite mặc định
         data_dict: Dict[str, pd.DataFrame] = {}
+        aliases: Dict[str, str] = {}
         for ti in bd.tables:
             t_base = Path(ti.fixed_file_name).stem if getattr(ti, "fixed_file_name", None) else ti.table_id
             t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
-            data_dict[t_name] = ti.df
-            if ti.sheet_name and ti.sheet_name != "Sheet1" and ti.sheet_name not in data_dict:
-                data_dict[ti.sheet_name] = ti.df
-            if t_base != t_name and t_base not in data_dict:
-                data_dict[t_base] = ti.df
-            if ti.table_id and ti.table_id not in data_dict:
-                data_dict[ti.table_id] = ti.df
 
-        # Sử dụng Rich Schema Profiler hiển thị kiểu dữ liệu, min-max date và giá trị mẫu
-        schema_summary = profile_business_schema(bd, max_cols=25)
+            # Chỉ lưu bảng chính tắc 1 lần duy nhất để chống cộng trùng bảng (nhân 2x/4x doanh thu)
+            data_dict[t_name] = ti.df
+            if ti.sheet_name and ti.sheet_name != "Sheet1" and ti.sheet_name != t_name:
+                aliases[ti.sheet_name] = t_name
+            if t_base != t_name:
+                aliases[t_base] = t_name
+            if ti.table_id and ti.table_id != t_name:
+                aliases[ti.table_id] = t_name
+
+        setattr(data_dict, "_aliases", aliases)
+
+        # Sử dụng Rich Schema Profiler hiển thị kiểu dữ liệu, min-max date và giá trị mẫu (tối ưu 15 cột)
+        schema_summary = profile_business_schema(bd, max_cols=15)
         shop_meta = extract_shop_metadata(business_obj=bd, data_dict=data_dict)
         candidates = extract_candidates_from_business(bd)
 
@@ -182,7 +208,7 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
                 if isinstance(df_table, pd.DataFrame):
                     df_table.to_parquet(cache_dir / f"{k}.parquet", index=False)
             with open(meta_file, "wb") as f_meta:
-                pickle.dump((schema_summary, shop_meta, candidates, bd), f_meta)
+                pickle.dump((schema_summary, shop_meta, candidates, bd, aliases), f_meta)
             flag_file.touch()
         except Exception:
             pass

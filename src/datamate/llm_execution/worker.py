@@ -605,13 +605,19 @@ class SmartDataDict(dict):
     - Tự động bỏ qua phần mở rộng file (.csv, .xlsx).
     - Hỗ trợ khớp mềm (substring match) nếu tên bảng có tiền tố/hậu tố.
     """
-    def __init__(self, data_dict: Dict[str, Any]):
+    def __init__(self, data_dict: Dict[str, Any], aliases: Optional[Dict[str, str]] = None):
         super().__init__(data_dict)
         self._norm_map: Dict[str, str] = {}
         for k in data_dict.keys():
             norm_k = self._normalize(k)
             if norm_k:
                 self._norm_map[norm_k] = k
+        if aliases:
+            for alias, canonical in aliases.items():
+                if canonical in data_dict:
+                    norm_a = self._normalize(alias)
+                    if norm_a and norm_a not in self._norm_map:
+                        self._norm_map[norm_a] = canonical
 
     @staticmethod
     def _normalize(k: Any) -> str:
@@ -793,7 +799,8 @@ def execute_code_in_env(
         ordered_keys.sort(key=_table_priority_detail)
 
     isolated_data = {k: raw_isolated[k] for k in ordered_keys}
-    smart_data = SmartDataDict(isolated_data)
+    aliases = getattr(data_dict, "_aliases", {}) if hasattr(data_dict, "_aliases") else None
+    smart_data = SmartDataDict(isolated_data, aliases=aliases)
 
     def _pct(a: Any, b: Any) -> float:
         try:

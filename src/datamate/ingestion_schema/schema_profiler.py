@@ -27,8 +27,8 @@ def _normalize_text(s: Any) -> str:
     return re.sub(r"\s+", " ", text)
 
 
-def profile_table_columns(df: pd.DataFrame, max_cols: int = 25) -> List[str]:
-    """Phân tích và tạo mô tả giàu ngữ nghĩa cho từng cột trong bảng."""
+def profile_table_columns(df: pd.DataFrame, max_cols: int = 15) -> List[str]:
+    """Phân tích và tạo mô tả giàu ngữ nghĩa cho từng cột trong bảng (tối ưu hóa token để chống tràn VRAM)."""
     col_previews: List[str] = []
     
     for c in df.columns[:max_cols]:
@@ -59,8 +59,8 @@ def profile_table_columns(df: pd.DataFrame, max_cols: int = 25) -> List[str]:
         # 2. Nhận diện cột tiền tệ / số lượng (kiểm tra trước phân loại để tránh nhầm số thành categorical)
         is_num_keyword = any(k in c_low for k in ["tiền", "giá", "số lượng", "soluong", "doanh thu", "chiết khấu", "thuế", "vat", "nợ", "tồn", "cần trả", "đơn giá"])
         sample_val = _normalize_text(non_null.iloc[0])
-        if len(sample_val) > 22:
-            sample_val = sample_val[:19] + "..."
+        if len(sample_val) > 20:
+            sample_val = sample_val[:17] + "..."
 
         if is_num_keyword:
             col_previews.append(f"'{col_name}' (số/tiền, vd: '{sample_val}')")
@@ -75,7 +75,7 @@ def profile_table_columns(df: pd.DataFrame, max_cols: int = 25) -> List[str]:
             unique_vals = [_normalize_text(v) for v in non_null.unique() if _normalize_text(v)]
             unique_vals = [v for v in unique_vals if v.lower() not in ("nan", "none", "null")]
             if unique_vals:
-                vals_str = ", ".join(f"'{v}'" for v in unique_vals[:6])
+                vals_str = ", ".join(f"'{v[:18]}...'" if len(v) > 20 else f"'{v}'" for v in unique_vals[:3])
                 col_previews.append(f"'{col_name}' (phân loại: [{vals_str}])")
                 continue
 
@@ -188,7 +188,7 @@ def infer_table_role(table_name: str, df: pd.DataFrame) -> str:
     return "Bảng dữ liệu khác"
 
 
-def profile_business_schema(business: BusinessData, max_cols: int = 25) -> str:
+def profile_business_schema(business: BusinessData, max_cols: int = 15) -> str:
     """Tạo bản tóm tắt schema phong phú (Rich Schema) kèm Table Roles cho toàn bộ shop."""
     schema_lines: List[str] = []
     role_summary_lines: List[str] = ["### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):"]

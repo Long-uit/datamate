@@ -711,6 +711,25 @@ class LLMClient:
         inputs = self.tokenizer([chat_text], return_tensors="pt").to(self.model.device)
 
         start_len = inputs.input_ids.shape[1]
+
+        # TRÁNH BÙNG NỔ ATTENTION MATRIX TRÊN TESLA T4:
+        # Với attention SDPA tiêu chuẩn không có FlashAttention-2 trên T4, ma trận attention chiếm: 80 * seq_len^2 bytes.
+        # Ở 10,205 tokens -> cần 7.76 GiB (OOM ngay lập tức).
+        # Ở <= 3,584 tokens -> cần ~1.02 GiB (an toàn tuyệt đối trong ~5.5 GiB VRAM còn lại trên GPU 0/1).
+        MAX_SAFE_INPUT_TOKENS = 3584
+        if start_len > MAX_SAFE_INPUT_TOKENS:
+            head_len = 1024
+            tail_len = MAX_SAFE_INPUT_TOKENS - head_len
+            head_ids = inputs.input_ids[:, :head_len]
+            tail_ids = inputs.input_ids[:, -tail_len:]
+            inputs.input_ids = torch.cat([head_ids, tail_ids], dim=1)
+            if hasattr(inputs, "attention_mask") and inputs.attention_mask is not None:
+                head_mask = inputs.attention_mask[:, :head_len]
+                tail_mask = inputs.attention_mask[:, -tail_len:]
+                inputs.attention_mask = torch.cat([head_mask, tail_mask], dim=1)
+            print(f"[LLMClient] ⚡ Prompt dài ({start_len} tokens). Tự động cắt giữa còn {MAX_SAFE_INPUT_TOKENS} tokens (1024 đầu + {tail_len} cuối) để bảo vệ VRAM GPU T4.")
+            start_len = inputs.input_ids.shape[1]
+
         stopping_criteria = StoppingCriteriaList([CodeBlockEndStoppingCriteria(self.tokenizer, start_len)])
 
         # Cấu hình Greedy Decoding (T=0) chuẩn kèm StoppingCriteria tối ưu tốc độ:
@@ -734,26 +753,48 @@ class LLMClient:
                 )
         except (torch.cuda.OutOfMemoryError, RuntimeError) as oom_err:
             if "out of memory" in str(oom_err).lower():
-                print(f"[LLMClient] ⚠️ Cảnh báo CUDA OOM khi sinh mã: {oom_err}. Đang dọn dẹp cache và thử lại với 512 tokens...")
+                print(f"[LLMClient] ⚠️ Cảnh báo CUDA OOM khi sinh mã: {oom_err}. Đang dọn dẹp cache và cắt giảm prompt xuống 2048 tokens...")
                 import gc
                 gc.collect()
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                 try:
+                    cur_len = inputs.input_ids.shape[1]
+                    if cur_len > 2048:
+                        r_head = 512
+                        r_tail = 2048 - r_head
+                        retry_ids = torch.cat([inputs.input_ids[:, :r_head], inputs.input_ids[:, -r_tail:]], dim=1)
+                        retry_mask = (
+                            torch.cat([inputs.attention_mask[:, :r_head], inputs.attention_mask[:, -r_tail:]], dim=1)
+                            if hasattr(inputs, "attention_mask") and inputs.attention_mask is not None
+                            else None
+                        )
+                    else:
+                        retry_ids = inputs.input_ids
+                        retry_mask = inputs.attention_mask if hasattr(inputs, "attention_mask") else None
+
+                    retry_start_len = retry_ids.shape[1]
+                    retry_stopping = StoppingCriteriaList([CodeBlockEndStoppingCriteria(self.tokenizer, retry_start_len)])
+                    retry_inputs = {"input_ids": retry_ids}
+                    if retry_mask is not None:
+                        retry_inputs["attention_mask"] = retry_mask
+
                     with torch.inference_mode():
                         output_tokens = self.model.generate(
-                            **inputs,
-                            max_new_tokens=min(gen_tokens, 512),
+                            **retry_inputs,
+                            max_new_tokens=min(gen_tokens, 384),
                             do_sample=False,
                             temperature=None,
                             top_p=None,
                             top_k=None,
                             repetition_penalty=1.05,
                             use_cache=True,
-                            stopping_criteria=stopping_criteria,
+                            stopping_criteria=retry_stopping,
                             pad_token_id=self.tokenizer.eos_token_id,
                             eos_token_id=self.tokenizer.eos_token_id
                         )
+                    inputs = retry_inputs
+                    print(f"[LLMClient] ✅ Phục hồi OOM thành công với prompt 2048 tokens!")
                 except Exception as retry_err:
                     print(f"[LLMClient] ❌ Thử lại sau OOM vẫn gặp lỗi ({retry_err}). Pipeline sẽ fallback an toàn.")
                     import gc
@@ -764,7 +805,8 @@ class LLMClient:
             else:
                 raise oom_err
 
-        generated_token_ids = output_tokens[0][len(inputs.input_ids[0]):]
+        in_ids = inputs["input_ids"] if isinstance(inputs, dict) else inputs.input_ids
+        generated_token_ids = output_tokens[0][len(in_ids[0]):]
         result_text = self.tokenizer.decode(generated_token_ids, skip_special_tokens=True)
 
         del inputs, output_tokens

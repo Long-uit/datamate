@@ -142,20 +142,24 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
         bd = clean_business(raw_bd)
         con = None  # Tối ưu hóa: LLM 100% dùng Pandas trên data, bỏ nạp kép SQLite để giảm 50% thời gian load & RAM
         data_dict: Dict[str, pd.DataFrame] = {}
+        aliases: Dict[str, str] = {}
         for ti in bd.tables:
             t_base = Path(ti.fixed_file_name).stem if getattr(ti, "fixed_file_name", None) else ti.table_id
             t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
 
+            # Chỉ lưu bảng chính tắc 1 lần duy nhất để chống cộng trùng bảng (nhân 2x/4x doanh thu)
             data_dict[t_name] = ti.df
-            if ti.sheet_name and ti.sheet_name != "Sheet1" and ti.sheet_name not in data_dict:
-                data_dict[ti.sheet_name] = ti.df
-            if t_base != t_name and t_base not in data_dict:
-                data_dict[t_base] = ti.df
-            if ti.table_id and ti.table_id not in data_dict:
-                data_dict[ti.table_id] = ti.df
+            if ti.sheet_name and ti.sheet_name != "Sheet1" and ti.sheet_name != t_name:
+                aliases[ti.sheet_name] = t_name
+            if t_base != t_name:
+                aliases[t_base] = t_name
+            if ti.table_id and ti.table_id != t_name:
+                aliases[ti.table_id] = t_name
 
-        # Sử dụng Rich Schema Profiler hiển thị kiểu dữ liệu, min-max date và giá trị mẫu
-        schema_summary = profile_business_schema(bd, max_cols=25)
+        setattr(data_dict, "_aliases", aliases)
+
+        # Sử dụng Rich Schema Profiler hiển thị kiểu dữ liệu, min-max date và giá trị mẫu (tối ưu 15 cột)
+        schema_summary = profile_business_schema(bd, max_cols=15)
         shop_meta = extract_shop_metadata(business_obj=bd, data_dict=data_dict)
         candidates = extract_candidates_from_business(bd)
         return data_dict, con, schema_summary, bd, shop_meta, candidates

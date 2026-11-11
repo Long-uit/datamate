@@ -432,6 +432,48 @@ def prune_schema_by_intent(
     if len(kept_names) == 0:
         return schema_str
 
+    # --- GIỚI HẠN TỐI ĐA 5 BẢNG (Chống tràn VRAM Attention Matrix trên GPU Tesla T4) ---
+    if len(kept_names) > 5:
+        def _score_table(tbl_p: Dict[str, Any]) -> int:
+            t_name = tbl_p["name"].lower()
+            role = tbl_p.get("role", "").lower()
+            score = 0
+            # 1. Bảng chứa thực thể đích (entity_tables)
+            if any(e_t in t_name for e_t in entity_tables):
+                score += 100
+            # 2. Khớp trực tiếp với từ khóa trong câu hỏi
+            if any(w in t_name for w in q_words if len(w) >= 3):
+                score += 50
+            # 3. Theo Intent
+            if intent in ("revenue", "order_count", "cancelled_orders", "top_selling_product", "average_order_value"):
+                if any(k in t_name or k in role for k in ["banhang", "ban_hang", "hoadon", "hoa_don", "donhang", "don_hang"]):
+                    score += 45
+                if any(k in t_name or k in role for k in ["chitiet", "chi_tiet", "detail"]):
+                    score += 40
+                if any(k in t_name or k in role for k in ["sanpham", "san_pham", "hanghoa", "hang_hoa", "mathang"]):
+                    score += 25
+            elif intent == "purchase_import":
+                if any(k in t_name or k in role for k in ["nhaphang", "nhap_hang", "nhapkho", "phieunhap"]):
+                    score += 45
+                if any(k in t_name or k in role for k in ["sanpham", "hanghoa"]):
+                    score += 30
+            elif intent == "cong_no":
+                if any(k in t_name or k in role for k in ["congno", "cong_no", "soquy", "thuchi"]):
+                    score += 45
+                if any(k in t_name or k in role for k in ["khachhang", "khach_hang"]):
+                    score += 30
+            elif intent == "expense":
+                if any(k in t_name or k in role for k in ["chitudung", "phieuchi", "thuchi", "chiphi"]):
+                    score += 45
+            # 4. Ưu tiên bảng bán hàng chung
+            if any(k in role for k in ["bán hàng", "hóa đơn", "đơn hàng"]):
+                score += 20
+            return score
+
+        scored_kept = [(p["name"], _score_table(p)) for p in parsed_tables if p["name"] in kept_names]
+        scored_kept.sort(key=lambda x: x[1], reverse=True)
+        kept_names = {name for name, _ in scored_kept[:5]}
+
     # --- TÁI CẤU TRÚC ĐỒNG BỘ NGUYÊN KHỐI (Atomic Re-rendering) ---
     kept_detail_blocks = [p["raw"] for p in parsed_tables if p["name"] in kept_names]
 
@@ -660,13 +702,27 @@ NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN:
         )
 
     if any(k in q_low for k in ["huỷ", "hủy", "cancel", "huy"]) and any(k in q_low for k in ["đơn", "bill", "hoá đơn", "don"]):
-        conditional_rules.append(
-            "- [Đơn bị hủy]: Lọc GIỮ LẠI đơn có trạng thái hủy (cả có dấu và không dấu): "
-            "`df[status_col].astype(str).str.contains(r'hủy|huỷ|huy|cancel', case=False, na=False)` "
-            "và đếm số đơn duy nhất bằng `int(df[order_col].dropna().nunique())`. "
-            "TUYỆT ĐỐI CẤM dùng `len(df)` hay `df.shape[0]` vì một đơn có thể có nhiều dòng chi tiết sản phẩm! "
-            "TUYỆT ĐỐI CẤM đếm trên cột ngày tháng!"
-        )
+        is_rate_query = any(k in q_low for k in ["tỉ lệ", "tỷ lệ", "ti le", "ty le", "%", "phần trăm", "phan tram", "suất"])
+        if is_rate_query:
+            conditional_rules.append(
+                "- [Tỉ lệ hủy đơn (%) (BẮT BUỘC)]: Khi tính tỉ lệ hủy đơn (%), mẫu số BẮT BUỘC là TỔNG SỐ ĐƠN (tất cả trạng thái) trong kỳ. "
+                "TUYỆT ĐỐI KHÔNG lọc bỏ đơn không hủy trước khi tính mẫu số! "
+                "Quy trình chuẩn: "
+                "1. Lọc theo kỳ thời gian: `df_period = df[(df['clean_date'] >= start) & (df['clean_date'] <= end)]`. "
+                "2. Tính mẫu số: `total_orders = int(df_period[order_col].dropna().nunique())`. Nếu total_orders == 0: return 0.0. "
+                "3. Tìm mask đơn hủy: `cancel_mask = df_period[status_col].astype(str).str.contains(r'hủy|huỷ|huy|cancel', case=False, na=False)`. "
+                "4. Đếm số đơn hủy (tử số): `cancelled_orders = int(df_period[cancel_mask][order_col].dropna().nunique())`. "
+                "5. Tính tỉ lệ %: `return round(float(cancelled_orders / total_orders * 100.0), 2)`. "
+                "TUYỆT ĐỐI CẤM dùng `len(df)` hay `df.shape[0]` vì mỗi đơn có nhiều dòng mặt hàng!"
+            )
+        else:
+            conditional_rules.append(
+                "- [Đơn bị hủy]: Lọc GIỮ LẠI đơn có trạng thái hủy (cả có dấu và không dấu): "
+                "`df[status_col].astype(str).str.contains(r'hủy|huỷ|huy|cancel', case=False, na=False)` "
+                "và đếm số đơn duy nhất bằng `int(df[order_col].dropna().nunique())`. "
+                "TUYỆT ĐỐI CẤM dùng `len(df)` hay `df.shape[0]` vì một đơn có thể có nhiều dòng chi tiết sản phẩm! "
+                "TUYỆT ĐỐI CẤM đếm trên cột ngày tháng!"
+            )
 
     if any(k in q_low for k in ["ca sáng", "ca chiều", "ca sang", "ca chieu", "ca làm"]):
         conditional_rules.append(
@@ -694,6 +750,16 @@ NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN:
             "- [Doanh thu hợp lệ]: Chỉ tính đơn KHÔNG huỷ, KHÔNG trả hàng và KHÔNG hoàn hàng. Tìm cột trạng thái động: `st_col = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt', 'tình trạng', 'xử lý'])), None)`. "
             "Nếu có st_col, lọc: `df = df[~df[st_col].astype(str).str.contains(r'hủy|huỷ|huy|trả|tra|hoàn|hoan|cancel|return', case=False, na=False)]`. "
             "BẮT BUỘC gọi `clean_num(df[amt_col]).sum()` để tính tổng doanh thu."
+        )
+
+    if any(k in q_low for k in ["từ", "trên", "dưới", "lớn hơn", "nhỏ hơn", "cao hơn", "thấp hơn", ">=", "<=", ">", "<"]) and any(k in q_low for k in ["đơn", "hoá đơn", "hoa don", "bill"]) and any(k in q_low for k in ["doanh thu", "tiền", "giá trị", "đồng", "k", "vnd"]):
+        conditional_rules.append(
+            "- [Đếm đơn theo ngưỡng doanh thu / giá trị (ví dụ: 'đơn có doanh thu từ X đồng trở lên')]: "
+            "1. Lọc bảng bán hàng theo kỳ thời gian và bỏ đơn hủy/trả hàng. "
+            "2. Tìm cột mã đơn `order_col` và cột tiền `amt_col = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền hàng', 'tổng bill', 'khách cần trả', 'doanh thu'])), None)`. "
+            "3. Nếu bảng là chi tiết bán hàng (nhiều dòng cho cùng 1 đơn): BẮT BUỘC gom nhóm theo mã đơn để tính tổng tiền của từng đơn: "
+            "`order_rev = df.groupby(order_col)[amt_col].apply(lambda s: clean_num(s).sum())`. "
+            "4. Đếm số đơn thỏa điều kiện ngưỡng: `int((order_rev >= X).sum())` (hoặc `>` tùy câu hỏi)."
         )
 
     # Lọc sản phẩm cụ thể nếu câu hỏi đề cập
