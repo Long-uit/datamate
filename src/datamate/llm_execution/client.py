@@ -424,8 +424,12 @@ class LLMClient:
                 max_memory = {}
                 for g_idx in range(num_gpus):
                     vram_gb = torch.cuda.get_device_properties(g_idx).total_memory / (1024 ** 3)
-                    # Dành ~12GiB trên mỗi thẻ 14.5GiB cho model, giữ 2.5GiB cho Attention/KV-Cache
-                    safe_limit_gb = max(4, int(vram_gb - 2.5))
+                    # Với GPU <= 16GB (như Kaggle T4 x 2), giới hạn mỗi GPU tối đa ~8.5GiB để chia tải 50-50
+                    # và chừa lại ít nhất 6GiB VRAM cho Attention Forward (SDPA) và KV-Cache
+                    if vram_gb <= 17:
+                        safe_limit_gb = max(4, int(vram_gb * 0.58))
+                    else:
+                        safe_limit_gb = max(4, int(vram_gb - 6.0))
                     max_memory[g_idx] = f"{safe_limit_gb}GiB"
                 max_memory["cpu"] = "28GiB"
                 load_kwargs["max_memory"] = max_memory
