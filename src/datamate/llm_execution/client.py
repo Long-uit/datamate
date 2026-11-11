@@ -395,10 +395,19 @@ class LLMClient:
 
         if model_id is None:
             model_id = os.environ.get("DATAMATE_MODEL_ID") or os.environ.get("MODEL_ID") or cfg_model_id or "Qwen/Qwen2.5-Coder-14B-Instruct"
-        # Trong môi trường Docker Offline, nếu trọng số đã được bake tại /app/weights/model hoặc DATAMATE_MODEL_ID trỏ tới thư mục có thực
-        env_model_path = os.environ.get("DATAMATE_MODEL_ID") or "/app/weights/model"
-        if not os.path.isdir(str(model_id)) and os.path.isdir(env_model_path) and os.path.exists(os.path.join(env_model_path, "config.json")):
-            model_id = env_model_path
+        
+        # Tự động nhận diện thư mục trọng số mô hình offline (hỗ trợ Docker BTC /app/weights/model, /weights, models/...)
+        for candidate_path in [
+            model_id,
+            os.environ.get("DATAMATE_MODEL_ID"),
+            "/app/weights/model",
+            "/weights",
+            "models/Qwen2.5-Coder-14B-Instruct",
+        ]:
+            if candidate_path and os.path.isdir(str(candidate_path)) and os.path.exists(os.path.join(str(candidate_path), "config.json")):
+                model_id = str(candidate_path)
+                break
+
         self.model_id = model_id
         self.backend = (backend or os.environ.get("DATAMATE_BACKEND") or cfg_backend or "transformers").lower()
         self.model = None
@@ -444,11 +453,22 @@ class LLMClient:
         # 1. Cấu hình kiểu dữ liệu tính toán (compute_dtype) & Lượng tử hóa
         has_cuda = torch.cuda.is_available()
         num_gpus = torch.cuda.device_count() if has_cuda else 0
+        total_vram_gb = sum(
+            torch.cuda.get_device_properties(i).total_memory / (1024 ** 3)
+            for i in range(num_gpus)
+        ) if has_cuda else 0.0
+        min_gpu_vram = min(
+            (torch.cuda.get_device_properties(i).total_memory / (1024 ** 3) for i in range(num_gpus)),
+            default=0.0
+        ) if has_cuda else 0.0
         
         # Bật cờ tối ưu phân bổ bộ nhớ PyTorch chống phân mảnh VRAM
         if has_cuda:
             os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+            gpu_names = [torch.cuda.get_device_name(i) for i in range(num_gpus)]
+            print(f"[LLMClient] 🖥️ Phát hiện phần cứng: {num_gpus} GPU ({', '.join(gpu_names)}) | Tổng VRAM: {total_vram_gb:.1f} GB")
             # Với GPU T4 (Turing), float16 ổn định và tương thích BitsAndBytes hơn bfloat16
+            # Với GPU Blackwell RTX 5090 (máy BTC), bfloat16 hoạt động chuẩn xác với Tensor Cores thế hệ mới
             use_bf16 = torch.cuda.is_bf16_supported() and "T4" not in torch.cuda.get_device_name(0)
             compute_dtype = torch.bfloat16 if use_bf16 else torch.float16
         else:
@@ -460,8 +480,8 @@ class LLMClient:
         # TỰ ĐỘNG BẢO VỆ OOM: Nếu chỉ có 1 GPU (<= 16GB) mà nạp mô hình 14B, 8-bit (14GB) chắc chắn OOM
         # -> Tự động kích hoạt 4-bit NF4 (~8.5GB) để dành 6GB VRAM cho Attention Forward!
         is_14b = "14b" in str(self.model_id).lower()
-        if has_cuda and num_gpus == 1 and is_14b and quant_mode != "4bit":
-            print(f"[LLMClient] ⚠️ Phát hiện chỉ có 1 GPU ({torch.cuda.get_device_name(0)}) chạy mô hình 14B.")
+        if has_cuda and num_gpus == 1 and is_14b and min_gpu_vram <= 20.0 and quant_mode != "4bit":
+            print(f"[LLMClient] ⚠️ Phát hiện chỉ có 1 GPU ({torch.cuda.get_device_name(0)}, {min_gpu_vram:.1f} GB) chạy mô hình 14B.")
             print(f"[LLMClient] 🛡️ Tự động chuyển lượng tử hóa sang 4-bit NF4 để chống CUDA Out of Memory!")
             quant_mode = "4bit"
 
@@ -599,16 +619,26 @@ class LLMClient:
                     print(f"[Lỗi] Nạp mô hình 4-bit thất bại: {e_4bit}")
                     self.is_loaded = False
 
-            # FALLBACK CẤP 3 (CHỈ DÀNH CHO MODEL NHỎ < 4B):
-            # Tuyệt đối không fallback float16 cho model 7B hoặc 14B vì 100% sẽ OOM GPU 15GB!
-            elif not self.is_loaded and has_cuda and not is_14b and "7b" not in str(self.model_id).lower():
-                print(f"[LLMClient] 🛡️ Fallback cấp 3: Thử nạp không lượng tử hóa (torch_dtype={compute_dtype}) cho mô hình nhỏ...")
+            # FALLBACK CẤP 3: NẾU THẤT BẠI VÀ HỆ THỐNG CÓ ĐỦ VRAM HOẶC MÔ HÌNH NHỎ
+            # Nếu chạy trên máy BTC (2x RTX 5090 = 64GB VRAM) hoặc máy trạm có VRAM lớn:
+            # Model 14B nguyên bản (bfloat16) chỉ chiếm ~28GB VRAM.
+            # Trên máy có tổng VRAM >= 36GB, hoàn toàn có thể nạp không lượng tử hóa (bfloat16) an toàn 100%!
+            can_load_unquantized = (
+                (is_14b and total_vram_gb >= 36.0) or
+                ("7b" in str(self.model_id).lower() and total_vram_gb >= 20.0) or
+                (not is_14b and "7b" not in str(self.model_id).lower() and total_vram_gb >= 8.0)
+            )
+            if not self.is_loaded and has_cuda and can_load_unquantized:
+                print(f"[LLMClient] 🛡️ Fallback cấp 3: Phát hiện hệ thống có VRAM dồi dào ({total_vram_gb:.1f} GB). Thử nạp không lượng tử hóa (torch_dtype={compute_dtype})...")
                 try:
+                    gc.collect()
+                    torch.cuda.empty_cache()
                     fallback_kwargs = {
                         "device_map": "auto",
                         "torch_dtype": compute_dtype,
                         "low_cpu_mem_usage": True,
                         "trust_remote_code": True,
+                        "attn_implementation": "sdpa",
                     }
                     self.model = AutoModelForCausalLM.from_pretrained(
                         self.model_id,
@@ -616,9 +646,9 @@ class LLMClient:
                     )
                     self.model.eval()
                     self.is_loaded = True
-                    print(f"[LLMClient] Nạp mô hình nhỏ thành công: {self.device}")
+                    print(f"[LLMClient] ✅ Nạp mô hình không lượng tử hóa thành công: {self.device}")
                 except Exception as e_cuda:
-                    print(f"[Lỗi] Nạp mô hình thất bại: {e_cuda}")
+                    print(f"[Lỗi] Nạp mô hình không lượng tử hóa thất bại: {e_cuda}")
                     self.is_loaded = False
             else:
                 if not self.is_loaded:
@@ -713,10 +743,16 @@ class LLMClient:
         start_len = inputs.input_ids.shape[1]
 
         # TRÁNH BÙNG NỔ ATTENTION MATRIX TRÊN TESLA T4:
-        # Với attention SDPA tiêu chuẩn không có FlashAttention-2 trên T4, ma trận attention chiếm: 80 * seq_len^2 bytes.
-        # Ở 10,205 tokens -> cần 7.76 GiB (OOM ngay lập tức).
-        # Ở <= 3,584 tokens -> cần ~1.02 GiB (an toàn tuyệt đối trong ~5.5 GiB VRAM còn lại trên GPU 0/1).
-        MAX_SAFE_INPUT_TOKENS = 3584
+        # Ngưỡng an toàn thích ứng phần cứng:
+        # - GPU <= 16GB (Tesla T4 trên Kaggle): giới hạn 3,584 tokens (Math SDPA ~1.02GB)
+        # - GPU >= 24GB (RTX 5090 trên máy BTC, A100, RTX 4090): giới hạn 8,192 tokens (FlashAttention native)
+        num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+        min_vram_gb = min(
+            (torch.cuda.get_device_properties(i).total_memory / (1024 ** 3) for i in range(num_gpus)),
+            default=15.0
+        ) if num_gpus > 0 else 15.0
+
+        MAX_SAFE_INPUT_TOKENS = 8192 if min_vram_gb >= 24.0 else 3584
         if start_len > MAX_SAFE_INPUT_TOKENS:
             head_len = 1024
             tail_len = MAX_SAFE_INPUT_TOKENS - head_len
@@ -727,7 +763,7 @@ class LLMClient:
                 head_mask = inputs.attention_mask[:, :head_len]
                 tail_mask = inputs.attention_mask[:, -tail_len:]
                 inputs.attention_mask = torch.cat([head_mask, tail_mask], dim=1)
-            print(f"[LLMClient] ⚡ Prompt dài ({start_len} tokens). Tự động cắt giữa còn {MAX_SAFE_INPUT_TOKENS} tokens (1024 đầu + {tail_len} cuối) để bảo vệ VRAM GPU T4.")
+            print(f"[LLMClient] ⚡ Prompt dài ({start_len} tokens). Tự động cắt giữa còn {MAX_SAFE_INPUT_TOKENS} tokens (1024 đầu + {tail_len} cuối) để bảo vệ VRAM GPU.")
             start_len = inputs.input_ids.shape[1]
 
         stopping_criteria = StoppingCriteriaList([CodeBlockEndStoppingCriteria(self.tokenizer, start_len)])
