@@ -84,32 +84,25 @@ class CodeBlockEndStoppingCriteria(StoppingCriteria):
             return False
 
         full_text = self.tokenizer.decode(new_ids, skip_special_tokens=False)
-        if "def solution" in full_text and "return " in full_text:
-            if full_text.count("```") >= 2:
-                return True
-            if not full_text.strip().startswith("```") and full_text.count("```") >= 1:
-                return True
-            tail_text = self.tokenizer.decode(new_ids[-40:], skip_special_tokens=False)
-            if any(k in tail_text for k in [
-                "\ndef ", "\nclass ", "\nprint(", "\n# Example", "\n# Ví dụ", "\nif __name__", "\n```"
-            ]):
-                return True
-        return False
 
-        full_text = self.tokenizer.decode(new_ids, skip_special_tokens=False)
+        # Kiểm tra token kết thúc đặc biệt (ChatML hoặc EOS)
+        if any(tok in full_text for tok in ["<|im_end|>", "<|endoftext|>", "</s>"]):
+            return True
+
         if "def solution" in full_text and "return " in full_text:
+            # Trường hợp chuẩn: có mở và đóng code fence ```
             if full_text.count("```") >= 2:
                 return True
-            if not full_text.strip().startswith("```") and full_text.count("```") >= 1:
-                return True
-            tail_text = self.tokenizer.decode(new_ids[-40:], skip_special_tokens=False)
-            if (
-                "\nprint(" in tail_text
-                or "\n# Example" in tail_text
-                or "\n# Ví dụ" in tail_text
-                or "\nif __name__" in tail_text
-            ):
-                return True
+
+            # Nếu mô hình sinh mã thẳng mà KHÔNG mở ``` (count == 0),
+            # dừng khi xuất hiện khối lệnh tiếp theo ở thụt lề 0 hoặc ví dụ/chú thích
+            if full_text.count("```") == 0:
+                tail_text = self.tokenizer.decode(new_ids[-40:], skip_special_tokens=False)
+                if any(k in tail_text for k in [
+                    "\ndef ", "\nclass ", "\nprint(", "\n# Example", "\n# Ví dụ", "\nif __name__"
+                ]):
+                    return True
+
         return False
 
 

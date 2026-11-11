@@ -25,14 +25,36 @@ from typing import Any, Dict, List, Optional, Tuple, Set
 # Các từ ngữ phổ biến trong câu hỏi bán lẻ cần loại trừ khỏi danh sách entity bắt buộc
 # để tránh Linker sinh false positive và phạt oan mã nguồn
 GENERIC_BUSINESS_STOPWORDS: Set[str] = {
-    "tháng", "thang", "năm", "nam", "ngày", "ngay", "tiền", "tien",
-    "đơn", "don", "hàng", "hang", "giá", "gia", "tổng", "tong",
-    "bán", "ban", "mua", "khách", "khach", "số lượng", "so luong", "sl",
-    "doanh thu", "dthu", "lãi", "lai", "hủy", "huy", "trả", "tra",
-    "quý", "quy", "hôm nay", "hom nay", "tuần", "tuan", "mặt hàng",
-    "mat hang", "sản phẩm", "san pham", "sp", "khách hàng", "khach hang",
-    "chi phí", "chi phi", "lợi nhuận", "loi nhuan", "doanh số", "doanh so",
-    "cửa hàng", "cua hang", "tiệm", "tiem", "shop", "shop_meta", "đối tượng",
+    # Thời gian
+    "tháng", "thang", "năm", "nam", "ngày", "ngay", "hôm nay", "hom nay",
+    "hôm qua", "hom qua", "bữa qua", "bua qua", "tuần", "tuan", "quý", "quy",
+    "đầu tháng", "dau thang", "cuối ngày", "cuoi ngay", "thời gian", "thoi gian",
+    # Tiền tệ & Doanh số
+    "tiền", "tien", "giá", "gia", "tổng", "tong", "tổng cộng", "tong cong",
+    "doanh thu", "dthu", "doanh số", "doanh so", "lãi", "lai", "lợi nhuận", "loi nhuan",
+    "chi phí", "chi phi", "thành tiền", "thanh tien", "tổng tiền", "tong tien",
+    "tổng đơn", "tong don", "trị giá", "tri gia", "giá trị", "gia tri",
+    # Hoạt động mua bán
+    "đơn", "don", "đơn hàng", "don hang", "hóa đơn", "hoa don", "bill",
+    "hàng", "hang", "hàng hóa", "hang hoa", "mặt hàng", "mat hang",
+    "sản phẩm", "san pham", "sp", "món", "mon",
+    "bán", "ban", "mua", "nhập", "nhap", "xuất", "xuat", "tồn", "ton", "tồn kho", "ton kho",
+    "hủy", "huy", "trả", "tra", "hoàn", "hoan", "giao", "giao dịch", "giao dich",
+    # Đối tượng
+    "khách", "khach", "khách hàng", "khach hang", "người", "nguoi",
+    "cửa hàng", "cua hang", "tiệm", "tiem", "quán", "quan", "shop", "shop_meta", "đối tượng", "doi tuong",
+    # Từ ngữ tính toán / thống kê
+    "bình quân", "binh quan", "trung bình", "trung binh",
+    "mỗi đơn", "moi don", "mỗi", "moi", "từng", "tung", "cả", "ca", "mỗi ngày", "moi ngay",
+    "bao nhiêu", "bao nhieu", "bn", "bnhiu", "bao nhiu", "mấy", "may",
+    "tất cả", "tat ca", "toàn bộ", "toan bo", "toàn", "toan",
+    "số lượng", "so luong", "sl", "lẻ", "le", "sỉ", "si", "chẵn", "chan",
+    "mới", "moi", "cũ", "cu", "chưa", "chua", "đã", "da",
+    "nào", "nao", "gì", "gi", "ai", "đâu", "dau", "được", "duoc", "đc", "dc",
+    "top", "cao nhất", "cao nhat", "thấp nhất", "thap nhat", "nhiều nhất", "nhieu nhat", "ít nhất", "it nhat",
+    "tỉ lệ", "ti le", "tỷ lệ", "ty le", "phần trăm", "phan tram", "ptram", "%",
+    "chênh lệch", "chenh lech", "tăng", "tang", "giảm", "giam", "thay đổi", "thay doi",
+    "đơn vị", "don vi", "đvt", "dvt", "quy cách", "quy cach", "quy đổi", "quy doi",
 }
 
 
@@ -117,11 +139,16 @@ def evaluate_grounding_coverage(
     if entity_matches:
         for m in entity_matches:
             term, val, score, tbl, col = _extract_match_info(m)
-            term_clean = term.lower()
+            term_clean = term.lower().strip()
+            term_no_acc = _strip_diacritics(term_clean)
             if not term_clean:
                 continue
             # Lọc bỏ stopword và từ quá ngắn
-            if term_clean in GENERIC_BUSINESS_STOPWORDS or len(term_clean) <= 2:
+            if (
+                term_clean in GENERIC_BUSINESS_STOPWORDS
+                or term_no_acc in GENERIC_BUSINESS_STOPWORDS
+                or len(term_clean) <= 2
+            ):
                 continue
             # Lọc theo ngưỡng tin cậy cao
             if score < min_entity_score:

@@ -40,12 +40,14 @@ COLUMN_CLUSTER_ALIASES: Dict[str, list[str]] = {
     "qty": [
         "số lượng", "soluong", "so_luong", "sl", "sl nhập", "sl bán", "slg",
         "khối lượng", "khoiluong", "trọng lượng", "quy đổi", "slquydoi", "sl_ban",
-        "số lượng bán", "sl_xuat", "sl tồn"
+        "số lượng bán", "sl_xuat", "sl tồn", "slb", "số lượng lẻ", "soluongle", "quantity", "qty"
     ],
     "amt": [
         "thành tiền", "thanhtien", "thanh_tien", "tổng tiền", "tongtien", "tong_tien",
         "tiền bán", "tienban", "tien_ban", "trị giá", "trigia", "tri_gia",
-        "doanh thu", "doanhthu", "tiền hàng", "tong tien", "thanh tien"
+        "doanh thu", "doanhthu", "tiền hàng", "tong tien", "thanh tien",
+        "tổng đơn", "tong_don", "tongdon", "amount", "giá trị", "giatri", "gia_tri",
+        "tổng cộng", "tong_cong", "tongcong", "tiền", "tien"
     ],
     "price": [
         "đơn giá", "dongia", "don_gia", "giá bán", "giaban", "gia_ban",
@@ -55,12 +57,14 @@ COLUMN_CLUSTER_ALIASES: Dict[str, list[str]] = {
     "item": [
         "tên hàng", "tenhang", "ten_hang", "tên món", "tenmon", "ten_mon",
         "sản phẩm", "sanpham", "san_pham", "tên sp", "mặt hàng", "mathang",
-        "tên hàng hóa", "tên thuốc", "tenthuoc", "chi tiết hàng", "món", "hàng"
+        "tên hàng hóa", "tên thuốc", "tenthuoc", "chi tiết hàng", "món", "hàng",
+        "hàng bán", "hangban", "hang_ban", "nội dung", "noidung", "product", "item"
     ],
     "date": [
         "ngày", "ngay", "ngày bán", "ngay_ban", "ngayban", "thời gian",
         "thoigian", "thời gian tạo", "ngày lập", "ngaylap", "ngày tạo",
-        "ngày giao hàng", "ngày chở", "date", "created_at"
+        "ngày giao hàng", "ngày chở", "date", "created_at", "time", "thời điểm",
+        "ngày hoá đơn", "ngày hóa đơn", "ngay_hd", "ngayhd", "ngay_dat", "ngaydat"
     ],
     "order_id": [
         "mã đơn", "madon", "ma_don", "mã hoá đơn", "mã hóa đơn", "mahd",
@@ -74,6 +78,107 @@ COLUMN_CLUSTER_ALIASES: Dict[str, list[str]] = {
         "product_id", "sku", "mã món"
     ],
 }
+
+
+def get_date_col(df: Any) -> Any:
+    """Tìm cột ngày tháng trong DataFrame, hỗ trợ cả tiếng Việt có dấu, không dấu và tiếng Anh."""
+    if df is None or not hasattr(df, "columns"):
+        return None
+    cols = list(df.columns)
+    for c in cols:
+        norm = _norm_col_name(c)
+        if norm in ("ngay", "date", "ngayban", "thoigian", "ngaylap", "ngaytao", "ngayhd", "createdat", "time", "ngaydat", "ngaygiao"):
+            return c
+    for c in cols:
+        norm = _norm_col_name(c)
+        if any(k in norm for k in ("ngaysinh", "sinh", "hansd", "hansudung", "hantra", "hanthanhtoan")):
+            continue
+        if any(k in norm for k in ("ngay", "date", "time", "thoigian")):
+            return c
+    for c in cols:
+        norm = _norm_col_name(c)
+        if any(k in norm for k in ("hantra", "hanthanhtoan", "han")):
+            return c
+    return None
+
+
+def get_amount_col(df: Any) -> Any:
+    """Tìm cột tiền/doanh thu trong DataFrame, hỗ trợ Thành tiền, Tổng đơn, Amount, Trị giá, v.v."""
+    if df is None or not hasattr(df, "columns"):
+        return None
+    cols = list(df.columns)
+    for c in cols:
+        norm = _norm_col_name(c)
+        if norm in ("thanhtien", "tongtien", "tongdon", "amount", "trigia", "giatri", "tienban", "doanhthu", "tongcong", "tienhang"):
+            return c
+    for c in cols:
+        norm = _norm_col_name(c)
+        if any(k in norm for k in ("thue", "giam", "chietkhau", "giavon", "von")):
+            continue
+        if any(k in norm for k in ("thanhtien", "tongtien", "tongdon", "amount", "trigia", "giatri", "tienban", "doanhthu", "tongcong")):
+            return c
+    for c in cols:
+        norm = _norm_col_name(c)
+        if "thue" in norm or "giam" in norm or "von" in norm:
+            continue
+        if any(k in norm for k in ("tien", "dongia", "giaban")):
+            return c
+    return None
+
+
+def get_qty_col(df: Any) -> Any:
+    """Tìm cột số lượng hàng bán/nhập trong DataFrame."""
+    if df is None or not hasattr(df, "columns"):
+        return None
+    cols = list(df.columns)
+    for c in cols:
+        norm = _norm_col_name(c)
+        if norm in ("soluong", "sl", "slban", "soluongban", "quantity", "qty", "soluongle", "slxuat"):
+            return c
+    for c in cols:
+        norm = _norm_col_name(c)
+        if any(k in norm for k in ("soluong", "sl")):
+            return c
+    return None
+
+
+def get_item_col(df: Any) -> Any:
+    """Tìm cột tên hàng/sản phẩm/món trong DataFrame."""
+    if df is None or not hasattr(df, "columns"):
+        return None
+    cols = list(df.columns)
+    for c in cols:
+        norm = _norm_col_name(c)
+        if norm in ("tenhang", "tenhanghoa", "tensanpham", "tensp", "mathang", "tenmon", "hangban", "sanpham", "noidung", "product", "item"):
+            return c
+    for c in cols:
+        norm = _norm_col_name(c)
+        if any(k in norm for k in ("tenhang", "tensp", "sanpham", "mathang", "tenmon", "hanghoa", "hangban")):
+            return c
+    return None
+
+
+def get_sales_table(data: Any) -> Any:
+    """Lấy bảng bán hàng tối ưu nhất từ dictionary data."""
+    if not data or not isinstance(data, dict):
+        return None
+    # 1. Ưu tiên bảng bán hàng có cả ngày và tiền (loại trừ nhập hàng, nhà cung cấp, chi phí, phiếu giao)
+    for name, df in data.items():
+        n_clean = _norm_col_name(name)
+        if any(k in n_clean for k in ("nhap", "ncc", "chiphi", "phieugiao", "giaohang")):
+            continue
+        if get_date_col(df) is not None and (get_amount_col(df) is not None or get_qty_col(df) is not None):
+            return df
+    # 2. Tìm bảng có tên liên quan đến bán hàng hoặc đơn hàng
+    for name, df in data.items():
+        n_clean = _norm_col_name(name)
+        if any(k in n_clean for k in ("banhang", "sobanhang", "donhang", "hoadon", "chitietdon", "sales", "order")):
+            return df
+    # 3. Fallback trả về DataFrame đầu tiên có date_col
+    for name, df in data.items():
+        if hasattr(df, "columns") and get_date_col(df) is not None:
+            return df
+    return next((df for df in data.values() if hasattr(df, "columns")), None)
 
 
 def _resolve_col_alias(df: Any, col: Any) -> Any:
@@ -535,6 +640,12 @@ class SmartDataDict(dict):
         except KeyError:
             return default
 
+    def get_sales_table(self) -> Any:
+        return get_sales_table(self)
+
+    def get_table(self, role_or_name: str) -> Any:
+        return self.get(role_or_name)
+
 
 def _to_json_serializable(val: Any) -> Any:
     """Chuyển đổi các kiểu dữ liệu phong phú (numpy, pandas, datetime) sang JSON chuẩn."""
@@ -735,9 +846,19 @@ def execute_code_in_env(
         "_strip_accents": _strip_accents,
         "DataNotFoundError": DataNotFoundError,
         "_resolve_col_alias": _resolve_col_alias,
+        "get_date_col": get_date_col,
+        "get_amount_col": get_amount_col,
+        "get_qty_col": get_qty_col,
+        "get_item_col": get_item_col,
+        "get_sales_table": get_sales_table,
     }
     if isinstance(namespace.get("__builtins__"), dict):
         namespace["__builtins__"]["DataNotFoundError"] = DataNotFoundError
+        namespace["__builtins__"]["get_date_col"] = get_date_col
+        namespace["__builtins__"]["get_amount_col"] = get_amount_col
+        namespace["__builtins__"]["get_qty_col"] = get_qty_col
+        namespace["__builtins__"]["get_item_col"] = get_item_col
+        namespace["__builtins__"]["get_sales_table"] = get_sales_table
 
     # Bắt stdout của code
     old_stdout = sys.stdout
@@ -772,12 +893,22 @@ def execute_code_in_env(
         namespace["clean_date"] = clean_date
         namespace["clean_num"] = clean_num
         namespace["DataNotFoundError"] = DataNotFoundError
+        namespace["get_date_col"] = get_date_col
+        namespace["get_amount_col"] = get_amount_col
+        namespace["get_qty_col"] = get_qty_col
+        namespace["get_item_col"] = get_item_col
+        namespace["get_sales_table"] = get_sales_table
         if "solution" in namespace and callable(namespace["solution"]):
             sol_fn = namespace["solution"]
             if hasattr(sol_fn, "__globals__"):
                 sol_fn.__globals__["clean_date"] = clean_date
                 sol_fn.__globals__["clean_num"] = clean_num
                 sol_fn.__globals__["DataNotFoundError"] = DataNotFoundError
+                sol_fn.__globals__["get_date_col"] = get_date_col
+                sol_fn.__globals__["get_amount_col"] = get_amount_col
+                sol_fn.__globals__["get_qty_col"] = get_qty_col
+                sol_fn.__globals__["get_item_col"] = get_item_col
+                sol_fn.__globals__["get_sales_table"] = get_sales_table
 
         if "FINAL_RESULT" not in namespace:
             if "solution" in namespace and callable(namespace["solution"]):
