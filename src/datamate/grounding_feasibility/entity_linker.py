@@ -26,6 +26,15 @@ try:
 except ImportError:
     pd = None
 
+try:
+    from datamate.grounding_feasibility.normalizer_teencode import (
+        normalize_teencode_token,
+        get_teencode_dictionary,
+    )
+except ImportError:
+    normalize_teencode_token = None
+    get_teencode_dictionary = None
+
 if TYPE_CHECKING:
     from datamate.ingestion.loader import BusinessData
 else:
@@ -344,8 +353,21 @@ def normalize_entity_text(text: str, strip_accents: bool = False) -> str:
     return text
 
 
-def _expand_single_token(t: str, next_token: Optional[str] = None) -> tuple[str, Optional[str]]:
+def _expand_single_token(
+    t: str,
+    prev_token: Optional[str] = None,
+    next_token: Optional[str] = None,
+) -> tuple[str, Optional[str]]:
     """Giải mã một token đơn lẻ (giữ nguyên dấu câu đầu/cuối), trả về (token_mới, dạng_chuẩn_nếu_đổi)."""
+    # 0. Ưu tiên bộ chuẩn hóa teencode & khử đa nghĩa chuyên sâu nếu có
+    if normalize_teencode_token is not None:
+        try:
+            norm_tok, rep = normalize_teencode_token(t, prev_token=prev_token, next_token=next_token, domain="retail")
+            if rep is not None:
+                return norm_tok, rep
+        except Exception:
+            pass
+
     m_punct = re.match(r"^([.,!?:;\"'()\[\]{}]*)(.*?)([.,!?:;\"'()\[\]{}]*)$", t)
     if not m_punct:
         return t, None
@@ -407,8 +429,9 @@ def expand_abbreviations(text: str) -> str:
     expanded = []
     n = len(tokens)
     for i, t in enumerate(tokens):
+        prev_t = tokens[i - 1] if i > 0 else None
         nxt = tokens[i + 1] if i + 1 < n else None
-        new_t, _ = _expand_single_token(t, next_token=nxt)
+        new_t, _ = _expand_single_token(t, prev_token=prev_t, next_token=nxt)
         expanded.append(new_t)
     return " ".join(expanded)
 
@@ -423,8 +446,9 @@ def explain_and_expand_abbreviations(text: str) -> tuple[str, dict[str, str]]:
     expanded = []
     n = len(tokens)
     for i, t in enumerate(tokens):
+        prev_t = tokens[i - 1] if i > 0 else None
         nxt = tokens[i + 1] if i + 1 < n else None
-        new_t, full_word = _expand_single_token(t, next_token=nxt)
+        new_t, full_word = _expand_single_token(t, prev_token=prev_t, next_token=nxt)
         if full_word is not None:
             replaced[t] = full_word
         expanded.append(new_t)

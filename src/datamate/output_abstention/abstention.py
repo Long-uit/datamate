@@ -346,7 +346,10 @@ def evaluate_semantic_rule_compliance(
 
     # 5. Kiểu câu hỏi là percent mà code không tính tỷ lệ
     try:
-        from src.datamate.output_abstention.normalizer import infer_expected_type
+        try:
+            from datamate.output_abstention.normalizer import infer_expected_type
+        except ImportError:
+            from src.datamate.output_abstention.normalizer import infer_expected_type
         expected_q_type = infer_expected_type(question) if question else None
     except Exception:
         expected_q_type = None
@@ -355,17 +358,18 @@ def evaluate_semantic_rule_compliance(
     if (ans_type == "percent" or expected_q_type == "percent") and clean_c:
         has_ratio_op = (
             "/" in clean_c
-            or any(k in clean_c for k in ("pct", "ratio", "ty_le", "ti_le", "ty_trong", "ti_trong", "percent", "div("))
+            or any(k in clean_c for k in ("pct", "ratio", "ty_le", "ti_le", "ty_trong", "ti_trong", "percent", "div(", "truediv"))
         )
         if not has_ratio_op:
             violations.append("Câu hỏi kiểu percent nhưng code không thực hiện phép chia tính tỷ lệ")
             semantic_penalty += 0.60
 
-    # 6. Kiểu trả về không khớp kiểu câu hỏi kỳ vọng
+    # 6. Kiểu trả về không khớp kiểu câu hỏi kỳ vọng (giảm phạt nhẹ cho cặp tương thích gần list/string/table)
     if expected_q_type and ans_type and ans_type not in ("abstain", "unanswerable"):
         if ans_type != expected_q_type and not (expected_q_type == "number" and ans_type == "list"):
+            mild_pair = {expected_q_type, ans_type} in ({"string", "list"}, {"table", "list"}, {"table", "dict"})
             violations.append(f"Kiểu trả về '{ans_type}' không khớp với kiểu câu hỏi kỳ vọng '{expected_q_type}'")
-            semantic_penalty += 0.60
+            semantic_penalty += 0.30 if mild_pair else 0.55
 
     # 7. Câu hỏi hỏi số đơn bị hủy nhưng code không lọc trạng thái hủy
     if re.search(r"\b(?:đon|don|bill|hoa\s*don)\s*(?:o\s*trang\s*thai\s*)?(?:bi\s*)?huy\b|\bbao\s*nhieu\s*(?:don|bill)\s*(?:bi\s*)?huy\b", q_no_acc):
@@ -390,10 +394,10 @@ def evaluate_semantic_rule_compliance(
     # 9. Câu hỏi hỏi công nợ / còn nợ / tiền khách trả bớt nợ nhưng code không truy cập bảng thanh toán / công nợ hay cột nợ
     asks_debt_repayment = bool(re.search(r"tra\s*bot\s*no|thu\s*no|tra\s*no|mua\s*chiu|cong\s*no|con\s*no|no\s*cua\s*hang|khach\s*no", q_no_acc))
     if asks_debt_repayment and clean_c:
-        uses_debt_or_pay = bool(re.search(r"thanh_toan|thanh\s*toan|cong_no|cong\s*no|so_no|du\s*no|con_lai|con\s*lai|con\s*no|\bno\b|phieu\s*thu|tra\s*no|debt", clean_c_no_acc))
+        uses_debt_or_pay = bool(re.search(r"thanh_toan|thanh\s*toan|cong_no|cong\s*no|so_no|du\s*no|du\s*cuoi|no\s*cu|han\s*tra|so\s*quy|con_lai|con\s*lai|con\s*no|\bno\b|phieu\s*thu|tra\s*no|debt\(", clean_c_no_acc))
         if not uses_debt_or_pay:
             violations.append("Câu hỏi hỏi về công nợ / tiền trả nợ nhưng code chỉ tính doanh thu bán hàng chung mà không xét bảng/cột thanh toán hoặc công nợ")
-            semantic_penalty += 0.60
+            semantic_penalty += 0.45
 
     # 10. Câu hỏi hỏi 'hôm qua' / 'bữa qua' nhưng code lọc cứng dt.day == as_of_date.day (lấy nhầm ngày hôm nay)
     if as_of_date and re.search(r"\b(?:hom\s*qua|bua\s*qua|ngay\s*hom\s*qua)\b", q_no_acc) and clean_c:
@@ -513,7 +517,10 @@ def compute_confidence_score(
 
     if penalize_zero_revenue_qty is None:
         try:
-            from src.datamate.config import get_config
+            try:
+                from datamate.config import get_config
+            except ImportError:
+                from src.datamate.config import get_config
             penalize_zero_revenue_qty = get_config().abstention.penalize_zero_revenue_qty
         except Exception:
             penalize_zero_revenue_qty = True
@@ -571,10 +578,14 @@ def compute_confidence_score(
                     q_low,
                 ))
                 is_pure_count = bool(re.search(r"đ[eế]m|s[oố]\s*đ[oơ]n|đ[oơ]n\s*(?:h[uủ]y|hu[yỷ])|m[aấ]y\s*đ[oơ]n|m[aấ]y\s*đ[oợ]t|s[oố]\s*đ[oợ]t|bao\s*nhi[eê]u\s*(?:đ[oơ]n|đ[oợ]t|bill)|m[aặ]t\s*h[aà]ng\s*[eế]|kh[oô]ng\s*ai\s*mua|b[aá]n\s*(?:ko|kh[oô]ng)\s*(?:đc|được|dc)", q_low))
-                if penalize_zero_revenue_qty and is_rev_qty_avg and not is_change_or_profit and not is_pure_count:
-                    # Hạ C xuống dưới ngưỡng 0.50 khi kết quả = 0 trên câu hỏi doanh thu / số lượng / trung bình
+                has_specific_entity_filter = bool(
+                    code_text and any(k in code_text for k in ("str.contains", "product=", ".isin(", "item_c"))
+                    and any(d in code_text for d in ("clean_date", "start_date", "end_date", ".dt."))
+                )
+                if penalize_zero_revenue_qty and is_rev_qty_avg and not is_change_or_profit and not is_pure_count and not has_specific_entity_filter:
+                    # Hạ C xuống dưới ngưỡng 0.50 khi kết quả = 0 trên câu hỏi tổng hợp mà không có lọc thực thể + ngày cụ thể
                     return 0.20
-                plausibility_score = 0.30
+                plausibility_score = 0.25 if has_specific_entity_filter else 0.30
     elif ans_type == "list":
         if not ans_val or len(ans_val) == 0:
             return 0.0
@@ -595,7 +606,8 @@ def compute_confidence_score(
     else:
         if "return" not in code_text:
             code_score = 0.0
-        if len(code_text) < 50:
+        uses_builtin_helper = any(h in code_text for h in ("revenue(", "count_orders(", "debt(", "data["))
+        if len(code_text) < 50 and not uses_builtin_helper:
             code_score = 0.10
         elif len(code_text) > 4000:
             code_score = 0.15

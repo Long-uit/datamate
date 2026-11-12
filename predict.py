@@ -103,6 +103,7 @@ from datamate.llm_execution.prompt import (
     build_retry_prompt,
     classify_intent,
     prune_schema_by_intent,
+    ShopExecutionMemory,
 )
 from datamate.grounding_feasibility.feasibility import check_feasibility, extract_shop_metadata
 from datamate.ingestion_schema.loader import load_business, to_sqlite
@@ -259,6 +260,7 @@ def main():
     parser.add_argument("--timeout", type=int, default=30, help="Thời gian chờ tối đa khi chạy code trong sandbox (giây, mặc định: 30)")
     parser.add_argument("--in_process", action="store_true", help="Chạy code trực tiếp trong tiến trình (bảo vệ cache bằng bản sao RAM) thay vì sandbox subprocess")
     parser.add_argument("--quantization", "--quant", type=str, default="4bit", choices=["8bit", "4bit", "none"], help="Chế độ lượng tử hóa mô hình (mặc định: 4bit)")
+    parser.add_argument("--max_new_tokens", type=int, default=768, help="Số token tối đa sinh ra cho mỗi câu (mặc định: 768)")
     parser.add_argument("--preserve_order", action="store_true", help="Chạy đúng theo thứ tự gốc từ câu 1 đến câu cuối trong questions.jsonl (không gom nhóm theo shop)")
     parser.add_argument("--range", type=str, default=None, help="Chỉ định khoảng câu hỏi cần chạy (1-based, ví dụ: 1-100 hoặc 501-1000)")
     args = parser.parse_args()
@@ -381,6 +383,7 @@ def main():
 
     try:
         current_biz_id: Optional[str] = None
+        shop_memory = ShopExecutionMemory()
         # VÒNG LẶP SUY LUẬN TỪNG CÂU HỎI (ĐÃ ĐƯỢC GROUP BY BUSINESS_ID)
         for idx, q in enumerate(active_questions, start=1):
             qid = q["id"]
@@ -468,12 +471,13 @@ def main():
                 entity_matches=entity_matches,
                 return_messages=True,
                 calendar_path=calendar_str,
+                shop_memory_hints=shop_memory.get_hints(biz_id),
             )
 
             # 4. Sinh mã phân tích Python qua LLM (Lượt 1)
             t0 = time.time()
             assert llm is not None
-            code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=1536)
+            code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=args.max_new_tokens)
             gen_sec = round(time.time() - t0, 2)
 
             # 5. Thực thi mã nguồn (Lượt 1) qua Sandbox / Subprocess
@@ -522,7 +526,10 @@ def main():
             should_retry_for_missed = bool(missed_mentions and not exec_err and not sanity_err and grounding_eval.get("entity_coverage", 1.0) < 0.5)
 
             # 5.2. Cơ chế Runtime Self-Correction (tối đa 2 vòng tự sửa lỗi đồng bộ với inspect_pipeline.py)
-            from src.datamate.llm_execution.sandbox import should_retry_self_correction
+            try:
+                from datamate.llm_execution.sandbox import should_retry_self_correction
+            except ImportError:
+                from src.datamate.llm_execution.sandbox import should_retry_self_correction
             max_self_corrections = 2
             while (should_retry_self_correction(exec_err, sanity_err) or (should_retry_for_missed and retry_count == 0)) and retry_count < max_self_corrections:
                 retry_count += 1
@@ -547,7 +554,7 @@ def main():
                     missed_mentions=missed_mentions,
                 )
                 t_retry = time.time()
-                retry_code = llm.generate_code(prompt=retry_user_prompt, system_prompt=retry_sys_prompt, max_new_tokens=1536)
+                retry_code = llm.generate_code(prompt=retry_user_prompt, system_prompt=retry_sys_prompt, max_new_tokens=args.max_new_tokens)
                 gen_sec = round(gen_sec + (time.time() - t_retry), 2)
                 raw_retry, err_retry, ms_retry = execute_solution(
                     code_text=retry_code,
@@ -589,6 +596,9 @@ def main():
                 else:
                     code_text = retry_code
                     exec_err = err_retry
+
+            # Cập nhật bộ nhớ schema liên câu hỏi cho shop hiện tại
+            shop_memory.record_attempt(biz_id, code_text, exec_err or sanity_err)
 
             # Đánh giá lại Grounding Coverage sau lượt thử lại (nếu có)
             grounding_eval = evaluate_grounding_coverage(

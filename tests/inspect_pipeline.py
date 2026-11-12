@@ -92,6 +92,7 @@ from datamate.llm_execution.prompt import (
     EXEMPLAR_BANK,
     prune_schema_by_intent,
     retrieve_dynamic_few_shot,
+    ShopExecutionMemory,
 )
 from datamate.llm_execution.sandbox import (
     clean_date,
@@ -2005,6 +2006,7 @@ def run_batch_evaluation(args: argparse.Namespace):
 
     try:
         current_biz_id: Optional[str] = None
+        shop_memory = ShopExecutionMemory()
         for idx, q in enumerate(active_questions, start=1):
             qid = q["id"]
             biz_id = q["business_id"]
@@ -2170,6 +2172,7 @@ def run_batch_evaluation(args: argparse.Namespace):
                 entity_matches=entity_matches,
                 return_messages=True,
                 calendar_path=cal_str,
+                shop_memory_hints=shop_memory.get_hints(biz_id),
             )
             mod_latencies["prompt_build"] = round((time.perf_counter() - t_prompt) * 1000, 2)
 
@@ -2299,7 +2302,10 @@ def run_batch_evaluation(args: argparse.Namespace):
                     if not sem_eval1.get("is_compliant", True):
                         sanity_err = "; ".join(sem_eval1.get("violations", []))
 
-            from src.datamate.llm_execution.sandbox import should_retry_self_correction
+            try:
+                from datamate.llm_execution.sandbox import should_retry_self_correction
+            except ImportError:
+                from src.datamate.llm_execution.sandbox import should_retry_self_correction
             while should_retry_self_correction(exec_err, sanity_err, err_type) and self_correction_count < max_self_corrections:
                 self_correction_count += 1
                 current_err = exec_err or sanity_err
@@ -2375,6 +2381,7 @@ def run_batch_evaluation(args: argparse.Namespace):
                 self_correction_trace.append(round_record)
 
             mod_latencies["sandbox_exec"] = round((time.perf_counter() - t_exec) * 1000, 2)
+            shop_memory.record_attempt(biz_id, code_text, exec_err or sanity_err)
 
             # Cơ chế Cứu hộ Chủ động (Active Deterministic Fallback) nếu LLM + Self-Correction thất bại
             if exec_err or sanity_err:
@@ -2733,7 +2740,7 @@ def main():
     parser.add_argument("--tau_star", type=float, default=0.50, help="Ngưỡng độ tin cậy tối ưu để từ chối trả lời (mặc định: 0.50)")
     parser.add_argument("--timeout", type=int, default=30, help="Thời gian chờ tối đa khi chạy code trong sandbox (giây)")
     parser.add_argument("--in_process", action="store_true", help="Chạy code trực tiếp trong tiến trình thay vì sandbox")
-    parser.add_argument("--max_new_tokens", type=int, default=1536, help="Số token tối đa sinh ra từ LLM (mặc định: 1536)")
+    parser.add_argument("--max_new_tokens", type=int, default=768, help="Số token tối đa sinh ra từ LLM (mặc định: 768)")
     parser.add_argument("--replay_logs", type=str, default=None, help="Thư mục logs đã sinh để chạy lại sandbox + cổng abstention + format (bỏ qua LLM)")
     parser.add_argument("--quantization", "--quant", type=str, default="4bit", choices=["8bit", "4bit", "none"], help="Chế độ lượng tử hóa mô hình (mặc định: 4bit)")
     parser.add_argument("--preserve_order", action="store_true", help="Chạy đúng theo thứ tự gốc từ câu 1 đến câu cuối trong questions.jsonl (không gom nhóm theo shop)")
