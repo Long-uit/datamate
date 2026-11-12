@@ -97,6 +97,7 @@ from datamate.llm_execution.sandbox import (
     clean_date,
     clean_num,
     run_code,
+    try_deterministic_fallback,
 )
 from datamate.output_abstention.abstention import (
     apply_abstention_gate,
@@ -2374,6 +2375,26 @@ def run_batch_evaluation(args: argparse.Namespace):
                 self_correction_trace.append(round_record)
 
             mod_latencies["sandbox_exec"] = round((time.perf_counter() - t_exec) * 1000, 2)
+
+            # Cơ chế Cứu hộ Chủ động (Active Deterministic Fallback) nếu LLM + Self-Correction thất bại
+            if exec_err or sanity_err:
+                fb_val, fb_src = try_deterministic_fallback(
+                    intent=intent,
+                    question=normalized_q,
+                    data_dict=data_dict,
+                    temporal_info=temp_info,
+                    entity_matches=entity_matches,
+                    as_of_date=as_of_date,
+                )
+                if fb_val is not None:
+                    fb_ans = normalize_output(fb_val, question=normalized_q, code_text=f"# {fb_src}")
+                    fb_sane, _ = check_result_sanity(fb_ans, question=normalized_q, code_text=f"# {fb_src}")
+                    if fb_sane:
+                        print(f"  🚑 [Active Fallback] Cứu hộ thành công bằng {fb_src} -> Kết quả: {fb_val}")
+                        raw_result = fb_val
+                        exec_err = None
+                        sanity_err = None
+                        code_text = f"# {fb_src}\n# Recovered after LLM error"
 
             # Bước 7: Chuẩn hóa & Cổng Abstention
             t_norm = time.perf_counter()

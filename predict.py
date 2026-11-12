@@ -95,7 +95,7 @@ from datamate.grounding_feasibility.temporal import (
     resolve_temporal_context,
     format_temporal_for_prompt,
 )
-from datamate.llm_execution.sandbox import clean_num, clean_date, run_code, RunResult
+from datamate.llm_execution.sandbox import clean_num, clean_date, run_code, RunResult, try_deterministic_fallback
 from datamate.llm_execution.client import LLMClient
 from datamate.llm_execution.prompt import (
     build_prompt,
@@ -597,6 +597,26 @@ def main():
                 entity_matches=entity_matches,
                 temporal_info=temporal_res,
             )
+
+            # 5.5. Cơ chế Cứu hộ Chủ động (Active Deterministic Fallback) nếu LLM + Self-Correction thất bại
+            if exec_err or sanity_err:
+                fb_val, fb_src = try_deterministic_fallback(
+                    intent=intent,
+                    question=normalized_q,
+                    data_dict=data_dict,
+                    temporal_info=temporal_res,
+                    entity_matches=entity_matches,
+                    as_of_date=as_of_date,
+                )
+                if fb_val is not None:
+                    fb_ans = normalize_output(fb_val, question=normalized_q, code_text=f"# {fb_src}")
+                    fb_sane, _ = check_result_sanity(fb_ans, question=normalized_q, code_text=f"# {fb_src}")
+                    if fb_sane:
+                        print(f"  🚑 [Active Fallback] Cứu hộ thành công bằng {fb_src} -> Kết quả: {fb_val}")
+                        raw_result = fb_val
+                        exec_err = None
+                        sanity_err = None
+                        code_text = f"# {fb_src}\n# Recovered after LLM error"
 
             # 6. Chuẩn hóa kết quả đầu ra & Đánh giá Calibrated Abstention Gate (Module 6)
             confidence = 0.0

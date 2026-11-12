@@ -478,16 +478,21 @@ def prune_schema_by_intent(
     kept_detail_blocks = [p["raw"] for p in parsed_tables if p["name"] in kept_names]
 
     if has_dual_sections and summary_section.strip():
-        # Lọc lại phần summary header tương ứng với kept_names
+        # Lọc lại phần summary header & join keys tương ứng với kept_names
         summary_lines = summary_section.strip().split("\n")
         filtered_summary_lines = []
         for line in summary_lines:
-            if not line.strip().startswith("- Bảng"):
-                filtered_summary_lines.append(line)
-            else:
+            s_line = line.strip()
+            if s_line.startswith("- Bảng"):
                 tbl_m = re.search(r"Bảng\s+['\"]?([a-zA-Z0-9_\-]+)['\"]?", line)
                 if tbl_m and tbl_m.group(1) in kept_names:
                     filtered_summary_lines.append(line)
+            elif "<->" in s_line:
+                pair_m = re.search(r"'([^']+)'\s*<->\s*'([^']+)'", s_line)
+                if pair_m and pair_m.group(1) in kept_names and pair_m.group(2) in kept_names:
+                    filtered_summary_lines.append(line)
+            else:
+                filtered_summary_lines.append(line)
         return "\n".join(filtered_summary_lines) + "\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n" + "\n\n".join(kept_detail_blocks)
     else:
         prefix = f"{header.strip()}\n\n" if header.strip() else ""
