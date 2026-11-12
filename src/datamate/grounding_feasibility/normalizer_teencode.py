@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import unicodedata
 
 _TEENCODE_DICT_CACHE: Optional[Dict[str, Any]] = None
+_SPELLING_CORRECTIONS_CACHE: Optional[Dict[str, Any]] = None
 
 
 def find_teencode_dictionary_path() -> Optional[Path]:
@@ -38,6 +39,39 @@ def find_teencode_dictionary_path() -> Optional[Path]:
         if c.exists() and c.is_file():
             return c.resolve()
     return None
+
+
+def find_spelling_corrections_path() -> Optional[Path]:
+    """Tìm đường dẫn tệp spelling_corrections.json (được trích xuất từ resources/dataset.csv)."""
+    cwd = Path.cwd()
+    candidates = [
+        cwd / "resources" / "spelling_corrections.json",
+        cwd.parent / "resources" / "spelling_corrections.json",
+        Path(__file__).resolve().parent.parent.parent.parent / "resources" / "spelling_corrections.json",
+    ]
+    for c in candidates:
+        if c.exists() and c.is_file():
+            return c.resolve()
+    return None
+
+
+def get_spelling_corrections(force_reload: bool = False) -> Dict[str, Any]:
+    """Nạp bộ sửa lỗi chính tả từ dataset.csv (spelling_corrections.json) và cache vào RAM."""
+    global _SPELLING_CORRECTIONS_CACHE
+    if _SPELLING_CORRECTIONS_CACHE is not None and not force_reload:
+        return _SPELLING_CORRECTIONS_CACHE
+
+    p = find_spelling_corrections_path()
+    if p and p.exists():
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                _SPELLING_CORRECTIONS_CACHE = json.load(f)
+                return _SPELLING_CORRECTIONS_CACHE
+        except Exception:
+            pass
+
+    _SPELLING_CORRECTIONS_CACHE = {"word_corrections": {}, "phrase_corrections": {}}
+    return _SPELLING_CORRECTIONS_CACHE
 
 
 def get_teencode_dictionary(force_reload: bool = False) -> Dict[str, Any]:
@@ -198,6 +232,13 @@ def normalize_teencode_token(
         res = direct_map[clean_t]
         return f"{prefix}{res}{suffix}", res
 
+    # 4b. Tra từ điển sửa lỗi chính tả tổng quát từ dataset.csv (spelling_corrections.json)
+    spelling_data = get_spelling_corrections()
+    spelling_words = spelling_data.get("word_corrections", {})
+    if clean_t in spelling_words:
+        res = spelling_words[clean_t]
+        return f"{prefix}{res}{suffix}", res
+
     # 5. Xử lý rút gọn kéo dài nguyên âm: ví dụ 'điiiiiii' -> 'đi', 'nhiềuuu' -> 'nhiều'
     m_elongated = re.match(r"^([a-zA-Zà-ỹÀ-Ỹ]+?)([aeiouyà-ỹ])\2{2,}$", clean_t)
     if m_elongated:
@@ -210,6 +251,22 @@ def normalize_teencode_token(
             return f"{prefix}{res}{suffix}", res
 
     return token, None
+
+
+def _apply_phrase_spelling_corrections(text: str) -> str:
+    """Áp dụng các cụm từ sửa lỗi chính tả nhiều từ từ dataset.csv."""
+    spelling_data = get_spelling_corrections()
+    phrases = spelling_data.get("phrase_corrections", {})
+    if not phrases:
+        return text
+
+    normalized = text
+    # Sắp xếp các cụm dài hơn trước để tránh xung đột tiền tố
+    for wrong_phrase, right_phrase in sorted(phrases.items(), key=lambda x: len(x[0]), reverse=True):
+        if wrong_phrase in normalized.lower():
+            pattern = re.compile(re.escape(wrong_phrase), re.IGNORECASE)
+            normalized = pattern.sub(right_phrase, normalized)
+    return normalized
 
 
 def normalize_teencode(text: str, domain: str = "retail") -> str:
@@ -226,7 +283,10 @@ def normalize_teencode(text: str, domain: str = "retail") -> str:
     if not text or not isinstance(text, str):
         return text
 
-    tokens = text.split()
+    # Bước 1: Áp dụng sửa cụm từ chính tả nhiều từ từ dataset.csv
+    cleaned_text = _apply_phrase_spelling_corrections(text)
+
+    tokens = cleaned_text.split()
     n = len(tokens)
     out_tokens = []
 
@@ -247,10 +307,17 @@ def explain_teencode_normalization(text: str, domain: str = "retail") -> Tuple[s
     if not text or not isinstance(text, str):
         return text, []
 
-    tokens = text.split()
+    cleaned_text = _apply_phrase_spelling_corrections(text)
+    changes = []
+    if cleaned_text != text:
+        changes.append({
+            "original": text,
+            "replacement": cleaned_text,
+        })
+
+    tokens = cleaned_text.split()
     n = len(tokens)
     out_tokens = []
-    changes = []
 
     for i, t in enumerate(tokens):
         prev_t = tokens[i - 1] if i > 0 else None
@@ -271,6 +338,8 @@ __all__ = [
     "explain_teencode_normalization",
     "normalize_teencode_token",
     "get_teencode_dictionary",
+    "get_spelling_corrections",
     "find_teencode_dictionary_path",
+    "find_spelling_corrections_path",
 ]
 
