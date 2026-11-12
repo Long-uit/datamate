@@ -2298,17 +2298,23 @@ def run_batch_evaluation(args: argparse.Namespace):
             # Bước 6: Thực thi Sandbox & Self-Correction tối đa 2 vòng
             t_exec = time.perf_counter()
             biz_dir = data_root / biz_id
-            raw_result, exec_err, exec_ms, err_type, unans_source = execute_solution(
-                code_text=code_text,
-                biz_dir=biz_dir,
-                data_dict=data_dict,
-                con=con,
-                business_obj=bd,
-                timeout_s=args.timeout,
-                use_sandbox=not args.in_process,
-                return_details=True,
-                as_of_date=as_of_date,
-            )
+
+            # GEN_FAILED: bỏ qua sandbox nếu LLM không sinh được def solution(
+            if llm_generation.get("gen_failed"):
+                print(f"  [GEN_FAILED] Bỏ qua sandbox — abstain ngay (tiết kiệm {args.timeout}s)")
+                raw_result, exec_err, exec_ms, err_type, unans_source = None, "gen_failed", 0, "gen_failed", None
+            else:
+                raw_result, exec_err, exec_ms, err_type, unans_source = execute_solution(
+                    code_text=code_text,
+                    biz_dir=biz_dir,
+                    data_dict=data_dict,
+                    con=con,
+                    business_obj=bd,
+                    timeout_s=args.timeout,
+                    use_sandbox=not args.in_process,
+                    return_details=True,
+                    as_of_date=as_of_date,
+                )
 
             max_self_corrections = 0 if replay_logs_dir else 2
             sanity_err = None
@@ -2413,7 +2419,9 @@ def run_batch_evaluation(args: argparse.Namespace):
             t_norm = time.perf_counter()
             confidence = 0.0
             grounding_eval_res = {}
-            if exec_err:
+            if exec_err == "gen_failed":
+                sub_ans = make_abstain("Generation Failed: no valid code generated")
+            elif exec_err:
                 sub_ans = make_abstain(f"Runtime Error: {exec_err}")
             elif sanity_err:
                 sub_ans = make_abstain(f"Sanity Error: {sanity_err}")

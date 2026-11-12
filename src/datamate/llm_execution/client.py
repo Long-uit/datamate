@@ -192,12 +192,16 @@ def extract_python_code(text: str) -> str:
     """
     Bóc tách và làm sạch khối mã nguồn Python từ văn bản phản hồi của mô hình.
     Xử lý các trường hợp: bọc trong ```python, bọc trong ```, hoặc viết trực tiếp def solution.
-    
+
+    QUAN TRỌNG: Chỉ trả về code chứa "def solution(" — không bao giờ trả về
+    chuỗi không có "def solution(", kể cả khi khối ```python``` tồn tại.
+    Không tự vá/đóng chuỗi để ép code chạy được.
+
     Args:
         text (str): Toàn bộ văn bản do mô hình sinh ra.
-        
+
     Returns:
-        str: Đoạn mã Python đã làm sạch.
+        str: Đoạn mã Python đã làm sạch, hoặc "" nếu không tìm thấy def solution(.
     """
     if not text:
         return ""
@@ -208,19 +212,25 @@ def extract_python_code(text: str) -> str:
     match_py = re.search(r"```python\s*(.*?)\s*```", text, re.DOTALL | re.IGNORECASE)
     if match_py:
         code = match_py.group(1).strip()
-        return cut_after_first_solution(code)
+        code = cut_after_first_solution(code)
+        if "def solution(" in code:
+            return code
 
     # Trường hợp 2: Có khối ``` ... ``` chung
     match_generic = re.search(r"```\s*(.*?)\s*```", text, re.DOTALL)
     if match_generic:
         code = match_generic.group(1).strip()
-        return cut_after_first_solution(code)
+        code = cut_after_first_solution(code)
+        if "def solution(" in code:
+            return code
 
     # Trường hợp 3: Khối ```python nhưng bị cắt cụt chưa đóng ```
     match_unclosed = re.search(r"```python\s*(def\s+solution.*)", text, re.DOTALL | re.IGNORECASE)
     if match_unclosed:
         code = match_unclosed.group(1).strip()
-        return cut_after_first_solution(code)
+        code = cut_after_first_solution(code)
+        if "def solution(" in code:
+            return code
 
     # Trường hợp 4: Viết trực tiếp def solution( mà không bọc backtick
     if "def solution(" in text:
@@ -230,7 +240,8 @@ def extract_python_code(text: str) -> str:
             code = code[:-3].strip()
         return cut_after_first_solution(code)
 
-    return text
+    # Không tìm thấy def solution( → trả về "" (sẽ dẫn đến GEN_FAILED)
+    return ""
 
 
 def cut_after_first_solution(code: str) -> str:
@@ -776,8 +787,12 @@ class LLMClient:
                     pass
         return eos_ids
 
-    def _generate_raw(self, messages: List[Dict[str, str]], max_new_tokens: int = 1536) -> str:
-        """Thực hiện một lần suy luận thô với cơ chế Greedy Decoding (hỗ trợ cả vLLM Prefix Caching và Transformers)."""
+    def _generate_raw(self, messages: List[Dict[str, str]], max_new_tokens: int = 600) -> str:
+        """Thực hiện một lần suy luận thô với cơ chế Greedy Decoding (hỗ trợ cả vLLM Prefix Caching và Transformers).
+        
+        Hỗ trợ assistant prefill: nếu messages[-1]["role"] == "assistant",
+        dùng add_generation_prompt=False để tokenizer không thêm prompt thừa.
+        """
         self._last_raw_meta = {}
         if not self.is_loaded or self.tokenizer is None:
             self._last_raw_meta = {
@@ -795,11 +810,17 @@ class LLMClient:
             }
             return ""
 
+        # Nếu messages cuối là assistant prefill → add_generation_prompt=False (không thêm <|im_start|>assistant\n)
+        has_prefill = bool(messages and messages[-1].get("role") == "assistant")
         chat_text = self.tokenizer.apply_chat_template(
             messages,
             tokenize=False,
-            add_generation_prompt=True
+            add_generation_prompt=not has_prefill
         )
+        # Với assistant prefill, Qwen ChatML sẽ kết thúc bằng "```python\n" (nội dung prefill)
+        # Cần bỏ token kết thúc turn (<|im_end|>) nếu tokenizer thêm vào
+        if has_prefill and chat_text.endswith("<|im_end|>"):
+            chat_text = chat_text[: -len("<|im_end|>")]
 
         if self.backend == "vllm" and self.vllm_engine is not None:
             from vllm import SamplingParams  # type: ignore
@@ -910,14 +931,16 @@ class LLMClient:
 
         # Cấu hình Greedy Decoding (T=0) chuẩn kèm StoppingCriteria tối ưu tốc độ:
         # Bật repetition_penalty=1.05 để chống lặp code
-        # Giới hạn max_new_tokens tối đa 1536 để tiết kiệm VRAM KV-cache
-        gen_tokens = min(max_new_tokens, 1536) if max_new_tokens > 0 else 1024
+        # Giới hạn max_new_tokens tối đa 600 (giảm từ 1536 để tiết kiệm VRAM & thời gian)
+        # min_new_tokens=32 ngăn model EOS ngay sau assistant prefill ```python
+        gen_tokens = min(max_new_tokens, 600) if max_new_tokens > 0 else 600
         effective_max_new_tokens = gen_tokens
         try:
             with torch.inference_mode():
                 output_tokens = self.model.generate(
                     **inputs,
                     max_new_tokens=gen_tokens,
+                    min_new_tokens=32,
                     do_sample=False,
                     temperature=None,
                     top_p=None,
@@ -997,22 +1020,37 @@ class LLMClient:
             else:
                 raise oom_err
 
-        in_ids = inputs["input_ids"] if isinstance(inputs, dict) else inputs.input_ids
-        actual_prompt_tokens = int(len(in_ids[0]))
-        generated_token_ids = output_tokens[0][actual_prompt_tokens:]
-        num_generated_tokens = int(len(generated_token_ids))
-        result_text = self.tokenizer.decode(generated_token_ids, skip_special_tokens=True)
+        # FIX: Dùng shape[1] của tensor đã được truyền vào model.generate() để xác định input_len
+        # Tránh lỗi khi inputs bị reassign (OOM retry) hoặc len() không nhất quán với shape.
+        # Lấy input_len từ output_tokens chính xác: output_tokens[0] bắt đầu từ prompt, phần sinh ra là phần sau.
+        if isinstance(inputs, dict):
+            input_len = int(inputs["input_ids"].shape[1])
+        else:
+            input_len = int(inputs.input_ids.shape[1])
+        actual_prompt_tokens = input_len
+        gen_ids = output_tokens[0][input_len:]
+        num_generated_tokens = int(len(gen_ids))
+        result_text = self.tokenizer.decode(gen_ids, skip_special_tokens=True)
+
+        # LOG chẩn đoán decode — giúp phát hiện bug cắt lát prompt/gen
+        print(
+            f"[LLMClient][decode] input_len={input_len} | "
+            f"total_output_len={int(len(output_tokens[0]))} | "
+            f"gen_ids_len={num_generated_tokens} | "
+            f"gen_ids_first30={[int(x) for x in gen_ids[:30].tolist()]} | "
+            f"raw_text_head={repr(result_text[:120])}"
+        )
 
         eos_ids = self._collect_eos_ids()
         last_tok = None
         if num_generated_tokens > 0:
             try:
-                last_tok = int(generated_token_ids[-1])
+                last_tok = int(gen_ids[-1])
             except Exception:
                 last_tok = None
         raw_with_special = ""
         try:
-            raw_with_special = self.tokenizer.decode(generated_token_ids, skip_special_tokens=False)
+            raw_with_special = self.tokenizer.decode(gen_ids, skip_special_tokens=False)
         except Exception:
             raw_with_special = ""
 
@@ -1035,10 +1073,13 @@ class LLMClient:
             "raw_text": result_text,
             "prompt_tokens": original_prompt_tokens,
             "prompt_tokens_used": actual_prompt_tokens,
+            "input_len": input_len,
             "max_safe_input_tokens": MAX_SAFE_INPUT_TOKENS,
             "truncated": bool(truncation_reason is not None or actual_prompt_tokens < original_prompt_tokens),
             "truncation_reason": truncation_reason,
             "generated_tokens": num_generated_tokens,
+            "gen_ids_len": num_generated_tokens,
+            "gen_ids_first30": [int(x) for x in gen_ids[:30].tolist()],
             "max_new_tokens_limit": effective_max_new_tokens,
             "finish_reason": finish_reason,
             "stop_detail": stop_detail,
@@ -1113,6 +1154,9 @@ class LLMClient:
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
+        # Assistant prefill: giúp model không bị EOS ngay sau ```python trong prompt
+        # Qwen2.5 ChatML hỗ trợ assistant prefill khi apply_chat_template với add_generation_prompt=False
+        messages.append({"role": "assistant", "content": "```python\n"})
 
         attempts: List[Dict[str, Any]] = []
 
@@ -1127,6 +1171,36 @@ class LLMClient:
 
         # Nếu mã không hợp lệ và còn lượt thử lại (Self-Correction Loop)
         attempt = 0
+
+        # Phát hiện GEN_FAILED: code trống hoặc không chứa def solution(
+        # → đây là lỗi sinh mã (decode bug / EOS sớm), không phải lỗi cú pháp cần self-correct.
+        # Chỉ retry khi prompt retry KHÁC prompt gốc (thay đổi few-shot hoặc seed).
+        # Hiện tại: skip retry nếu init đã gen_failed (tránh tốn thời gian retry vô ích).
+        def _is_gen_failed(c: str) -> bool:
+            return not c or "def solution(" not in c
+
+        if _is_gen_failed(code):
+            print(f"[GEN_FAILED] Lần 0: extracted_code không chứa 'def solution(' — bỏ qua sandbox, abstain.")
+            self.last_latency_ms = int((time.time() - start_time) * 1000)
+            self.last_generation_meta = {
+                "model_id": self.model_id,
+                "backend": self.backend,
+                "final_ast_valid": False,
+                "used_fallback_return_none": True,
+                "gen_failed": True,
+                "gen_failed_reason": "no_def_solution_in_extracted_code",
+                "final_ast_error": error_msg,
+                "total_attempts": len(attempts),
+                "attempts": attempts,
+                "total_latency_ms": self.last_latency_ms,
+            }
+            # Trả về sentinel GEN_FAILED — caller (inspect_pipeline / predict) kiểm tra gen_failed flag
+            return (
+                "def solution(data):\n"
+                "    # GEN_FAILED: model did not produce def solution — abstain\n"
+                "    return None\n"
+            )
+
         while not is_valid and attempt < max_retries:
             attempt += 1
             print(f"[Tự sửa lỗi - Lần {attempt}] Mã sinh ra gặp vấn đề: {error_msg}. Gửi yêu cầu sửa lại...")
@@ -1170,6 +1244,7 @@ class LLMClient:
             "backend": self.backend,
             "final_ast_valid": bool(is_valid),
             "used_fallback_return_none": bool(not is_valid),
+            "gen_failed": False,
             "final_ast_error": None if is_valid else error_msg,
             "total_attempts": len(attempts),
             "attempts": attempts,

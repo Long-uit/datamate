@@ -498,16 +498,20 @@ def main():
 
             # 5. Thực thi mã nguồn (Lượt 1) qua Sandbox / Subprocess
             retry_count = 0
-            raw_result, exec_err, exec_ms = execute_solution(
-                code_text=code_text,
-                biz_dir=biz_dir,
-                data_dict=data_dict,
-                con=con,
-                business_obj=bd,
-                timeout_s=args.timeout,
-                use_sandbox=not args.in_process,
-                as_of_date=as_of_date,
-            )
+            if llm_generation.get("gen_failed"):
+                print(f"  [GEN_FAILED] Bỏ qua sandbox — sinh mã không có def solution (tiết kiệm {args.timeout}s)")
+                raw_result, exec_err, exec_ms = None, "gen_failed", 0
+            else:
+                raw_result, exec_err, exec_ms = execute_solution(
+                    code_text=code_text,
+                    biz_dir=biz_dir,
+                    data_dict=data_dict,
+                    con=con,
+                    business_obj=bd,
+                    timeout_s=args.timeout,
+                    use_sandbox=not args.in_process,
+                    as_of_date=as_of_date,
+                )
 
             # 5.1. Kiểm tra tính hợp lý hậu thực thi (Sanity Check Lượt 1) & Feasibility Authority
             sanity_err = None
@@ -625,7 +629,10 @@ def main():
 
             # 6. Chuẩn hóa kết quả đầu ra & Đánh giá Calibrated Abstention Gate (Module 6)
             confidence = 0.0
-            if exec_err:
+            if exec_err == "gen_failed":
+                sub_ans = make_abstain("Generation Failed: no valid code generated")
+                print(f"  🛡️ Sinh mã thất bại -> Abstain an toàn (0 điểm)")
+            elif exec_err:
                 sub_ans = make_abstain(f"Runtime Error: {exec_err}")
                 print(f"  ⚠️ Lỗi thực thi ({exec_ms}ms) -> Abstain an toàn: {exec_err}")
             elif sanity_err:

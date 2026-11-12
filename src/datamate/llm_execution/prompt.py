@@ -2155,7 +2155,6 @@ YÊU CẦU THỰC HIỆN:
 {return_format_instruction}
 5. Chỉ viết duy nhất một hàm `def solution(data):` trả về kết quả, không viết giải thích bên ngoài.
 6. Viết code ngắn gọn, không viết comment dài dòng để tránh bị cắt cụt token.
-```python
 """
 
     if return_messages:
