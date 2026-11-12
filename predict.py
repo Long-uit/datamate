@@ -266,6 +266,7 @@ def main():
     parser.add_argument("--log_dir", type=str, default=default_log_dir, help=f"Thư mục lưu log chi tiết từng câu hỏi (mặc định: {default_log_dir})")
     parser.add_argument("--log_file", type=str, default=None, help="Đường dẫn tệp để tự động ghi toàn bộ nhật ký console UTF-8 (thay thế cho Tee-Object)")
     parser.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Coder-14B-Instruct", help="Tên hoặc đường dẫn mô hình (mặc định: Qwen/Qwen2.5-Coder-14B-Instruct)")
+    parser.add_argument("--backend", type=str, default=None, choices=["transformers", "vllm"], help="Backend suy luận: 'transformers' hoặc 'vllm'")
     parser.add_argument("--limit", type=int, default=None, help="Giới hạn số lượng câu hỏi cần chạy suy luận bằng LLM (mặc định: toàn bộ)")
     parser.add_argument("--biz", type=str, default=None, help="Chỉ chạy câu hỏi thuộc doanh nghiệp cụ thể (ví dụ: biz_201)")
     parser.add_argument("--id", type=str, default=None, help="Chỉ chạy câu hỏi theo ID cụ thể")
@@ -384,8 +385,9 @@ def main():
     # Khởi tạo mô hình LLM (trừ khi chạy dry-run)
     llm: Optional[LLMClient] = None
     if not args.dry_run:
-        print(f"[Khởi tạo] Đang nạp mô hình {args.model_id} vào GPU...")
-        llm = LLMClient(model_id=args.model_id)
+        backend_name = args.backend or ("vllm" if "awq" in str(args.model_id).lower() else "transformers")
+        print(f"[Khởi tạo] Đang nạp mô hình {args.model_id} (backend={backend_name}) vào GPU...")
+        llm = LLMClient(model_id=args.model_id, backend=backend_name)
         if not llm.is_loaded:
             print("[Lỗi nghiêm trọng] Không thể nạp mô hình vào GPU. Vui lòng kiểm tra lại VRAM hoặc cấu hình.")
             sys.exit(1)

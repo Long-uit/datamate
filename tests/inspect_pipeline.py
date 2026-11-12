@@ -2022,8 +2022,9 @@ def run_batch_evaluation(args: argparse.Namespace):
 
     llm: Optional[LLMClient] = None
     if (args.with_llm or not args.dry_run) and not replay_logs_dir:
-        print(f"[Khởi tạo] Đang nạp mô hình {args.model_id} (4-bit NF4)...")
-        llm = LLMClient(model_id=args.model_id)
+        backend_name = args.backend or ("vllm" if "awq" in str(args.model_id).lower() else "transformers")
+        print(f"[Khởi tạo] Đang nạp mô hình {args.model_id} (backend={backend_name})...")
+        llm = LLMClient(model_id=args.model_id, backend=backend_name)
     elif replay_logs_dir:
         print(f"[Replay Mode] Nạp {len(replay_map)} file log từ {replay_logs_dir.resolve()} (bỏ qua LLM)...")
 
@@ -2736,6 +2737,7 @@ def main():
     parser.add_argument("--random", action="store_true", help="Chọn ngẫu nhiên 1 câu hỏi từ tập dữ liệu")
     parser.add_argument("--with_llm", action="store_true", help="Kích hoạt nạp mô hình LLM GPU thật để sinh mã")
     parser.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Coder-14B-Instruct", help="Tên model LLM")
+    parser.add_argument("--backend", type=str, default=None, choices=["transformers", "vllm"], help="Backend suy luận: 'transformers' hoặc 'vllm'")
     parser.add_argument("--chart_file", type=str, default=None, help="Đường dẫn file ảnh dashboard PNG")
     parser.add_argument("--telemetry_file", type=str, default=None, help="Đường dẫn file telemetry JSON")
 

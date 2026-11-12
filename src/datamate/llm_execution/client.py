@@ -447,17 +447,34 @@ class LLMClient:
                 from vllm import LLM as VLLMEngine  # type: ignore
                 tp_size = max(1, torch.cuda.device_count()) if torch.cuda.is_available() else 1
                 self.tokenizer = AutoTokenizer.from_pretrained(self.model_id, trust_remote_code=True)
-                self.vllm_engine = VLLMEngine(
-                    model=self.model_id,
-                    trust_remote_code=True,
-                    tensor_parallel_size=tp_size,
-                    enable_prefix_caching=True,
-                    gpu_memory_utilization=0.90,
-                    max_model_len=8192,
-                )
+                
+                # Cấu hình vLLM tối ưu theo Yêu cầu Prompt 3:
+                # - dtype="half" (fp16) trên Tesla T4, "bfloat16" nếu GPU hỗ trợ bf16 (như RTX 5090)
+                # - tensor_parallel_size=2 chia đều 2 card T4 trên Kaggle
+                # - enable_prefix_caching=True để tái dùng KV cache giữa các câu cùng business
+                # - max_model_len >= 8192 bỏ hoàn toàn giới hạn cắt prompt 3584
+                has_cuda = torch.cuda.is_available()
+                use_bf16 = has_cuda and torch.cuda.is_bf16_supported() and "T4" not in torch.cuda.get_device_name(0)
+                vllm_dtype = "bfloat16" if use_bf16 else "half"
+                
+                vllm_kwargs = {
+                    "model": self.model_id,
+                    "trust_remote_code": True,
+                    "tensor_parallel_size": tp_size,
+                    "dtype": vllm_dtype,
+                    "enable_prefix_caching": True,
+                    "gpu_memory_utilization": 0.90,
+                    "max_model_len": 8192,
+                }
+                # Tự động nhận diện mô hình AWQ để chỉ định quantization="awq"
+                if "awq" in str(self.model_id).lower():
+                    vllm_kwargs["quantization"] = "awq"
+                    print("[LLMClient] ⚡ Đã kích hoạt cấu hình vLLM AWQ Quantization.")
+
+                self.vllm_engine = VLLMEngine(**vllm_kwargs)
                 self.device = "cuda"
                 self.is_loaded = True
-                print(f"[LLMClient] Đã nạp vLLM Engine (enable_prefix_caching=True, TP={tp_size}) thành công!")
+                print(f"[LLMClient] ✅ Đã nạp vLLM Engine (enable_prefix_caching=True, TP={tp_size}, dtype={vllm_dtype}, max_model_len=8192) thành công!")
                 return
             except Exception as vllm_err:
                 print(f"[LLMClient] Không thể khởi tạo vLLM ({vllm_err}), tự động chuyển về HuggingFace Transformers...")
@@ -824,9 +841,14 @@ class LLMClient:
 
         if self.backend == "vllm" and self.vllm_engine is not None:
             from vllm import SamplingParams  # type: ignore
+            # Yêu cầu 2: temperature=0, seed cố định để đảm bảo tính tất định (chạy 2 lần ra output giống hệt)
+            # stop sequences: dừng khi model đóng code block bằng ``` hoặc gặp token kết thúc ChatML
             sampling_params = SamplingParams(
                 temperature=0.0,
-                max_tokens=max_new_tokens,
+                seed=42,
+                max_tokens=min(max_new_tokens, 600) if max_new_tokens > 0 else 600,
+                min_tokens=32,
+                stop=["```", "<|im_end|>", "<|endoftext|>"],
                 repetition_penalty=1.05,
             )
             outputs = self.vllm_engine.generate([chat_text], sampling_params, use_tqdm=False)
