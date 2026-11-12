@@ -2337,7 +2337,11 @@ def run_batch_evaluation(args: argparse.Namespace):
                         sanity_err = "; ".join(sem_eval1.get("violations", []))
 
             from src.datamate.llm_execution.sandbox import should_retry_self_correction
-            while should_retry_self_correction(exec_err, sanity_err, err_type) and self_correction_count < max_self_corrections:
+            can_retry = (
+                not llm_generation.get("gen_failed")
+                and should_retry_self_correction(exec_err, sanity_err, err_type)
+            )
+            while can_retry and self_correction_count < max_self_corrections:
                 self_correction_count += 1
                 current_err = exec_err or sanity_err
                 print(f"  🔄 [Self-Correction Vòng {self_correction_count}/{max_self_corrections}] Đang sửa: {current_err}")

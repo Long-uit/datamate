@@ -548,7 +548,14 @@ def main():
             # 5.2. Cơ chế Runtime Self-Correction (tối đa 2 vòng tự sửa lỗi đồng bộ với inspect_pipeline.py)
             from src.datamate.llm_execution.sandbox import should_retry_self_correction
             max_self_corrections = 2
-            while (should_retry_self_correction(exec_err, sanity_err) or (should_retry_for_missed and retry_count == 0)) and retry_count < max_self_corrections:
+            can_retry = (
+                not llm_generation.get("gen_failed")
+                and (
+                    should_retry_self_correction(exec_err, sanity_err)
+                    or (should_retry_for_missed and retry_count == 0)
+                )
+            )
+            while can_retry and retry_count < max_self_corrections:
                 retry_count += 1
                 if exec_err:
                     err_feedback = exec_err
