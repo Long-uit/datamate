@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import ast
 from collections import defaultdict
+import copy
 import csv
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import io
@@ -1237,6 +1238,8 @@ def run_single_inspection(
     gen_time_s = 0.0
     self_correction_trace = []
 
+    llm_generation: Dict[str, Any] = {}
+    retry_llm_generation: Optional[Dict[str, Any]] = None
     if not is_feasible:
         code_text = '# Feasibility Gate detected unanswerable\ndef solution(data):\n    return "unanswerable"'
         latencies["llm_gen"] = 0.0
@@ -1247,6 +1250,7 @@ def run_single_inspection(
         t0 = time.time()
         client = LLMClient(model_id=args.model_id, auto_load=True)
         code_text = client.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=getattr(args, "max_new_tokens", 1536))
+        llm_generation = copy.deepcopy(getattr(client, "last_generation_meta", {}) or {})
         gen_time_s = time.time() - t0
         latencies["llm_gen"] = gen_time_s * 1000
         print(f"  • Thời gian sinh mã : {gen_time_s:.2f}s ({latencies['llm_gen']:.1f}ms)")
@@ -1309,6 +1313,7 @@ def run_single_inspection(
                 temporal_text=format_temporal_for_prompt(temp_info),
             )
             retry_code = client.generate_code(prompt=retry_user, system_prompt=retry_sys, max_new_tokens=getattr(args, "max_new_tokens", 1536))
+            retry_llm_generation = copy.deepcopy(getattr(client, "last_generation_meta", {}) or {})
             r_res, r_err, r_ms = execute_solution(
                 code_text=retry_code,
                 biz_dir=data_root / biz_id,
@@ -1531,6 +1536,8 @@ def run_single_inspection(
         "ai_recommendations": ai_recs,
         "deviation_analysis": dev_analysis,
         "self_correction_trace": self_correction_trace,
+        "llm_generation": llm_generation,
+        "retry_llm_generation": retry_llm_generation,
     }
 
     # Xuất telemetry JSON
@@ -1920,6 +1927,12 @@ def run_batch_evaluation(args: argparse.Namespace):
         target_questions = [q for q in target_questions if q.get("business_id") == args.biz]
     if args.id:
         target_questions = [q for q in target_questions if q.get("id") == args.id]
+    if getattr(args, "ids", None):
+        wanted_ids = [x.strip() for x in str(args.ids).split(",") if x.strip()]
+        wanted_set = set(wanted_ids)
+        target_questions = [q for q in target_questions if q.get("id") in wanted_set]
+        args.no_fill_abstain = True
+        print(f"• Chọn theo danh sách ID : {len(target_questions)} câu ({', '.join(wanted_ids)})")
     if args.sample is not None and args.sample < len(target_questions):
         rng = random.Random(args.seed)
         if getattr(args, "stratified", False):
@@ -2272,10 +2285,12 @@ def run_batch_evaluation(args: argparse.Namespace):
                 mod_latencies["llm_gen"] = 0.0
                 self_correction_count = prev_log.get("self_correction_count", extra_prev.get("self_correction_count", 0))
                 self_correction_trace = prev_log.get("self_correction_trace") or extra_prev.get("self_correction_trace") or []
+                llm_generation = prev_log.get("llm_generation") or extra_prev.get("llm_generation") or {}
             else:
                 t_llm = time.perf_counter()
                 assert llm is not None
                 code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=getattr(args, "max_new_tokens", 1536))
+                llm_generation = copy.deepcopy(getattr(llm, "last_generation_meta", {}) or {})
                 mod_latencies["llm_gen"] = round((time.perf_counter() - t_llm) * 1000, 2)
                 self_correction_count = 0
                 self_correction_trace = []
@@ -2332,6 +2347,7 @@ def run_batch_evaluation(args: argparse.Namespace):
                 )
                 t_retry_gen = time.perf_counter()
                 retry_code = llm.generate_code(prompt=retry_user, system_prompt=retry_sys, max_new_tokens=getattr(args, "max_new_tokens", 1536))
+                retry_llm_generation = copy.deepcopy(getattr(llm, "last_generation_meta", {}) or {})
                 mod_latencies["llm_gen"] = round(mod_latencies["llm_gen"] + (time.perf_counter() - t_retry_gen) * 1000, 2)
 
                 raw_retry, err_retry, ms_retry, type_retry, src_retry = execute_solution(
@@ -2355,6 +2371,7 @@ def run_batch_evaluation(args: argparse.Namespace):
                     "retry_raw_result": _clean_for_json(raw_retry),
                     "execution_ms": round(ms_retry, 2),
                     "success": False,
+                    "llm_generation": retry_llm_generation,
                 }
 
                 if not err_retry:
@@ -2503,6 +2520,7 @@ def run_batch_evaluation(args: argparse.Namespace):
                 "latency_breakdown_ms": mod_latencies,
                 "self_correction_count": self_correction_count,
                 "self_correction_trace": self_correction_trace,
+                "llm_generation": llm_generation,
                 "error": str(exec_err or sanity_err) if (exec_err or sanity_err) else None,
             }
 
@@ -2702,6 +2720,7 @@ def main():
     parser.add_argument("--config", type=str, default=None, help="Đường dẫn file cấu hình YAML tùy chỉnh")
     parser.add_argument("--biz", type=str, default=None, help="Chỉ định ID doanh nghiệp (ví dụ: biz_119)")
     parser.add_argument("--id", type=str, default=None, help="Chỉ định ID câu hỏi (ví dụ: q_8d076e8b04fa)")
+    parser.add_argument("--ids", type=str, default=None, help="Danh sách question_id cách nhau bởi dấu phẩy để chạy batch chọn lọc")
     parser.add_argument("--random", action="store_true", help="Chọn ngẫu nhiên 1 câu hỏi từ tập dữ liệu")
     parser.add_argument("--with_llm", action="store_true", help="Kích hoạt nạp mô hình LLM GPU thật để sinh mã")
     parser.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Coder-14B-Instruct", help="Tên model LLM")
@@ -2744,6 +2763,7 @@ def main():
     is_batch_mode = (
         args.batch
         or (args.range is not None)
+        or (getattr(args, "ids", None) is not None)
         or (args.replay_logs is not None)
         or (args.batch_file is not None)
         or (args.batch_index is not None)

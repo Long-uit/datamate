@@ -416,6 +416,8 @@ class LLMClient:
         self.is_loaded = False
         self.device = "cpu"
         self.last_latency_ms: int = 0
+        self._last_raw_meta: Dict[str, Any] = {}
+        self.last_generation_meta: Dict[str, Any] = {}
 
         if auto_load:
             self.load_model()
@@ -747,9 +749,50 @@ class LLMClient:
         except Exception as e:
             print(f"[GPU Memory] Thiết bị hiện tại: {self.device} ({e})")
 
+    def _collect_eos_ids(self) -> set[int]:
+        """Thu thập toàn bộ EOS token IDs hợp lệ của tokenizer/model để xác định finish_reason."""
+        eos_ids: set[int] = set()
+        for raw_eos in (
+            getattr(self.tokenizer, "eos_token_id", None),
+            getattr(getattr(self.model, "config", None), "eos_token_id", None),
+            getattr(getattr(self.model, "generation_config", None), "eos_token_id", None),
+        ):
+            if isinstance(raw_eos, (list, tuple, set)):
+                for val in raw_eos:
+                    if isinstance(val, int):
+                        eos_ids.add(val)
+            elif isinstance(raw_eos, int):
+                eos_ids.add(raw_eos)
+
+        unk_id = getattr(self.tokenizer, "unk_token_id", None)
+        convert_fn = getattr(self.tokenizer, "convert_tokens_to_ids", None)
+        if callable(convert_fn):
+            for tok_str in ("<|im_end|>", "<|endoftext|>", "</s>"):
+                try:
+                    tid = convert_fn(tok_str)
+                    if isinstance(tid, int) and tid >= 0 and tid != unk_id:
+                        eos_ids.add(tid)
+                except Exception:
+                    pass
+        return eos_ids
+
     def _generate_raw(self, messages: List[Dict[str, str]], max_new_tokens: int = 1536) -> str:
         """Thực hiện một lần suy luận thô với cơ chế Greedy Decoding (hỗ trợ cả vLLM Prefix Caching và Transformers)."""
+        self._last_raw_meta = {}
         if not self.is_loaded or self.tokenizer is None:
+            self._last_raw_meta = {
+                "backend": self.backend,
+                "raw_text": "",
+                "prompt_tokens": 0,
+                "prompt_tokens_used": 0,
+                "max_safe_input_tokens": None,
+                "truncated": False,
+                "truncation_reason": None,
+                "generated_tokens": 0,
+                "max_new_tokens_limit": max_new_tokens,
+                "finish_reason": "error",
+                "stop_detail": "model_not_loaded",
+            }
             return ""
 
         chat_text = self.tokenizer.apply_chat_template(
@@ -767,10 +810,64 @@ class LLMClient:
             )
             outputs = self.vllm_engine.generate([chat_text], sampling_params, use_tqdm=False)
             if outputs and outputs[0].outputs:
-                return outputs[0].outputs[0].text
+                req_out = outputs[0]
+                cand = req_out.outputs[0]
+                raw_text = cand.text
+                prompt_toks = (
+                    len(req_out.prompt_token_ids)
+                    if getattr(req_out, "prompt_token_ids", None) is not None
+                    else None
+                )
+                gen_toks = (
+                    len(cand.token_ids)
+                    if getattr(cand, "token_ids", None) is not None
+                    else None
+                )
+                vllm_finish = str(getattr(cand, "finish_reason", None) or "stop")
+                norm_finish = "length" if "length" in vllm_finish.lower() else "stop"
+                self._last_raw_meta = {
+                    "backend": "vllm",
+                    "raw_text": raw_text,
+                    "prompt_tokens": prompt_toks,
+                    "prompt_tokens_used": prompt_toks,
+                    "max_safe_input_tokens": 8192,
+                    "truncated": False,
+                    "truncation_reason": None,
+                    "generated_tokens": gen_toks,
+                    "max_new_tokens_limit": max_new_tokens,
+                    "finish_reason": norm_finish,
+                    "stop_detail": vllm_finish,
+                }
+                return raw_text
+            self._last_raw_meta = {
+                "backend": "vllm",
+                "raw_text": "",
+                "prompt_tokens": None,
+                "prompt_tokens_used": None,
+                "max_safe_input_tokens": 8192,
+                "truncated": False,
+                "truncation_reason": None,
+                "generated_tokens": 0,
+                "max_new_tokens_limit": max_new_tokens,
+                "finish_reason": "error",
+                "stop_detail": "empty_vllm_output",
+            }
             return ""
 
         if self.model is None:
+            self._last_raw_meta = {
+                "backend": self.backend,
+                "raw_text": "",
+                "prompt_tokens": 0,
+                "prompt_tokens_used": 0,
+                "max_safe_input_tokens": None,
+                "truncated": False,
+                "truncation_reason": None,
+                "generated_tokens": 0,
+                "max_new_tokens_limit": max_new_tokens,
+                "finish_reason": "error",
+                "stop_detail": "model_is_none",
+            }
             return ""
 
         if torch.cuda.is_available():
@@ -781,6 +878,8 @@ class LLMClient:
         inputs = self.tokenizer([chat_text], return_tensors="pt").to(self.model.device)
 
         start_len = inputs.input_ids.shape[1]
+        original_prompt_tokens = int(start_len)
+        truncation_reason: Optional[str] = None
 
         # TRÁNH BÙNG NỔ ATTENTION MATRIX TRÊN TESLA T4:
         # Ngưỡng an toàn thích ứng phần cứng:
@@ -805,6 +904,7 @@ class LLMClient:
                 inputs.attention_mask = torch.cat([head_mask, tail_mask], dim=1)
             print(f"[LLMClient] ⚡ Prompt dài ({start_len} tokens). Tự động cắt giữa còn {MAX_SAFE_INPUT_TOKENS} tokens (1024 đầu + {tail_len} cuối) để bảo vệ VRAM GPU.")
             start_len = inputs.input_ids.shape[1]
+            truncation_reason = "max_safe_input_tokens"
 
         stopping_criteria = StoppingCriteriaList([CodeBlockEndStoppingCriteria(self.tokenizer, start_len)])
 
@@ -812,6 +912,7 @@ class LLMClient:
         # Bật repetition_penalty=1.05 để chống lặp code
         # Giới hạn max_new_tokens tối đa 1536 để tiết kiệm VRAM KV-cache
         gen_tokens = min(max_new_tokens, 1536) if max_new_tokens > 0 else 1024
+        effective_max_new_tokens = gen_tokens
         try:
             with torch.inference_mode():
                 output_tokens = self.model.generate(
@@ -845,6 +946,7 @@ class LLMClient:
                             if hasattr(inputs, "attention_mask") and inputs.attention_mask is not None
                             else None
                         )
+                        truncation_reason = "oom_retry_2048"
                     else:
                         retry_ids = inputs.input_ids
                         retry_mask = inputs.attention_mask if hasattr(inputs, "attention_mask") else None
@@ -855,10 +957,11 @@ class LLMClient:
                     if retry_mask is not None:
                         retry_inputs["attention_mask"] = retry_mask
 
+                    effective_max_new_tokens = min(gen_tokens, 384)
                     with torch.inference_mode():
                         output_tokens = self.model.generate(
                             **retry_inputs,
-                            max_new_tokens=min(gen_tokens, 384),
+                            max_new_tokens=effective_max_new_tokens,
                             do_sample=False,
                             temperature=None,
                             top_p=None,
@@ -873,6 +976,19 @@ class LLMClient:
                     print(f"[LLMClient] ✅ Phục hồi OOM thành công với prompt 2048 tokens!")
                 except Exception as retry_err:
                     print(f"[LLMClient] ❌ Thử lại sau OOM vẫn gặp lỗi ({retry_err}). Pipeline sẽ fallback an toàn.")
+                    self._last_raw_meta = {
+                        "backend": self.backend,
+                        "raw_text": "",
+                        "prompt_tokens": original_prompt_tokens,
+                        "prompt_tokens_used": int(cur_len) if "cur_len" in locals() else original_prompt_tokens,
+                        "max_safe_input_tokens": MAX_SAFE_INPUT_TOKENS,
+                        "truncated": bool(truncation_reason is not None),
+                        "truncation_reason": truncation_reason,
+                        "generated_tokens": 0,
+                        "max_new_tokens_limit": effective_max_new_tokens,
+                        "finish_reason": "error",
+                        "stop_detail": f"oom_failed: {retry_err}",
+                    }
                     import gc
                     gc.collect()
                     if torch.cuda.is_available():
@@ -882,8 +998,51 @@ class LLMClient:
                 raise oom_err
 
         in_ids = inputs["input_ids"] if isinstance(inputs, dict) else inputs.input_ids
-        generated_token_ids = output_tokens[0][len(in_ids[0]):]
+        actual_prompt_tokens = int(len(in_ids[0]))
+        generated_token_ids = output_tokens[0][actual_prompt_tokens:]
+        num_generated_tokens = int(len(generated_token_ids))
         result_text = self.tokenizer.decode(generated_token_ids, skip_special_tokens=True)
+
+        eos_ids = self._collect_eos_ids()
+        last_tok = None
+        if num_generated_tokens > 0:
+            try:
+                last_tok = int(generated_token_ids[-1])
+            except Exception:
+                last_tok = None
+        raw_with_special = ""
+        try:
+            raw_with_special = self.tokenizer.decode(generated_token_ids, skip_special_tokens=False)
+        except Exception:
+            raw_with_special = ""
+
+        hit_eos = (
+            (last_tok is not None and last_tok in eos_ids)
+            or (isinstance(raw_with_special, str) and any(tok in raw_with_special for tok in ("<|im_end|>", "<|endoftext|>", "</s>")))
+        )
+        if hit_eos:
+            finish_reason = "stop"
+            stop_detail = "eos_token"
+        elif num_generated_tokens >= effective_max_new_tokens:
+            finish_reason = "length"
+            stop_detail = "max_new_tokens"
+        else:
+            finish_reason = "stop"
+            stop_detail = "stopping_criteria"
+
+        self._last_raw_meta = {
+            "backend": self.backend,
+            "raw_text": result_text,
+            "prompt_tokens": original_prompt_tokens,
+            "prompt_tokens_used": actual_prompt_tokens,
+            "max_safe_input_tokens": MAX_SAFE_INPUT_TOKENS,
+            "truncated": bool(truncation_reason is not None or actual_prompt_tokens < original_prompt_tokens),
+            "truncation_reason": truncation_reason,
+            "generated_tokens": num_generated_tokens,
+            "max_new_tokens_limit": effective_max_new_tokens,
+            "finish_reason": finish_reason,
+            "stop_detail": stop_detail,
+        }
 
         del inputs, output_tokens
         if torch.cuda.is_available():
@@ -892,6 +1051,41 @@ class LLMClient:
             torch.cuda.empty_cache()
 
         return result_text
+
+    def _run_attempt_and_record(
+        self,
+        messages: List[Dict[str, str]],
+        max_new_tokens: int,
+        attempt_idx: int,
+        role: str,
+    ) -> Tuple[str, str, bool, Optional[str], Dict[str, Any]]:
+        """Chạy _generate_raw, bóc tách/kiểm tra AST và đóng gói telemetry đầy đủ cho 1 lần thử."""
+        self._last_raw_meta = {}
+        t0 = time.time()
+        raw_out = self._generate_raw(messages, max_new_tokens=max_new_tokens)
+        att_ms = int((time.time() - t0) * 1000)
+        raw_meta = dict(getattr(self, "_last_raw_meta", {}) or {})
+        extracted = extract_python_code(raw_out)
+        is_valid, err_msg = validate_code(extracted)
+        record = {
+            "attempt": attempt_idx,
+            "role": role,
+            "raw_text": raw_out,
+            "extracted_code": extracted,
+            "ast_valid": bool(is_valid),
+            "ast_error": err_msg,
+            "prompt_tokens": raw_meta.get("prompt_tokens"),
+            "prompt_tokens_used": raw_meta.get("prompt_tokens_used"),
+            "max_safe_input_tokens": raw_meta.get("max_safe_input_tokens"),
+            "truncated": bool(raw_meta.get("truncated", False)),
+            "truncation_reason": raw_meta.get("truncation_reason"),
+            "generated_tokens": raw_meta.get("generated_tokens"),
+            "max_new_tokens_limit": raw_meta.get("max_new_tokens_limit"),
+            "finish_reason": raw_meta.get("finish_reason"),
+            "stop_detail": raw_meta.get("stop_detail"),
+            "latency_ms": att_ms,
+        }
+        return raw_out, extracted, is_valid, err_msg, record
 
     def generate_code(
         self,
@@ -920,10 +1114,16 @@ class LLMClient:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
+        attempts: List[Dict[str, Any]] = []
+
         # Lần sinh mã đầu tiên
-        raw_text = self._generate_raw(messages, max_new_tokens=max_new_tokens)
-        code = extract_python_code(raw_text)
-        is_valid, error_msg = validate_code(code)
+        _, code, is_valid, error_msg, init_record = self._run_attempt_and_record(
+            messages=messages,
+            max_new_tokens=max_new_tokens,
+            attempt_idx=0,
+            role="initial",
+        )
+        attempts.append(init_record)
 
         # Nếu mã không hợp lệ và còn lượt thử lại (Self-Correction Loop)
         attempt = 0
@@ -939,9 +1139,13 @@ class LLMClient:
                 "content": f"Mã nguồn trước bị lỗi sau:\n{error_msg}\n\nHãy sửa lại và chỉ trả về một hàm hoàn chỉnh: def solution(data):"
             })
 
-            raw_retry = self._generate_raw(correction_messages, max_new_tokens=max_new_tokens)
-            retry_code = extract_python_code(raw_retry)
-            retry_valid, retry_error = validate_code(retry_code)
+            _, retry_code, retry_valid, retry_error, retry_record = self._run_attempt_and_record(
+                messages=correction_messages,
+                max_new_tokens=max_new_tokens,
+                attempt_idx=attempt,
+                role="ast_retry",
+            )
+            attempts.append(retry_record)
 
             if retry_valid:
                 code = retry_code
@@ -961,6 +1165,16 @@ class LLMClient:
             )
 
         self.last_latency_ms = int((time.time() - start_time) * 1000)
+        self.last_generation_meta = {
+            "model_id": self.model_id,
+            "backend": self.backend,
+            "final_ast_valid": bool(is_valid),
+            "used_fallback_return_none": bool(not is_valid),
+            "final_ast_error": None if is_valid else error_msg,
+            "total_attempts": len(attempts),
+            "attempts": attempts,
+            "total_latency_ms": self.last_latency_ms,
+        }
         return code
 
     def generate_solution(

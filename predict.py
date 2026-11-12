@@ -25,6 +25,7 @@ import sys
 
 if "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+import copy
 import json
 import time
 import argparse
@@ -491,6 +492,8 @@ def main():
             t0 = time.time()
             assert llm is not None
             code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=1536)
+            llm_generation = copy.deepcopy(getattr(llm, "last_generation_meta", {}) or {})
+            self_correction_llm_trace: List[Dict[str, Any]] = []
             gen_sec = round(time.time() - t0, 2)
 
             # 5. Thực thi mã nguồn (Lượt 1) qua Sandbox / Subprocess
@@ -565,6 +568,11 @@ def main():
                 )
                 t_retry = time.time()
                 retry_code = llm.generate_code(prompt=retry_user_prompt, system_prompt=retry_sys_prompt, max_new_tokens=1536)
+                self_correction_llm_trace.append({
+                    "round": retry_count,
+                    "error_feedback": err_feedback,
+                    "llm_generation": copy.deepcopy(getattr(llm, "last_generation_meta", {}) or {}),
+                })
                 gen_sec = round(gen_sec + (time.time() - t_retry), 2)
                 raw_retry, err_retry, ms_retry = execute_solution(
                     code_text=retry_code,
@@ -660,6 +668,11 @@ def main():
                 error=exec_err or sanity_err,
                 elapsed_ms=int(gen_sec * 1000 + exec_ms),
                 confidence=confidence,
+                self_correction_count=retry_count,
+                extra_log={
+                    "llm_generation": llm_generation,
+                    "self_correction_llm_trace": self_correction_llm_trace,
+                },
             )
             written_count += 1
 
