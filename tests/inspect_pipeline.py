@@ -100,6 +100,7 @@ from datamate.llm_execution.sandbox import (
     run_code,
     try_deterministic_fallback,
 )
+from datamate.llm_execution.worker import AliasedDataDict, build_canonical_data_dict
 from datamate.output_abstention.abstention import (
     apply_abstention_gate,
     compute_confidence_score,
@@ -156,7 +157,7 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
                     schema_summary, shop_meta, candidates = unpickled
                     bd = None
 
-                data_dict: Dict[str, pd.DataFrame] = {}
+                data_dict = AliasedDataDict()
                 seen_signatures = set()
                 for p_file in sorted(cache_dir.glob("*.parquet")):
                     t_key = p_file.stem
@@ -171,7 +172,7 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
                     data_dict[t_key] = df_t
 
                 if data_dict:
-                    setattr(data_dict, "_aliases", aliases)
+                    data_dict._aliases = aliases
                     return data_dict, None, schema_summary, bd, shop_meta, candidates
         except Exception:
             pass
@@ -180,22 +181,8 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
         raw_bd = load_business(biz_dir)
         bd = clean_business(raw_bd)
         con = None  # Tối ưu hóa nạp kép: LLM 100% dùng Pandas trên data, bỏ nạp SQLite mặc định
-        data_dict: Dict[str, pd.DataFrame] = {}
-        aliases: Dict[str, str] = {}
-        for ti in bd.tables:
-            t_base = Path(ti.fixed_file_name).stem if getattr(ti, "fixed_file_name", None) else ti.table_id
-            t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
-
-            # Chỉ lưu bảng chính tắc 1 lần duy nhất để chống cộng trùng bảng (nhân 2x/4x doanh thu)
-            data_dict[t_name] = ti.df
-            if ti.sheet_name and ti.sheet_name != "Sheet1" and ti.sheet_name != t_name:
-                aliases[ti.sheet_name] = t_name
-            if t_base != t_name:
-                aliases[t_base] = t_name
-            if ti.table_id and ti.table_id != t_name:
-                aliases[ti.table_id] = t_name
-
-        setattr(data_dict, "_aliases", aliases)
+        data_dict = build_canonical_data_dict(bd)
+        aliases = data_dict._aliases
 
         # Sử dụng Rich Schema Profiler hiển thị kiểu dữ liệu, min-max date và giá trị mẫu (tối ưu 15 cột)
         schema_summary = profile_business_schema(bd, max_cols=15)
@@ -217,6 +204,7 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
 
         return data_dict, con, schema_summary, bd, shop_meta, candidates
     except Exception as exc:
+        print(f"  [Cảnh báo Ingestion] Lỗi nạp dữ liệu shop {biz_id}: {exc}")
         return {}, None, f"Lỗi nạp dữ liệu: {exc}", None, {}, []
 
 
@@ -2035,6 +2023,7 @@ def run_batch_evaluation(args: argparse.Namespace):
             mod_latencies["ingest_schema"] = round((time.perf_counter() - t_ingest) * 1000, 2)
 
             if not data_dict:
+                print(f"  ⚠️ Cảnh báo: Không nạp được dữ liệu shop {biz_id} ({schema_str}). Tự động Abstain.")
                 sub_ans = make_abstain(f"Data Not Found: {schema_str}")
                 gold_record = gold_map.get(qid) if has_gold else None
                 is_match = False
@@ -2178,6 +2167,7 @@ def run_batch_evaluation(args: argparse.Namespace):
 
             # Chế độ Dry-Run hoặc không có LLM (và không phải replay_logs)
             if (args.dry_run or (not args.with_llm and llm is None)) and not replay_logs_dir:
+                print("  ⏭️ [Dry-Run] Bỏ qua suy luận LLM -> Abstain mặc định.")
                 sub_ans = make_abstain("Dry Run Mode")
                 mod_latencies["llm_gen"] = 0.0
                 mod_latencies["sandbox_exec"] = 0.0

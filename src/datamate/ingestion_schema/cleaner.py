@@ -114,6 +114,7 @@ STATUS_SEMANTIC_CLUSTERS = {
     "SUCCESS": [
         "hoàn thành", "hoàn tất", "completed", "đã giao", "thành công",
         "xong", "đã xong", "đã lấy", "ok", "received",
+        "đã nhập hàng", "đã nhập kho", "đã nhận hàng",
     ],
     "CANCEL": [
         "hủy", "huỷ", "đã hủy", "đã huỷ", "hủy đơn", "huỷ đơn", "đã hủy đơn",

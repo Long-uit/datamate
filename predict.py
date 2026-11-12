@@ -96,6 +96,7 @@ from datamate.grounding_feasibility.temporal import (
     format_temporal_for_prompt,
 )
 from datamate.llm_execution.sandbox import clean_num, clean_date, run_code, RunResult, try_deterministic_fallback
+from datamate.llm_execution.worker import build_canonical_data_dict
 from datamate.llm_execution.client import LLMClient
 from datamate.llm_execution.prompt import (
     build_prompt,
@@ -142,22 +143,7 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
         # Kích hoạt làm sạch Rule 8 (Group Forward-Fill & Deduplication)
         bd = clean_business(raw_bd)
         con = None  # Tối ưu hóa: LLM 100% dùng Pandas trên data, bỏ nạp kép SQLite để giảm 50% thời gian load & RAM
-        data_dict: Dict[str, pd.DataFrame] = {}
-        aliases: Dict[str, str] = {}
-        for ti in bd.tables:
-            t_base = Path(ti.fixed_file_name).stem if getattr(ti, "fixed_file_name", None) else ti.table_id
-            t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
-
-            # Chỉ lưu bảng chính tắc 1 lần duy nhất để chống cộng trùng bảng (nhân 2x/4x doanh thu)
-            data_dict[t_name] = ti.df
-            if ti.sheet_name and ti.sheet_name != "Sheet1" and ti.sheet_name != t_name:
-                aliases[ti.sheet_name] = t_name
-            if t_base != t_name:
-                aliases[t_base] = t_name
-            if ti.table_id and ti.table_id != t_name:
-                aliases[ti.table_id] = t_name
-
-        setattr(data_dict, "_aliases", aliases)
+        data_dict = build_canonical_data_dict(bd)
 
         # Sử dụng Rich Schema Profiler hiển thị kiểu dữ liệu, min-max date và giá trị mẫu (tối ưu 15 cột)
         schema_summary = profile_business_schema(bd, max_cols=15)
@@ -166,6 +152,7 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
         return data_dict, con, schema_summary, bd, shop_meta, candidates
 
     except Exception as exc:
+        print(f"  [Cảnh báo Ingestion] Lỗi nạp dữ liệu shop {biz_id}: {exc}")
         return {}, None, f"Lỗi nạp dữ liệu: {exc}", None, {}, []
 
 
