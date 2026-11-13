@@ -1127,63 +1127,31 @@ def solution(data):
 Câu hỏi: "Hôm nay doanh thu của cửa hàng là bao nhiêu?" (as_of_date = "2026-05-15")
 ```python
 def solution(data):
-    # 1. Lấy bảng bán hàng an toàn qua helper get_sales_table hoặc tên bảng trong data
-    df_sales = get_sales_table(data)
-    if df_sales is None or df_sales.empty:
-        return 0
-
-    date_col = get_date_col(df_sales)
-    amt_col = get_amount_col(df_sales)
-    if not date_col or not amt_col:
-        return 0
-
-    # 2. Xử lý ngày và loại bỏ đơn hủy / trả hàng / hoàn hàng (diacritic-insensitive)
-    df_sales['clean_date'] = clean_date(df_sales[date_col])
-    cols = df_sales.columns.tolist()
-    status_col = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt', 'tình trạng', 'xử lý'])), None)
-    if status_col:
-        df_sales = df_sales[~df_sales[status_col].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|trả|tra|hoàn|hoan|cancel|return')]
-
-    # 3. Lọc đúng ngày trên clean_date (SINGLE-DAY DATE FILTERING):
-    target_date = pd.to_datetime("2026-05-15").date()
-    df_sales = df_sales[df_sales['clean_date'].dt.date == target_date]
-    if df_sales.empty:
-        return 0
-
-    # 4. Trả về tổng tiền hàng dạng vô hướng (scalar float/int)
-    return int(round(clean_num(df_sales[amt_col]).sum()))
+    # Gọi trực tiếp hàm nghiệp vụ tất định revenue(...) theo Điều 1 & Điều 5 Rulebook:
+    # Tự động lấy thành tiền sau chiết khấu dòng hàng, loại bỏ đơn hủy/trả và giới hạn theo ngày.
+    total = revenue(
+        data,
+        start_date="2026-05-15",
+        end_date="2026-05-15",
+        as_of_date="2026-05-15",
+    )
+    return int(round(total))
 ```""",
 
     "aggregation": r"""--- VÍ DỤ MINH HỌA: TÍNH DOANH THU / TIỀN BÁN HÀNG ---
 Câu hỏi: "Tháng 3/2026 hàng nước ép dưa hấu (L) thu về bao nhiêu tiền?" (as_of_date = "2026-06-24")
 ```python
 def solution(data):
-    df_sales = get_sales_table(data)
-    if df_sales is None or df_sales.empty:
-        return 0
-
-    date_col = get_date_col(df_sales)
-    amt_col = get_amount_col(df_sales)
-    item_col = get_item_col(df_sales)
-    if not date_col or not amt_col:
-        return 0
-
-    df_sales['clean_date'] = clean_date(df_sales[date_col])
-    cols = df_sales.columns.tolist()
-    status_col = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt', 'tình trạng', 'xử lý'])), None)
-    if status_col:
-        df_sales = df_sales[~df_sales[status_col].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|trả|cancel', regex=True, na=False)]
-
-    mask = (df_sales['clean_date'].dt.year == 2026) & (df_sales['clean_date'].dt.month == 3)
-    df_sales = df_sales[mask]
-
-    if item_col:
-        mask_prod = df_sales[item_col].astype(str).str.contains('nước ép dưa hấu', case=False, na=False) & df_sales[item_col].astype(str).str.contains(r'\(l\)|\bl\b', case=False, regex=True, na=False)
-        df_sales = df_sales[mask_prod]
-
-    if df_sales.empty:
-        return 0
-    return int(round(clean_num(df_sales[amt_col]).sum()))
+    # Ưu tiên gọi hàm nghiệp vụ chuẩn tắc revenue(...) đã có sẵn trong sandbox tuân thủ Rulebook §1:
+    # Tự động chọn cột thành tiền sau chiết khấu, loại cả đơn hủy/trả, hỗ trợ lọc theo mặt hàng và khoảng thời gian.
+    total = revenue(
+        data,
+        start_date="2026-03-01",
+        end_date="2026-03-31",
+        as_of_date="2026-06-24",
+        product="nước ép dưa hấu (L)",
+    )
+    return int(round(total))
 ```""",
 
     "count_orders": """--- VÍ DỤ MINH HỌA: ĐẾM SỐ ĐƠN HÀNG (COUNT DISTINCT ORDERS) ---
