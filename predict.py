@@ -96,7 +96,8 @@ from datamate.grounding_feasibility.temporal import (
     resolve_temporal_context,
     format_temporal_for_prompt,
 )
-from datamate.llm_execution.sandbox import clean_num, clean_date, run_code, RunResult
+from datamate.llm_execution.sandbox import clean_num, clean_date, run_code, RunResult, try_deterministic_fallback
+from datamate.llm_execution.worker import build_canonical_data_dict
 from datamate.llm_execution.client import LLMClient
 from datamate.llm_execution.prompt import (
     build_prompt,
@@ -104,6 +105,7 @@ from datamate.llm_execution.prompt import (
     build_retry_prompt,
     classify_intent,
     prune_schema_by_intent,
+    ShopExecutionMemory,
 )
 from datamate.grounding_feasibility.feasibility import check_feasibility, extract_shop_metadata
 from datamate.ingestion_schema.loader import load_business, to_sqlite
@@ -159,22 +161,7 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
         # Kích hoạt làm sạch Rule 8 (Group Forward-Fill & Deduplication)
         bd = clean_business(raw_bd)
         con = None  # Tối ưu hóa: LLM 100% dùng Pandas trên data, bỏ nạp kép SQLite để giảm 50% thời gian load & RAM
-        data_dict: Dict[str, pd.DataFrame] = AliasedDict()
-        aliases: Dict[str, str] = {}
-        for ti in bd.tables:
-            t_base = Path(ti.fixed_file_name).stem if getattr(ti, "fixed_file_name", None) else ti.table_id
-            t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
-
-            # Chỉ lưu bảng chính tắc 1 lần duy nhất để chống cộng trùng bảng (nhân 2x/4x doanh thu)
-            data_dict[t_name] = ti.df
-            if ti.sheet_name and ti.sheet_name != "Sheet1" and ti.sheet_name != t_name:
-                aliases[ti.sheet_name] = t_name
-            if t_base != t_name:
-                aliases[t_base] = t_name
-            if ti.table_id and ti.table_id != t_name:
-                aliases[ti.table_id] = t_name
-
-        data_dict._aliases = aliases
+        data_dict = build_canonical_data_dict(bd)
 
         # Sử dụng Rich Schema Profiler hiển thị kiểu dữ liệu, min-max date và giá trị mẫu (tối ưu 15 cột)
         schema_summary = profile_business_schema(bd, max_cols=15)
@@ -183,6 +170,7 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
         return data_dict, con, schema_summary, bd, shop_meta, candidates
 
     except Exception as exc:
+        print(f"  [Cảnh báo Ingestion] Lỗi nạp dữ liệu shop {biz_id}: {exc}")
         return {}, None, f"Lỗi nạp dữ liệu: {exc}", None, {}, []
 
 
@@ -278,6 +266,7 @@ def main():
     parser.add_argument("--timeout", type=int, default=30, help="Thời gian chờ tối đa khi chạy code trong sandbox (giây, mặc định: 30)")
     parser.add_argument("--in_process", action="store_true", help="Chạy code trực tiếp trong tiến trình (bảo vệ cache bằng bản sao RAM) thay vì sandbox subprocess")
     parser.add_argument("--quantization", "--quant", type=str, default="4bit", choices=["8bit", "4bit", "none"], help="Chế độ lượng tử hóa mô hình (mặc định: 4bit)")
+    parser.add_argument("--max_new_tokens", type=int, default=768, help="Số token tối đa sinh ra cho mỗi câu (mặc định: 768)")
     parser.add_argument("--preserve_order", action="store_true", help="Chạy đúng theo thứ tự gốc từ câu 1 đến câu cuối trong questions.jsonl (không gom nhóm theo shop)")
     parser.add_argument("--range", type=str, default=None, help="Chỉ định khoảng câu hỏi cần chạy (1-based, ví dụ: 1-100 hoặc 501-1000)")
     args = parser.parse_args()
@@ -401,6 +390,7 @@ def main():
 
     try:
         current_biz_id: Optional[str] = None
+        shop_memory = ShopExecutionMemory()
         # VÒNG LẶP SUY LUẬN TỪNG CÂU HỎI (ĐÃ ĐƯỢC GROUP BY BUSINESS_ID)
         for idx, q in enumerate(active_questions, start=1):
             qid = q["id"]
@@ -488,12 +478,13 @@ def main():
                 entity_matches=entity_matches,
                 return_messages=True,
                 calendar_path=calendar_str,
+                shop_memory_hints=shop_memory.get_hints(biz_id),
             )
 
             # 4. Sinh mã phân tích Python qua LLM (Lượt 1)
             t0 = time.time()
             assert llm is not None
-            code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=1536)
+            code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=args.max_new_tokens)
             llm_generation = copy.deepcopy(getattr(llm, "last_generation_meta", {}) or {})
             self_correction_llm_trace: List[Dict[str, Any]] = []
             gen_sec = round(time.time() - t0, 2)
@@ -548,7 +539,10 @@ def main():
             should_retry_for_missed = bool(missed_mentions and not exec_err and not sanity_err and grounding_eval.get("entity_coverage", 1.0) < 0.5)
 
             # 5.2. Cơ chế Runtime Self-Correction (tối đa 2 vòng tự sửa lỗi đồng bộ với inspect_pipeline.py)
-            from src.datamate.llm_execution.sandbox import should_retry_self_correction
+            try:
+                from datamate.llm_execution.sandbox import should_retry_self_correction
+            except ImportError:
+                from src.datamate.llm_execution.sandbox import should_retry_self_correction
             max_self_corrections = 2
             can_retry = (
                 not llm_generation.get("gen_failed")
@@ -580,7 +574,7 @@ def main():
                     missed_mentions=missed_mentions,
                 )
                 t_retry = time.time()
-                retry_code = llm.generate_code(prompt=retry_user_prompt, system_prompt=retry_sys_prompt, max_new_tokens=1536)
+                retry_code = llm.generate_code(prompt=retry_user_prompt, system_prompt=retry_sys_prompt, max_new_tokens=args.max_new_tokens)
                 self_correction_llm_trace.append({
                     "round": retry_count,
                     "error_feedback": err_feedback,
@@ -628,6 +622,9 @@ def main():
                     code_text = retry_code
                     exec_err = err_retry
 
+            # Cập nhật bộ nhớ schema liên câu hỏi cho shop hiện tại
+            shop_memory.record_attempt(biz_id, code_text, exec_err or sanity_err)
+
             # Đánh giá lại Grounding Coverage sau lượt thử lại (nếu có)
             grounding_eval = evaluate_grounding_coverage(
                 code_text=code_text,
@@ -635,6 +632,26 @@ def main():
                 entity_matches=entity_matches,
                 temporal_info=temporal_res,
             )
+
+            # 5.5. Cơ chế Cứu hộ Chủ động (Active Deterministic Fallback) nếu LLM + Self-Correction thất bại
+            if exec_err or sanity_err:
+                fb_val, fb_src = try_deterministic_fallback(
+                    intent=intent,
+                    question=normalized_q,
+                    data_dict=data_dict,
+                    temporal_info=temporal_res,
+                    entity_matches=entity_matches,
+                    as_of_date=as_of_date,
+                )
+                if fb_val is not None:
+                    fb_ans = normalize_output(fb_val, question=normalized_q, code_text=f"# {fb_src}")
+                    fb_sane, _ = check_result_sanity(fb_ans, question=normalized_q, code_text=f"# {fb_src}")
+                    if fb_sane:
+                        print(f"  🚑 [Active Fallback] Cứu hộ thành công bằng {fb_src} -> Kết quả: {fb_val}")
+                        raw_result = fb_val
+                        exec_err = None
+                        sanity_err = None
+                        code_text = f"# {fb_src}\n# Recovered after LLM error"
 
             # 6. Chuẩn hóa kết quả đầu ra & Đánh giá Calibrated Abstention Gate (Module 6)
             confidence = 0.0

@@ -1060,20 +1060,37 @@ def convert_to_base_qty(
     qty_col: Optional[str] = None,
     unit_col: Optional[str] = None,
     item_col: Optional[str] = None,
+    target_unit: Optional[str] = None,
 ) -> pd.Series:
     """
-    Hàm tiện ích quy đổi số lượng về đơn vị cơ sở nhỏ nhất theo Điều 3 & Điều 10 Rulebook.
-    Tự động tra cứu bảng DanhSachQuyDoi / QuyDoiDonVi trong `data` (nếu có).
-    Trả về pd.Series số lượng đã nhân hệ số quy đổi.
+    Hàm tiện ích quy đổi số lượng về đơn vị cơ sở nhỏ nhất (hoặc đơn vị đích `target_unit`) theo Điều 3 & Điều 10 Rulebook.
+    Tự động ưu tiên cột 'Số lượng quy đổi' nếu đã có sẵn trong bảng, hoặc tra cứu bảng DanhSachQuyDoi / QuyDoiDonVi trong `data`.
+    Trả về pd.Series số lượng đã quy đổi.
     """
     if df is None or df.empty:
         return pd.Series(dtype=float)
 
     cols = list(df.columns)
+    # 1. Nếu không chỉ định qty_col và không yêu cầu target_unit riêng, ưu tiên cột đã quy đổi sẵn
+    if not qty_col and not target_unit:
+        pre_converted_col = next(
+            (c for c in cols if any(k in _strip_accents(str(c)).lower() for k in [
+                "so luong quy doi", "sl quy doi", "so luong co so", "sl co so"
+            ])),
+            None,
+        )
+        if pre_converted_col:
+            return clean_num(df[pre_converted_col])
+
     if not qty_col or qty_col not in cols:
         qty_col = next(
             (c for c in cols if any(k in _strip_accents(str(c)).lower() for k in [
                 "so luong", "soluong", "sl", "khoi luong", "trong luong", "qty"
+            ]) and "quy doi" not in _strip_accents(str(c)).lower()),
+            None,
+        ) or next(
+            (c for c in cols if any(k in _strip_accents(str(c)).lower() for k in [
+                "so luong", "soluong", "sl", "qty"
             ])),
             None,
         )
@@ -1111,7 +1128,7 @@ def convert_to_base_qty(
             t_cols = list(t_df.columns)
             f_col = next(
                 (c for c in t_cols if any(k in _strip_accents(str(c)).lower() for k in [
-                    "he so", "ty le quy doi", "quy cach", "so luong quy doi", "sl quy doi"
+                    "he so", "ty le quy doi", "gia tri quy doi", "quy cach", "so luong quy doi", "sl quy doi", "quy doi", "factor", "rate"
                 ])),
                 None,
             )
@@ -1134,7 +1151,9 @@ def convert_to_base_qty(
                         if fv <= 0:
                             continue
                         uk = _strip_accents(str(r[u_col])).lower().strip()
-                        ik = _strip_accents(str(r[i_col])).lower().strip() if i_col and not pd.isna(r[i_col]) else "*"
+                        ik = _strip_accents(str(r[item_col])).lower().strip() if (i_col and item_col and i_col in t_df.columns and not pd.isna(r[i_col])) else (
+                            _strip_accents(str(r[i_col])).lower().strip() if i_col and not pd.isna(r[i_col]) else "*"
+                        )
                         conv_map[(ik, uk)] = fv
                         if ("*", uk) not in conv_map:
                             conv_map[("*", uk)] = fv
@@ -1144,11 +1163,16 @@ def convert_to_base_qty(
     if not conv_map:
         return base_q
 
+    target_norm = _strip_accents(str(target_unit)).lower().strip() if target_unit else None
     multipliers = []
     for idx, r in df.iterrows():
         u_val = _strip_accents(str(r[unit_col])).lower().strip() if not pd.isna(r[unit_col]) else ""
         i_val = _strip_accents(str(r[item_col])).lower().strip() if (item_col and not pd.isna(r[item_col])) else "*"
         mult = conv_map.get((i_val, u_val), conv_map.get(("*", u_val), 1.0))
+        if target_norm:
+            target_div = conv_map.get((i_val, target_norm), conv_map.get(("*", target_norm), 1.0))
+            if target_div > 0:
+                mult = mult / target_div
         multipliers.append(mult)
 
     return base_q * pd.Series(multipliers, index=df.index, dtype=float)
@@ -1636,6 +1660,115 @@ def _patch_pandas_groupby_numeric():
             pass
 
 
+def try_deterministic_fallback(
+    intent: str,
+    question: str,
+    data_dict: Dict[str, pd.DataFrame],
+    temporal_info: Optional[Dict[str, Any]] = None,
+    entity_matches: Optional[List[Any]] = None,
+    as_of_date: Optional[str] = None,
+) -> Tuple[Optional[Any], Optional[str]]:
+    """
+    Cơ chế Cứu hộ Chủ động (Active Deterministic Fallback Engine).
+    CHỈ được gọi SAU KHI mô hình LLM và vòng Self-Correction đều thất bại.
+    Chỉ kích hoạt cho các câu hỏi có cấu trúc chuẩn xác cao để cứu các ca bị 'abstain' oan
+    mà vẫn đảm bảo an toàn tuyệt đối (tránh bị phạt -1.0).
+    """
+    if not data_dict or not question:
+        return None, None
+
+    q_low = _strip_accents(question).lower()
+
+    # Từ chối fallback nếu câu hỏi có điều kiện phức tạp, so sánh, phân nhóm hoặc nhiều tầng lọc
+    complex_markers = [
+        "ti le", "ty le", "%", "phan tram", "trung binh", "binh quan",
+        "so sanh", "chenh lech", "tang", "giam", "cao nhat", "thap nhat",
+        "nhieu nhat", "it nhat", "top ", "hang dau", "ban chay",
+        "ca sang", "ca chieu", "ca lam", "khung gio",
+        "kenh ", "shopee", "grab", "tai quay", "mang ve", "online",
+        "tien mat", "chuyen khoan", "quet the", "vi dien tu",
+        "loi nhuan", "lai gop", "gia von", "chiet khau", "giam gia",
+        "ton kho", "nhap hang", "phieu nhap", "giao hang", "luot giao",
+        "tu ", "tren ", "duoi ", "lon hon", "nho hon", ">=", "<=", ">", "<",
+        "danh sach", "liet ke", "nhung ", "bao gom", "moi ", "tung ",
+        "hoat chat", "nhom hang", "nhom khach", "khach quen", "xe ", "bien so",
+    ]
+    if any(m in q_low for m in complex_markers):
+        return None, None
+
+    # Trích xuất khoảng thời gian chuẩn
+    start_date = None
+    end_date = None
+    if temporal_info and isinstance(temporal_info, dict):
+        start_date = temporal_info.get("start_date")
+        end_date = temporal_info.get("end_date")
+
+    # Trích xuất thực thể nếu có tối đa 1 sản phẩm hoặc 1 khách hàng
+    prod_filter = None
+    cust_filter = None
+    if entity_matches:
+        if len(entity_matches) > 1:
+            return None, None
+        m = entity_matches[0]
+        cand = getattr(m, "matched_text", None) or getattr(m, "candidate", None)
+        meta = getattr(m, "metadata", {}) or {}
+        role = str(meta.get("entity_type", "") or meta.get("role", "")).lower()
+        if cand:
+            if any(k in role for k in ["khach", "customer"]):
+                cust_filter = str(cand)
+            elif any(k in role for k in ["san pham", "hang", "product", "item", "mon", "thuoc"]):
+                prod_filter = str(cand)
+            else:
+                return None, None
+
+    try:
+        if intent == "revenue":
+            if not start_date and not end_date and not as_of_date:
+                return None, None
+            val = revenue(
+                data_dict,
+                start_date=start_date,
+                end_date=end_date,
+                as_of_date=as_of_date,
+                product=prod_filter,
+                customer=cust_filter,
+            )
+            if val is not None and val >= 0:
+                return int(round(val)), "ActiveFallback(revenue)"
+
+        elif intent in ("order_count", "cancelled_orders"):
+            if prod_filter or cust_filter:
+                return None, None
+            if not start_date and not end_date and not as_of_date:
+                return None, None
+            status_arg = "cancelled" if intent == "cancelled_orders" else "valid"
+            val = count_orders(
+                data_dict,
+                start_date=start_date,
+                end_date=end_date,
+                as_of_date=as_of_date,
+                status=status_arg,
+            )
+            if val is not None and val >= 0:
+                return int(val), f"ActiveFallback(count_orders:{status_arg})"
+
+        elif intent == "cong_no":
+            if prod_filter:
+                return None, None
+            val = debt(
+                data_dict,
+                end_date=end_date,
+                as_of_date=as_of_date,
+                customer=cust_filter,
+            )
+            if val is not None and val >= 0:
+                return int(round(val)), "ActiveFallback(debt)"
+    except Exception:
+        return None, None
+
+    return None, None
+
+
 def _patch_pandas_resilience():
     _patch_pandas_date_comparisons()
     _patch_pandas_str_contains()
@@ -1658,6 +1791,7 @@ __all__ = [
     "revenue",
     "count_orders",
     "debt",
+    "try_deterministic_fallback",
     "should_retry_self_correction",
     "get_date_col",
     "get_amount_col",

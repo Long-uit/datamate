@@ -57,13 +57,31 @@ def profile_table_columns(df: pd.DataFrame, max_cols: int = 15) -> List[str]:
                 pass
 
         # 2. Nhận diện cột tiền tệ / số lượng (kiểm tra trước phân loại để tránh nhầm số thành categorical)
-        is_num_keyword = any(k in c_low for k in ["tiền", "giá", "số lượng", "soluong", "doanh thu", "chiết khấu", "thuế", "vat", "nợ", "tồn", "cần trả", "đơn giá"])
+        # Gắn nhãn ngữ nghĩa theo Rulebook để mô hình không chọn nhầm giữa Tiền hàng thuần vs Tiền khách trả
+        is_num_keyword = (
+            any(k in c_low for k in ["tiền", "giá", "số lượng", "soluong", "doanh thu", "chiết khấu", "giảm giá", "thuế", "vat", "nợ", "tồn", "cần trả", "đã trả", "đơn giá", "phí ship", "phí vận chuyển"])
+            or bool(re.search(r"\bsl\b", c_low))
+        )
         sample_val = _normalize_text(non_null.iloc[0])
         if len(sample_val) > 20:
             sample_val = sample_val[:17] + "..."
 
         if is_num_keyword:
-            col_previews.append(f"'{col_name}' (số/tiền, vd: '{sample_val}')")
+            if any(k in c_low for k in ["quy đổi", "quy doi", "cơ sở", "co so"]):
+                num_tag = "SL quy đổi cơ sở"
+            elif any(k in c_low for k in ["số lượng", "soluong"]) or bool(re.search(r"\bsl\b", c_low)):
+                num_tag = "số lượng"
+            elif any(k in c_low for k in ["đơn giá", "don gia", "giá bán", "gia ban", "giá nhập", "gia nhap"]):
+                num_tag = "đơn giá"
+            elif any(k in c_low for k in ["chiết khấu", "chiet khau", "giảm giá", "giam gia", "thuế", "vat", "phí ship", "phí vận chuyển"]):
+                num_tag = "giảm giá/thuế/ship"
+            elif any(k in c_low for k in ["khách cần trả", "khách đã trả", "thanh toán", "tổng bill", "khach tra"]):
+                num_tag = "tiền thanh toán cấp đơn"
+            elif any(k in c_low for k in ["thành tiền", "thanh tien", "tổng tiền hàng", "tong tien hang", "doanh thu", "tổng sau giảm"]):
+                num_tag = "tiền hàng/doanh thu"
+            else:
+                num_tag = "số/tiền"
+            col_previews.append(f"'{col_name}' ({num_tag}, vd: '{sample_val}')")
             continue
 
         # 3. Nhận diện cột phân loại (categorical):
@@ -188,8 +206,61 @@ def infer_table_role(table_name: str, df: pd.DataFrame) -> str:
     return "Bảng dữ liệu khác"
 
 
+def infer_table_granularity(df: pd.DataFrame) -> str:
+    """Phân biệt bảng Cấp Đơn hàng (1 dòng/đơn) vs Cấp Chi tiết mặt hàng (nhiều dòng/đơn)."""
+    if df is None or df.empty:
+        return ""
+    order_col = next(
+        (
+            c for c in df.columns
+            if any(k in str(c).lower() for k in ["mã đơn", "ma don", "mã hoá đơn", "mã hóa đơn", "mã hd", "order_id", "order id", "số hđ", "so hd", "mã chứng từ"])
+        ),
+        None,
+    )
+    if not order_col:
+        return ""
+    non_null = df[order_col].dropna()
+    if non_null.empty:
+        return ""
+    n_unique = non_null.nunique()
+    if len(non_null) > n_unique * 1.05:
+        return "Chi tiết từng món (nhiều dòng/đơn -> đếm đơn phải dùng nunique)"
+    return "Cấp đơn hàng (1 dòng = 1 đơn)"
+
+
+def discover_join_keys(business: BusinessData) -> List[str]:
+    """Tự động phát hiện các cột khóa ngoại dùng để join giữa các bảng."""
+    table_cols = {}
+    for ti in business.tables:
+        if ti.df is None or ti.df.empty:
+            continue
+        t_base = Path(ti.fixed_file_name).stem if hasattr(ti, "fixed_file_name") and ti.fixed_file_name else ti.table_id
+        t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
+        key_cols = {}
+        for c in ti.columns:
+            c_low = unicodedata.normalize("NFKD", str(c)).lower().encode("ascii", "ignore").decode("utf-8")
+            c_norm = re.sub(r"[^a-z0-9]", "", c_low)
+            if any(k in c_norm for k in ["madon", "mahoadon", "mahd", "orderid", "sohd", "mahang", "masp", "sku", "makh", "makhach", "manhap", "maphieu", "bienso"]):
+                key_cols[c_norm] = str(c)
+        if key_cols:
+            table_cols[t_name] = key_cols
+
+    join_hints: List[str] = []
+    t_names = list(table_cols.keys())
+    for i in range(len(t_names)):
+        for j in range(i + 1, len(t_names)):
+            t1, t2 = t_names[i], t_names[j]
+            shared = set(table_cols[t1].keys()) & set(table_cols[t2].keys())
+            if shared:
+                cols_str = ", ".join(f"'{table_cols[t1][k]}'" for k in sorted(shared)[:2])
+                join_hints.append(f"- '{t1}' <-> '{t2}' qua cột: {cols_str}")
+            if len(join_hints) >= 6:
+                return join_hints
+    return join_hints
+
+
 def profile_business_schema(business: BusinessData, max_cols: int = 15) -> str:
-    """Tạo bản tóm tắt schema phong phú (Rich Schema) kèm Table Roles cho toàn bộ shop."""
+    """Tạo bản tóm tắt schema phong phú (Rich Schema) kèm Table Roles, Granularity và Join Keys."""
     schema_lines: List[str] = []
     role_summary_lines: List[str] = ["### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):"]
 
@@ -198,15 +269,22 @@ def profile_business_schema(business: BusinessData, max_cols: int = 15) -> str:
         t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
 
         role = infer_table_role(t_name, ti.df)
+        granularity = infer_table_granularity(ti.df)
+        gran_tag = f" | {granularity}" if granularity else ""
         role_summary_lines.append(f"- Bảng '{t_name}' (alias: '{ti.table_id}'): {role}")
 
         cols_desc = profile_table_columns(ti.df, max_cols=max_cols)
         extra_note = f", ... và {len(ti.columns) - max_cols} cột khác" if len(ti.columns) > max_cols else ""
         
         schema_lines.append(
-            f"- Bảng '{t_name}' [Vai trò: {role}] ({ti.n_rows} dòng):\n"
+            f"- Bảng '{t_name}' [Vai trò: {role}{gran_tag}] ({ti.n_rows} dòng):\n"
             f"  Cột ({len(ti.columns)}): [{', '.join(cols_desc)}{extra_note}]"
         )
+
+    join_hints = discover_join_keys(business)
+    if join_hints:
+        role_summary_lines.append("\n### LIÊN KẾT BẢNG (JOIN KEYS):")
+        role_summary_lines.extend(join_hints)
 
     return "\n".join(role_summary_lines) + "\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n" + "\n".join(schema_lines)
 

@@ -24,8 +24,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
-    from datamate.grounding_feasibility.rulebook import load_rulebook
+    from datamate.grounding_feasibility.rulebook import load_rulebook, retrieve_relevant_rulebook_clauses
 except ImportError:
+    retrieve_relevant_rulebook_clauses = None
+
     def load_rulebook(split_dir: Optional[str] = None) -> str:
         if split_dir:
             p = Path(split_dir) / "rulebook.md"
@@ -478,16 +480,21 @@ def prune_schema_by_intent(
     kept_detail_blocks = [p["raw"] for p in parsed_tables if p["name"] in kept_names]
 
     if has_dual_sections and summary_section.strip():
-        # Lọc lại phần summary header tương ứng với kept_names
+        # Lọc lại phần summary header & join keys tương ứng với kept_names
         summary_lines = summary_section.strip().split("\n")
         filtered_summary_lines = []
         for line in summary_lines:
-            if not line.strip().startswith("- Bảng"):
-                filtered_summary_lines.append(line)
-            else:
+            s_line = line.strip()
+            if s_line.startswith("- Bảng"):
                 tbl_m = re.search(r"Bảng\s+['\"]?([a-zA-Z0-9_\-]+)['\"]?", line)
                 if tbl_m and tbl_m.group(1) in kept_names:
                     filtered_summary_lines.append(line)
+            elif "<->" in s_line:
+                pair_m = re.search(r"'([^']+)'\s*<->\s*'([^']+)'", s_line)
+                if pair_m and pair_m.group(1) in kept_names and pair_m.group(2) in kept_names:
+                    filtered_summary_lines.append(line)
+            else:
+                filtered_summary_lines.append(line)
         return "\n".join(filtered_summary_lines) + "\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n" + "\n\n".join(kept_detail_blocks)
     else:
         prefix = f"{header.strip()}\n\n" if header.strip() else ""
@@ -946,10 +953,30 @@ NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN:
 # 5. TRÍCH XUẤT ĐIỀU KHOẢN RULEBOOK RÚT GỌN
 # ==============================================================================
 
-def extract_relevant_rulebook_clauses(rulebook_content: str, question: str, max_chars: int = 1000) -> str:
-    """Trích xuất thông minh các điều khoản Rulebook liên quan trực tiếp đến câu hỏi (giới hạn ~1.000 ký tự)."""
+def extract_relevant_rulebook_clauses(
+    rulebook_content: str,
+    question: str,
+    max_chars: int = 1200,
+    schema_str: str = "",
+    business_note: str = "",
+) -> str:
+    """Trích xuất thông minh các điều khoản Rulebook theo cấu trúc schema/ngành hàng và câu hỏi."""
     if not rulebook_content or not rulebook_content.strip():
         return ""
+
+    if retrieve_relevant_rulebook_clauses is not None:
+        try:
+            retrieved = retrieve_relevant_rulebook_clauses(
+                rulebook_content=rulebook_content,
+                question=question,
+                schema_str=schema_str,
+                business_note=business_note,
+                max_chars=max_chars,
+            )
+            if retrieved and retrieved.strip():
+                return retrieved
+        except Exception:
+            pass
 
     rb_text = rulebook_content.strip()
     if len(rb_text) <= max_chars:
@@ -2026,8 +2053,72 @@ def select_few_shots(intent: str) -> str:
 
 
 # ==============================================================================
-# 7. HÀM TẠO PROMPT CHÍNH & PROMPT SỬA LỖI
+# 7. BỘ NHỚ SCHEMA LIÊN CÂU HỎI (EPISODIC SHOP MEMORY) & BUILD_PROMPT
 # ==============================================================================
+
+class ShopExecutionMemory:
+    """Bộ nhớ nhẹ theo từng business_id (chỉ lưu chuỗi) giúp tránh lặp lại lỗi schema giữa các câu hỏi cùng shop."""
+
+    def __init__(self, max_items_per_shop: int = 5):
+        self._max_items = max_items_per_shop
+        self._store: Dict[str, Dict[str, List[str]]] = {}
+
+    def _entry(self, business_id: str) -> Dict[str, List[str]]:
+        if business_id not in self._store:
+            self._store[business_id] = {"verified_refs": [], "avoid_hints": []}
+        return self._store[business_id]
+
+    @staticmethod
+    def _append_unique(lst: List[str], item: str, cap: int) -> None:
+        item_clean = item.strip()
+        if not item_clean or item_clean in lst:
+            return
+        lst.append(item_clean)
+        if len(lst) > cap:
+            del lst[0]
+
+    def record_attempt(self, business_id: str, code: str, error_msg: Optional[str] = None) -> None:
+        """Ghi nhận bảng/cột đã chạy thành công hoặc lỗi KeyError/bảng cần tránh cho các câu hỏi sau của cùng shop."""
+        if not business_id:
+            return
+        entry = self._entry(str(business_id))
+        if error_msg:
+            err_str = str(error_msg)
+            m_key = re.search(r"KeyError\s*:\s*['\"]([^'\"]{1,60})['\"]", err_str)
+            if m_key:
+                self._append_unique(
+                    entry["avoid_hints"],
+                    f"Cột/khóa '{m_key.group(1)}' không tồn tại trực tiếp; hãy kiểm tra tên cột thực trong schema.",
+                    self._max_items,
+                )
+            elif "DataNotFound" in err_str or "not found" in err_str.lower():
+                first_line = err_str.splitlines()[0][:110]
+                self._append_unique(entry["avoid_hints"], f"Tránh lặp lỗi truy cập: {first_line}", self._max_items)
+            return
+
+        if not code or "return None" in code:
+            return
+        # Trích tên bảng đã truy cập thành công qua data['...']
+        for tbl_name in re.findall(r"data\s*\[\s*['\"]([^'\"]{2,50})['\"]\s*\]", code):
+            self._append_unique(entry["verified_refs"], f"data['{tbl_name}']", self._max_items)
+        # Ghi nhận các helper nghiệp vụ đã chạy sạch
+        for helper in ("revenue(", "count_orders(", "debt(", "get_sales_table("):
+            if helper in code:
+                self._append_unique(entry["verified_refs"], f"helper {helper[:-1]}()", self._max_items)
+
+    def get_hints(self, business_id: str, max_chars: int = 350) -> str:
+        """Trả về gợi ý schema ngắn gọn tích lũy từ các câu hỏi trước của cùng cửa hàng."""
+        entry = self._store.get(str(business_id)) if business_id else None
+        if not entry:
+            return ""
+        lines: List[str] = []
+        if entry["verified_refs"]:
+            lines.append("- Đã xác minh chạy đúng trên shop này: " + ", ".join(entry["verified_refs"][:4]))
+        for hint in entry["avoid_hints"][-3:]:
+            lines.append(f"- Cảnh báo từ lượt trước: {hint}")
+        text = "\n".join(lines).strip()
+        return text[:max_chars] if len(text) > max_chars else text
+
 
 def build_prompt(
     schema_str: str,
@@ -2040,6 +2131,7 @@ def build_prompt(
     return_messages: bool = False,
     force_full_schema: bool = False,
     calendar_path: Optional[str] = None,
+    shop_memory_hints: Optional[str] = None,
 ) -> Any:
     """Ráp nối toàn bộ thông tin thành Prompt tinh gọn cho mô hình Qwen2.5-Coder-3B."""
     intent = classify_intent(question)
@@ -2102,7 +2194,13 @@ def build_prompt(
 
     rulebook_block = ""
     if rulebook_content and rulebook_content.strip():
-        rb_text = extract_relevant_rulebook_clauses(rulebook_content, question, max_chars=500)
+        rb_text = extract_relevant_rulebook_clauses(
+            rulebook_content,
+            question,
+            max_chars=1200,
+            schema_str=active_schema,
+            business_note=business_note or "",
+        )
         if rb_text:
             rulebook_block = f"\n==================== QUY TẮC NGHIỆP VỤ BẮT BUỘC ====================\n{rb_text}\n"
 
@@ -2117,6 +2215,9 @@ def build_prompt(
             else:
                 note_str = note_str[:500]
         biz_context = f"\nGHI CHÚ DOANH NGHIỆP:\n{note_str}\n"
+
+    if shop_memory_hints and shop_memory_hints.strip():
+        biz_context += f"\nKINH NGHIỆM SCHEMA ĐÃ XÁC MINH CHO CỬA HÀNG NÀY:\n{shop_memory_hints.strip()}\n"
 
     req_3 = "3. Ưu tiên gọi các hàm nghiệp vụ tất định đã có sẵn trong sandbox: `revenue(data, start_date=..., end_date=..., as_of_date=...)` để tính doanh thu (tự động lấy thành tiền dòng hàng sau chiết khấu, không trừ voucher đơn, không gồm VAT/ship, loại cả đơn hủy/trả), `count_orders(data, start_date=..., end_date=..., status='valid'|'cancelled')` để đếm đơn, và `debt(data, end_date=...)` để tính công nợ, thay vì tự chọn cột tiền cấp đơn (như Tổng bill, Khách trả). Nếu cần lọc bảng trực tiếp: tìm cột ngày gốc bằng `d_c = next(...)`, tạo `df['clean_date'] = clean_date(df[d_c])` và dùng `df['clean_date'].dt.year`, `df['clean_date'].dt.month`."
     if intent in ("count_orders", "cancelled_orders"):
@@ -2270,4 +2371,5 @@ __all__ = [
     "select_few_shots",
     "TET_SOLAR_RANGES",
     "load_rulebook",
+    "ShopExecutionMemory",
 ]

@@ -53,6 +53,7 @@ ENV HF_HUB_OFFLINE=1 \
 # Sao chép toàn bộ mã nguồn hệ thống
 COPY pyproject.toml /app/
 COPY config/ /app/config/
+COPY resources/ /app/resources/
 COPY src/ /app/src/
 COPY predict.py /app/
 COPY predict.sh /app/

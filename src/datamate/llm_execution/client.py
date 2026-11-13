@@ -67,41 +67,42 @@ except ImportError:
 class CodeBlockEndStoppingCriteria(StoppingCriteria):
     """
     Dừng sinh sớm ngay khi mô hình viết xong khối hàm solution(data) hợp lệ và đóng code fence ```.
-    Giúp tăng tốc độ suy luận gấp 15-30 lần (từ ~116s xuống còn 3-5s/câu) và triệt tiêu sinh thừa.
+    Decode tăng dần (incremental) để tránh O(N^2) CPU overhead và bắt được cả trường hợp prompt đã mở sẵn ```python.
     """
     def __init__(self, tokenizer: Any, start_len: int):
         self.tokenizer = tokenizer
         self.start_len = start_len
+        self._decoded_len = 0
+        self._decoded_text = ""
 
     def __call__(self, input_ids: Any, scores: Any, **kwargs) -> bool:
         new_ids = input_ids[0][self.start_len:]
         num_new = len(new_ids)
-        if num_new < 15:
+        if num_new < 12 or (num_new - self._decoded_len) < 4:
             return False
 
-        # Chỉ decode mỗi 3 tokens để giảm tải CPU giải mã
-        if num_new % 3 != 0:
-            return False
-
-        full_text = self.tokenizer.decode(new_ids, skip_special_tokens=False)
+        # Chỉ decode phần token mới phát sinh thay vì toàn bộ chuỗi từ đầu
+        delta_ids = new_ids[self._decoded_len:]
+        self._decoded_text += self.tokenizer.decode(delta_ids, skip_special_tokens=False)
+        self._decoded_len = num_new
+        text = self._decoded_text
 
         # Kiểm tra token kết thúc đặc biệt (ChatML hoặc EOS)
-        if any(tok in full_text for tok in ["<|im_end|>", "<|endoftext|>", "</s>"]):
+        if any(tok in text for tok in ("<|im_end|>", "<|endoftext|>", "</s>")):
             return True
 
-        if "def solution" in full_text and "return " in full_text:
-            # Trường hợp chuẩn: có mở và đóng code fence ```
-            if full_text.count("```") >= 2:
+        if "def solution" in text and "return " in text:
+            # Cắt phần sinh sau dòng chứa return đầu tiên để kiểm tra dấu đóng code block
+            ret_idx = text.find("return ")
+            after_ret = text[ret_idx:]
+            if "\n```" in after_ret or text.rstrip().endswith("```"):
                 return True
 
-            # Nếu mô hình sinh mã thẳng mà KHÔNG mở ``` (count == 0),
-            # dừng khi xuất hiện khối lệnh tiếp theo ở thụt lề 0 hoặc ví dụ/chú thích
-            if full_text.count("```") == 0:
-                tail_text = self.tokenizer.decode(new_ids[-40:], skip_special_tokens=False)
-                if any(k in tail_text for k in [
-                    "\ndef ", "\nclass ", "\nprint(", "\n# Example", "\n# Ví dụ", "\nif __name__"
-                ]):
-                    return True
+            # Nếu mô hình viết tiếp ví dụ/hàm khác ở thụt lề 0 mà không đóng fence
+            if any(k in after_ret for k in (
+                "\ndef ", "\nclass ", "\nprint(", "\n# Example", "\n# Ví dụ", "\nif __name__"
+            )):
+                return True
 
         return False
 
@@ -913,11 +914,6 @@ class LLMClient:
             }
             return ""
 
-        if torch.cuda.is_available():
-            import gc
-            gc.collect()
-            torch.cuda.empty_cache()
-
         inputs = self.tokenizer([chat_text], return_tensors="pt").to(self.model.device)
 
         start_len = inputs.input_ids.shape[1]
@@ -1108,11 +1104,6 @@ class LLMClient:
         }
 
         del inputs, output_tokens
-        if torch.cuda.is_available():
-            import gc
-            gc.collect()
-            torch.cuda.empty_cache()
-
         return result_text
 
     def _run_attempt_and_record(
@@ -1128,7 +1119,15 @@ class LLMClient:
         raw_out = self._generate_raw(messages, max_new_tokens=max_new_tokens)
         att_ms = int((time.time() - t0) * 1000)
         raw_meta = dict(getattr(self, "_last_raw_meta", {}) or {})
-        extracted = extract_python_code(raw_out)
+        try:
+            from datamate.llm_execution.sandbox import sanitize_code_syntax
+        except ImportError:
+            try:
+                from src.datamate.llm_execution.sandbox import sanitize_code_syntax
+            except ImportError:
+                sanitize_code_syntax = lambda x: x  # noqa: E731
+
+        extracted = sanitize_code_syntax(extract_python_code(raw_out))
         is_valid, err_msg = validate_code(extracted)
         record = {
             "attempt": attempt_idx,
@@ -1181,6 +1180,14 @@ class LLMClient:
         messages.append({"role": "assistant", "content": "```python\n"})
 
         attempts: List[Dict[str, Any]] = []
+
+        try:
+            from datamate.llm_execution.sandbox import sanitize_code_syntax
+        except ImportError:
+            try:
+                from src.datamate.llm_execution.sandbox import sanitize_code_syntax
+            except ImportError:
+                sanitize_code_syntax = lambda x: x  # noqa: E731
 
         # Lần sinh mã đầu tiên
         _, code, is_valid, error_msg, init_record = self._run_attempt_and_record(
@@ -1249,6 +1256,7 @@ class LLMClient:
                 print("[Tự sửa lỗi] Sửa mã nguồn thành công.")
                 break
             else:
+                code = retry_code or code
                 error_msg = retry_error
 
         # Nếu sau khi sửa vẫn không hợp lệ -> fallback an toàn để chương trình không sập (trả về None để to_answer chuyển thành abstain 0 điểm)

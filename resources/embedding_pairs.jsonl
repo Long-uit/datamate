@@ -1,0 +1,547 @@
+{"anchor":"a","positive":"anh","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"acc","positive":"account","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ace","positive":"anh chị em","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ad","positive":"admin","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ae","positive":"anh em","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ah","positive":"à","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"àh","positive":"à","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ạh","positive":"ạ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ak","positive":"à","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ák","positive":"á","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"àk","positive":"à","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ạk","positive":"ạ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"aov","positive":"giá trị trung bình một đơn","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"atrai","positive":"anh trai","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"atsm","positive":"ảo tưởng sức mạnh","type":"word_level","domain":"social_slang","category":"slang"}
+{"anchor":"aye","positive":"anh yêu em","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"bằg","positive":"bằng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"bans","positive":"bán","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"baoh","positive":"bao giờ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"bawngf","positive":"bằng","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"bbè","positive":"bạn bè","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"bgái","positive":"bạn gái","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"bieets","positive":"biết","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"biet","positive":"biết","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"biêt","positive":"biết","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"bìh","positive":"bình","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"bij","positive":"bị","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"bik","positive":"biết","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"binhf","positive":"bình","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"bme","positive":"bố mẹ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"bn","positive":"bạn","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"bnhieu","positive":"bao nhiêu","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"bnhiêu","positive":"bao nhiêu","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"bnhiu","positive":"bao nhiêu","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"bóg","positive":"bóng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"bowts","positive":"bớt","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"bsĩ","positive":"bác sĩ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"bsvv","positive":"buổi sáng vui vẻ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"bth","positive":"bình thường","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"bthường","positive":"bình thường","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"btrai","positive":"bạn trai","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"buôg","positive":"buông","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"c","positive":"chị","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"cafe","positive":"cà phê","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"càg","positive":"càng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"cbị","positive":"chuẩn bị","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"cđời","positive":"cuộc đời","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ce","positive":"chị em","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"cf","positive":"cà phê","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"cgai","positive":"con gái","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"cgái","positive":"con gái","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"chàg","positive":"chàng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"chăg","positive":"chăng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"chayj","positive":"chạy","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"chieems","positive":"chiếm","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"chieeuf","positive":"chiều","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"chiuj","positive":"chịu","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"chk","positive":"chồng","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"chs","positive":"chẳng hiểu sao","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"chta","positive":"chúng ta","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"chuện","positive":"chuyện","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"chug","positive":"chung","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"chúg","positive":"chúng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"cj","positive":"chị","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ck","positive":"chồng","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"cka","positive":"cha","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"clmm","positive":"cái lồn mẹ mày","type":"word_level","domain":"social_slang","category":"slang"}
+{"anchor":"cmày","positive":"chúng mày","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"cmm","positive":"con mẹ mày","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"cmn","positive":"con mẹ nó","type":"word_level","domain":"social_slang","category":"slang"}
+{"anchor":"cmnd","positive":"chứng minh nhân dân","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"cmnr","positive":"con mẹ nó rồi","type":"word_level","domain":"social_slang","category":"slang"}
+{"anchor":"cmt","positive":"comment","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"cod","positive":"giao hàng thu tiền","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"conf","positive":"còn","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"coongj","positive":"cộng","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"cos","positive":"có","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"csong","positive":"cuộc sống","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"csống","positive":"cuộc sống","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ct","positive":"chi tiết","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"cta","positive":"chúng ta","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ctác","positive":"công tác","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ctr","positive":"chương trình","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ctrai","positive":"con trai","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ctraj","positive":"con trai","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ctrinh","positive":"chương trình","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ctrình","positive":"chương trình","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"cty","positive":"công ty","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"cuar","positive":"của","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"cùg","positive":"cùng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"cũg","positive":"cũng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"cũng z","positive":"cũng vậy","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"cungf","positive":"cùng","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"cuoois","positive":"cuối","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"cuwa","positive":"cửa","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"cuwar","positive":"cửa","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"cv","positive":"công việc","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"cviec","positive":"công việc","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"cx","positive":"cũng","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"đag","positive":"đang","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"đág","positive":"đáng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"dàh","positive":"dành","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"đáh","positive":"đánh","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"đbh","positive":"đéo bao giờ","type":"word_level","domain":"social_slang","category":"slang"}
+{"anchor":"dc","positive":"được","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"đc","positive":"được","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"đcsvn","positive":"đảng cộng sản việt nam","type":"word_level","domain":"organization","category":"abbreviation"}
+{"anchor":"ddaauf","positive":"đầu","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"ddax","positive":"đã","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"ddeems","positive":"đếm","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"ddeens","positive":"đến","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"ddieenj","positive":"điện","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"ddoof","positive":"đồ","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"ddooir","positive":"đổi","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"ddos","positive":"đó","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"ddown","positive":"đơn","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"dduowcj","positive":"được","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"dduwowcj","positive":"được","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"dh","positive":"đơn hàng","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"đh","positive":"đơn hàng","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"đhbkhn","positive":"đại học bách khoa hà nội","type":"word_level","domain":"organization","category":"abbreviation"}
+{"anchor":"đhkhtn","positive":"đại học khoa học tự nhiên","type":"word_level","domain":"organization","category":"abbreviation"}
+{"anchor":"đhọc","positive":"đại học","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"đhs","positive":"đéo hiểu sao","type":"word_level","domain":"social_slang","category":"slang"}
+{"anchor":"địh","positive":"định","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"đii","positive":"đi","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"điiiiiii","positive":"đi","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"đjên","positive":"điên","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"đki","positive":"đăng ký","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"đkiện","positive":"điều kiện","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"dky","positive":"đăng ký","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"đky","positive":"đăng ký","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"dòg","positive":"dòng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"đóg","positive":"đóng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"đôg","positive":"đông","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"đồg","positive":"đồng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"độg","positive":"động","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"dso","positive":"doanh số","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"dt","positive":"doanh thu","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"đt","positive":"điện thoại","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"đthoai","positive":"điện thoại","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"đthoại","positive":"điện thoại","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"dthu","positive":"doanh thu","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"dthương","positive":"dễ thương","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"đtqg","positive":"đội tuyển quốc gia","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"dừg","positive":"dừng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"đứg","positive":"đứng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"đuợc","positive":"được","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"đươc","positive":"được","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"đươcj","positive":"được","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"đuowc","positive":"được","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"dvt","positive":"đơn vị tính","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"đvt","positive":"đơn vị tính","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"dz","positive":"đẹp trai","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"đz","positive":"đẹp giai","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"đzai","positive":"đẹp trai","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"dzậy","positive":"dậy","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"e","positive":"em","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ees","positive":"ế","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"eya","positive":"em yêu anh","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"face","positive":"facebook","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"fải","positive":"phải","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"fây","positive":"phây","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"fb","positive":"facebook","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"fen","positive":"friend","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"freeship","positive":"miễn phí giao hàng","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"fship","positive":"miễn phí giao hàng","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"gaanf","positive":"gần","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"gắg","positive":"gắng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"gb","positive":"gigabyte","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"gđ","positive":"gia đình","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"gđình","positive":"gia đình","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"giamr","positive":"giảm","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"gias","positive":"giá","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"giốg","positive":"giống","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"hahah","positive":"ha ha","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"haj","positive":"hai","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hajz","positive":"hai","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hajzz","positive":"hai","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hangf","positive":"hàng","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"hd","positive":"hóa đơn","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"hđ","positive":"hóa đơn","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"hđộng","positive":"hành động","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"heets","positive":"hết","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"hêhê","positive":"hê hê","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hic","positive":"hích","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"highland","positive":"Highlands","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hìh","positive":"hình","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hiha","positive":"hi ha","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hihe","positive":"hi he","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hìhì","positive":"hì hì","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hixxx","positive":"hích","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hjhj","positive":"hi hi","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hjx","positive":"hix","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hjxhjx","positive":"hix hix","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hkì","positive":"học kỳ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hnay","positive":"hôm nay","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hôg","positive":"không","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hoir","positive":"hỏi","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"hok","positive":"không","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"họk","positive":"học","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hong kong","positive":"hồng kông","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hoom","positive":"hôm","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"hown","positive":"hơn","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"hoy","positive":"thôi","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hphúc","positive":"hạnh phúc","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hqua","positive":"hôm qua","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hsơ","positive":"hồ sơ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"htrc","positive":"hôm trước","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"huyr","positive":"hủy","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"ib","positive":"inbox","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ik","positive":"ý","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"in4","positive":"info","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"insta","positive":"instagram","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"its","positive":"ít","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"iu","positive":"yêu","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"j","positive":"gì","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ji","positive":"gì","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"jo","positive":"giờ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"júp","positive":"giúp","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"k","positive":"không","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"kái","positive":"cái","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"kảm","positive":"cảm","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"kậu","positive":"cậu","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"kb","positive":"kết bạn","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"kêh","positive":"kênh","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"keke","positive":"khà khà","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"kg","positive":"kilôgam","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"kh","positive":"không","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"khachs","positive":"khách","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"khg","positive":"không","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"khoảg","positive":"khoảng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"khôg","positive":"không","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"khoong","positive":"không","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"kih","positive":"kinh","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"klq","positive":"không liên quan","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"km","positive":"khuyến mãi","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"ko","positive":"không","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"kô","positive":"không","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"kòn","positive":"còn","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"kqua","positive":"kết quả","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"ksao","positive":"không sao","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"kte","positive":"kinh tế","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ktra","positive":"kiểm tra","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ku","positive":"cu","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"kủa","positive":"của","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"kũg","positive":"cũng","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"laf","positive":"là","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"lặg","positive":"lặng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"lạh","positive":"lạnh","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"laij","positive":"lại","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"laix","positive":"lãi","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"leej","positive":"lệ","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"leen","positive":"lên","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"lgi","positive":"làm gì","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"llac","positive":"liên lạc","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"lm","positive":"làm","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"lmht","positive":"liên minh huyền thoại","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"loaij","positive":"loại","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"lòg","positive":"lòng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"lol","positive":"lồn","type":"word_level","domain":"social_slang","category":"slang"}
+{"anchor":"loz","positive":"lồn","type":"word_level","domain":"social_slang","category":"slang"}
+{"anchor":"lozz","positive":"lồn","type":"word_level","domain":"social_slang","category":"slang"}
+{"anchor":"lquan","positive":"liên quan","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"lquen","positive":"làm quen","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ltinh","positive":"linh tinh","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"lúk","positive":"lúc","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"luwowtj","positive":"lượt","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"lz","positive":"làm gì","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"lzi","positive":"làm gì","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"maays","positive":"mấy","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"mawtj","positive":"mặt","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"mih","positive":"mình","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"mik","positive":"mình","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"mìnk","positive":"mình","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"mjh","positive":"mình","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"mk","positive":"mình","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ml","positive":"mililít","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"mn","positive":"mọi người","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"mng","positive":"mọi người","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"mớj","positive":"mới","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"mooix","positive":"mỗi","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"mootj","positive":"một","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"mqh","positive":"mối quan hệ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ms","positive":"mới","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"my fen","positive":"my friend","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nàg","positive":"nàng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"năg","positive":"năng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"nắg","positive":"nắng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"nặg","positive":"nặng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"naof","positive":"nào","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"nàoo","positive":"nào","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"nawm","positive":"năm","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"nayf","positive":"này","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"ncc","positive":"nhà cung cấp","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"nch","positive":"nói chuyện","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nek","positive":"nè","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nèk","positive":"nè","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ng","positive":"người","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ngag","positive":"ngang","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"ngàh","positive":"ngành","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ngayf","positive":"ngày","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"ngđo","positive":"người đó","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ngđó","positive":"người đó","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ngèo","positive":"nghèo","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nghành","positive":"ngành","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ngía","positive":"nghía","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ngke","positive":"nghe","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ngkhác","positive":"người khác","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ngốk","positive":"ngốc","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ngta","positive":"người ta","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nguoi","positive":"người","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nguời","positive":"người","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ngừoi","positive":"người","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nguwowif","positive":"người","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"ngyeu","positive":"người yêu","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nhaa","positive":"nha","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nhaapj","positive":"nhập","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"nhaats","positive":"nhất","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"nhaf","positive":"nhà","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"nhieeu","positive":"nhiều","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"nhieeuf","positive":"nhiều","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"nhiêuf","positive":"nhiều","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"nhiềuuu","positive":"nhiều","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nhir","positive":"nhỉ","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"nhjeu","positive":"nhiều","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nhoé","positive":"nhé","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nhoms","positive":"nhóm","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"nhưg","positive":"nhưng","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nhữg","positive":"những","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"nhưq","positive":"nhưng","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nkư","positive":"như","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nkưng","positive":"nhưng","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nógn","positive":"nóng","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nowj","positive":"nợ","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"ns","positive":"nói","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nta","positive":"người ta","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nthe","positive":"như thế","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nthê","positive":"như thế","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nthế","positive":"như thế","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ntn","positive":"như thế nào","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ntnao","positive":"như thế nào","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ntnày","positive":"như thế này","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nv","positive":"nhân viên","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"nvay","positive":"như vậy","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nvậy","positive":"như vậy","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nvqs","positive":"nghĩa vụ quân sự","type":"word_level","domain":"organization","category":"abbreviation"}
+{"anchor":"ny","positive":"người yêu","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nyc","positive":"người yêu cũ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"nyêu","positive":"người yêu","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"oh","positive":"ồ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ơiii","positive":"ơi","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ơiiii","positive":"ơi","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"on lai","positive":"online","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"onl","positive":"online","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"oy","positive":"rồi","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"òy","positive":"rồi","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"phaanf","positive":"phần","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"phog","positive":"phong","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"phòg","positive":"phòng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"pjt","positive":"biết","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"plz","positive":"làm ơn","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"pn","positive":"bạn","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"pos","positive":"máy bán hàng","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"qá","positive":"quá","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"qà","positive":"quà","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"qả","positive":"quả","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"qc","positive":"quảng cáo","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"qhe","positive":"quan hệ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"qhệ","positive":"quan hệ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"qq","positive":"quằn què","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"qtam","positive":"quan tâm","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"qtâm","positive":"quan tâm","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"qtrọng","positive":"quan trọng","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"quaan","positive":"quân","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"quí","positive":"quý","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"quys","positive":"quý","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"r","positive":"rồi","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"răg","positive":"răng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"rằg","positive":"rằng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"rì","positive":"gì","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"riêg","positive":"riêng","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"rồii","positive":"rồi","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"rooif","positive":"rồi","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"sangs","positive":"sáng","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"sđt","positive":"số điện thoại","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"sg","positive":"sài gòn","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"sku","positive":"mã mặt hàng","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"sl","positive":"số lượng","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"slg","positive":"số lượng","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"sml","positive":"sấp mặt lờ","type":"word_level","domain":"social_slang","category":"slang"}
+{"anchor":"snghĩ","positive":"suy nghĩ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"snvv","positive":"sinh nhật vui vẻ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"sốg","positive":"sống","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"soos","positive":"số","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"sp","positive":"sản phẩm","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"sr","positive":"sorry","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"stk","positive":"số tài khoản","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"sub","positive":"đăng ký","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"suwar","positive":"sửa","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"sviên","positive":"sinh viên","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"svtn","positive":"sinh viên tình nguyện","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"sz","positive":"size","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"tawng","positive":"tăng","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"tcảm","positive":"tình cảm","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"tđn","positive":"thế đéo nào","type":"word_level","domain":"social_slang","category":"slang"}
+{"anchor":"teencode","positive":"teencode","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"tgdd","positive":"thế giới di động","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"tgian","positive":"thời gian","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"thằg","positive":"thằng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"thẳg","positive":"thẳng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"thàh","positive":"thành","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"thais","positive":"thái","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"thangs","positive":"tháng","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"thg","positive":"tháng","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"thgian","positive":"thời gian","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"thich","positive":"thích","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"thíck","positive":"thích","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"thik","positive":"thích","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"thík","positive":"thích","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"thjc","positive":"thích","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"thjk","positive":"thích","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"thoaij","positive":"thoại","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"thôii","positive":"thôi","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"thoy","positive":"thôi","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"thpt","positive":"trung học phổ thông","type":"word_level","domain":"organization","category":"abbreviation"}
+{"anchor":"thuj","positive":"thôi","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"thươg","positive":"thương","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"thườg","positive":"thường","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"thuơng","positive":"thương","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"thuoocj","positive":"thuộc","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"thuoocs","positive":"thuốc","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"thỳ","positive":"thì","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"thým","positive":"thím","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"tieenf","positive":"tiền","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"tieeu","positive":"tiêu","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"tiếg","positive":"tiếng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"tíh","positive":"tính","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"tìh","positive":"tình","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"tinhs","positive":"tính","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"tir","positive":"tỉ","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"tks","positive":"thanks","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"tlai","positive":"tương lai","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"tnào","positive":"thế nào","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"tooi","positive":"tôi","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"toois","positive":"tối","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"toonf","positive":"tồn","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"toongr","positive":"tổng","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"tq","positive":"trung quốc","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"trag","positive":"trang","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"trar","positive":"trả","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"trawm","positive":"trăm","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"trc","positive":"trước","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"treen","positive":"trên","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"trieu","positive":"triệu","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"troai","positive":"trai","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"trog","positive":"trong","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"trọg","positive":"trọng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"trowr","positive":"trở","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"trườg","positive":"trường","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"truwowcs","positive":"trước","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"tt","positive":"thành tiền","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"tuaanf","positive":"tuần","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"tuafn","positive":"tuần","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"từg","positive":"từng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"tưởg","positive":"tưởng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"tượg","positive":"tượng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"tuwf","positive":"từ","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"tyêu","positive":"tình yêu","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"tym","positive":"tim","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"tyr","positive":"tỷ","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"u hai ba","positive":"u23","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"uh","positive":"ừ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"uhm","positive":"ừm","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"uk","positive":"ừ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"ukm","positive":"ừm","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"unf","positive":"unfriend","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"uốg","positive":"uống","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"vaayj","positive":"vậy","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"vaf","positive":"và","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"vaof","positive":"vào","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"vat","positive":"thuế giá trị gia tăng","type":"word_level","domain":"retail_business","category":"abbreviation"}
+{"anchor":"vc","positive":"vợ chồng","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"vcđ","positive":"vãi cả đái","type":"word_level","domain":"social_slang","category":"slang"}
+{"anchor":"vch","positive":"vãi chưởng","type":"word_level","domain":"social_slang","category":"slang"}
+{"anchor":"vchg","positive":"vãi chưởng","type":"word_level","domain":"social_slang","category":"slang"}
+{"anchor":"vcl","positive":"vờ cờ lờ","type":"word_level","domain":"social_slang","category":"slang"}
+{"anchor":"vd","positive":"ví dụ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"vđ","positive":"vãi đái","type":"word_level","domain":"social_slang","category":"slang"}
+{"anchor":"vde","positive":"vấn đề","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"vđê","positive":"vấn đề","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"veef","positive":"về","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"vk","positive":"vợ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"vn","positive":"việt nam","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"vọg","positive":"vọng","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"vớii","positive":"với","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"vowis","positive":"với","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"vs","positive":"với","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"vv","positive":"vui vẻ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"wa","positive":"quá","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"wá","positive":"quá","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"wtâm","positive":"quan tâm","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"wtf","positive":"what the fuck","type":"word_level","domain":"social_slang","category":"slang"}
+{"anchor":"xg","positive":"xuống","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"xih","positive":"xinh","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"xink","positive":"xinh","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"xl","positive":"xin lỗi","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"xloi","positive":"xin lỗi","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"xog","positive":"xong","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"xuaats","positive":"xuất","type":"word_level","domain":"spelling_typo","category":"telex_slip"}
+{"anchor":"xug","positive":"xung","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"xuốg","positive":"xuống","type":"word_level","domain":"spelling_typo","category":"diacritic_typo"}
+{"anchor":"ytb","positive":"youtube","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"z","positive":"vậy","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"z là","positive":"vậy là","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"zà","positive":"già","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"zạ","positive":"vậy","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"zám","positive":"dám","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"zậy","positive":"vậy","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"zẻ","positive":"vẻ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"zìa","positive":"gì","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"zô","positive":"vô","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"zồi","positive":"rồi","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"zú","positive":"vú","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"zữ","positive":"dữ","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"zui","positive":"vui","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"zùi","positive":"rồi","type":"word_level","domain":"general_chat","category":"abbreviation"}
+{"anchor":"hôm qua cửa hàng bán đc mấy đh vậy ad?","positive":"hôm qua cửa hàng bán được mấy đơn hàng vậy admin?","type":"sentence_level","domain":"retail_business","category":"contextual_query"}
+{"anchor":"tháng này tổng dthu các phiếu nhập hàng là bnhiu tiền?","positive":"tháng này tổng doanh thu các phiếu nhập hàng là bao nhiêu tiền?","type":"sentence_level","domain":"retail_business","category":"contextual_query"}
+{"anchor":"thuốc có hoạt chất natri clorid thg này bán dc bn tiền?","positive":"thuốc có hoạt chất natri clorid tháng này bán được bao nhiêu tiền?","type":"sentence_level","domain":"retail_business","category":"contextual_query"}
+{"anchor":"sp nào bán chạy nhất trong thg vừa r z?","positive":"sản phẩm nào bán chạy nhất trong tháng vừa rồi vậy?","type":"sentence_level","domain":"retail_business","category":"contextual_query"}
+{"anchor":"kh nào mua nhiều tiền nhất ở cty mik?","positive":"khách hàng nào mua nhiều tiền nhất ở công ty mình?","type":"sentence_level","domain":"retail_business","category":"contextual_query"}
+{"anchor":"đh bị huỷ chiếm bnhiêu phần trăm tổng số đh của shop?","positive":"đơn hàng bị hủy chiếm bao nhiêu phần trăm tổng số đơn hàng của shop?","type":"sentence_level","domain":"retail_business","category":"contextual_query"}
+{"anchor":"khi nào ncc giao hàng tới shop z ad?","positive":"khi nào nhà cung cấp giao hàng tới shop vậy admin?","type":"sentence_level","domain":"retail_business","category":"contextual_query"}
+{"anchor":"cho mik xin stk để ck tiền hàng nha bạn","positive":"cho mình xin số tài khoản để chuyển khoản tiền hàng nha bạn","type":"sentence_level","domain":"retail_business","category":"contextual_query"}
+{"anchor":"đơn này có dc áp dụng ct km hay ck j ko shop?","positive":"đơn này có được áp dụng chương trình khuyến mãi hay chiết khấu gì không shop?","type":"sentence_level","domain":"retail_business","category":"contextual_query"}
+{"anchor":"nv bán hàng xuất hđ cho khach giùm mik vs","positive":"nhân viên bán hàng xuất hóa đơn cho khách giùm mình với","type":"sentence_level","domain":"retail_business","category":"contextual_query"}
+{"anchor":"mặt hàng này còn tồn bn hộp chẵn và bn viên lẻ?","positive":"mặt hàng này còn tồn bao nhiêu hộp chẵn và bao nhiêu viên lẻ?","type":"sentence_level","domain":"retail_business","category":"contextual_query"}
+{"anchor":"hnay bme mng ở nhà hết hả cta đi chơi thoy","positive":"hôm nay bố mẹ mọi người ở nhà hết hả chúng ta đi chơi thôi","type":"sentence_level","domain":"general_chat","category":"contextual_query"}
+{"anchor":"thgian này cviec của cta ntn r mng?","positive":"thời gian này công việc của chúng ta như thế nào rồi mọi người?","type":"sentence_level","domain":"general_chat","category":"contextual_query"}
+{"anchor":"mik k bik chuện j đag xảy ra luôn á","positive":"mình không biết chuyện gì đang xảy ra luôn á","type":"sentence_level","domain":"general_chat","category":"contextual_query"}
+{"anchor":"kqua thi hkì vừa r của bn có bthường ko z?","positive":"kết quả thi học kỳ vừa rồi của bạn có bình thường không vậy?","type":"sentence_level","domain":"general_chat","category":"contextual_query"}
+{"anchor":"chúc bạn một buổi sáng vv và snvv nha bạn thân","positive":"chúc bạn một buổi sáng vui vẻ và sinh nhật vui vẻ nha bạn thân","type":"sentence_level","domain":"general_chat","category":"contextual_query"}
+{"anchor":"cảm ơn ad nhjeu nha, chúc ad một ngày zui zẻ và hp","positive":"cảm ơn admin nhiều nha, chúc admin một ngày vui vẻ và hạnh phúc","type":"sentence_level","domain":"general_chat","category":"contextual_query"}
+{"anchor":"thangs 8 nawm nay dthu cuwar shop cos taawng ko?","positive":"tháng 8 năm nay doanh thu của shop có tăng không?","type":"sentence_level","domain":"spelling_typo","category":"contextual_query"}
+{"anchor":"ngayf hoom qua shop bans dduwowcj maays ddown hangf?","positive":"ngày hôm qua shop bán được mấy đơn hàng?","type":"sentence_level","domain":"spelling_typo","category":"contextual_query"}
+{"anchor":"mặt hàng có dthu cao nhaats trong thangs laf sp naof?","positive":"mặt hàng có doanh thu cao nhất trong tháng là sản phẩm nào?","type":"sentence_level","domain":"spelling_typo","category":"contextual_query"}

@@ -597,6 +597,34 @@ class _ProtectedDefsTransformer(ast.NodeTransformer):
 
 
 
+class AliasedDataDict(dict):
+    """Dictionary chuẩn hỗ trợ gắn metadata `_aliases` mà không gây AttributeError như built-in dict."""
+    def __init__(self, data: Optional[Dict[str, Any]] = None, aliases: Optional[Dict[str, str]] = None):
+        super().__init__(data or {})
+        self._aliases: Dict[str, str] = dict(aliases or {})
+
+
+def build_canonical_data_dict(bd: Any) -> AliasedDataDict:
+    """Xây dựng từ điển bảng chính tắc (tránh nạp trùng bảng) kèm ánh xạ bí danh `_aliases`."""
+    data_dict = AliasedDataDict()
+    aliases: Dict[str, str] = {}
+    for ti in getattr(bd, "tables", []):
+        t_base = Path(ti.fixed_file_name).stem if getattr(ti, "fixed_file_name", None) else ti.table_id
+        t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
+
+        # Chỉ lưu bảng chính tắc 1 lần duy nhất để chống cộng trùng bảng
+        data_dict[t_name] = ti.df
+        if ti.sheet_name and ti.sheet_name != "Sheet1" and ti.sheet_name != t_name:
+            aliases[ti.sheet_name] = t_name
+        if t_base != t_name:
+            aliases[t_base] = t_name
+        if ti.table_id and ti.table_id != t_name:
+            aliases[ti.table_id] = t_name
+
+    data_dict._aliases = aliases
+    return data_dict
+
+
 class SmartDataDict(dict):
     """
     Dictionary thông minh hỗ trợ tra cứu bảng dữ liệu mềm dẻo:

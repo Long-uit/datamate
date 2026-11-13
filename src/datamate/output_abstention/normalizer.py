@@ -943,7 +943,10 @@ def check_result_sanity(
 
     if penalize_zero_revenue_qty is None:
         try:
-            from src.datamate.config import get_config
+            try:
+                from datamate.config import get_config
+            except ImportError:
+                from src.datamate.config import get_config
             penalize_zero_revenue_qty = get_config().abstention.penalize_zero_revenue_qty
         except Exception:
             penalize_zero_revenue_qty = True
@@ -1016,16 +1019,20 @@ def check_result_sanity(
         if not is_change_or_profit and is_revenue_or_qty and num_val < 0:
             return False, f"Số âm bất thường ({ans_val}) cho câu hỏi về doanh thu / số lượng / trung bình không cho phép âm"
 
-        is_count_query = bool(re.search(r"đ[eế]m|s[oố]\s*đ[oơ]n|đ[oơ]n\s*(?:h[uủ]y|hu[yỷ])|m[aấ]y\s*đ[oơ]n|m[aấ]y\s*đ[oợ]t|s[oố]\s*đ[oợ]t|bao\s*nhi[eê]u\s*(?:đ[oơ]n|đ[oợ]t|bill)|m[aặt]\s*h[aà]ng\s*[eế]|kh[oô]ng\s*ai\s*mua|b[aá]n\s*(?:ko|kh[oô]ng)\s*(?:đc|được|dc)", q_low))
+        is_count_query = bool(re.search(r"đ[eế]m|s[oố]\s*đ[oơ]n|đ[oơ]n\s*(?:h[uủ]y|hu[yỷ])|m[aấ]y\s*đ[oơ]n|m[aấ]y\s*đ[oợ]t|s[oố]\s*đ[oợ]t|bao\s*nhi[eê]u\s*(?:đ[oơ]n|đ[oợ]t|bill)|m[aặ]t\s*h[aà]ng\s*[eế]|kh[oô]ng\s*ai\s*mua|b[aá]n\s*(?:ko|kh[oô]ng)\s*(?:đc|được|dc)", q_low))
         has_specific_product_or_unit = bool(re.search(
             r"kg|kilo|g|gram|t[aấ]n|tan|m[eé]t|met|m3|l[ií]t|lit|ly|chai|h[oộ]p|g[oó]i|vi[eê]n|th[uú]c|th[eé]p|m[aá]|th[iị]t|g[aà]|c[aá]|heo|b[oò]|s[aả]n\s*ph[aẩ]m|m[aặ]t\s*h[aà]ng",
             q_low
         )) and not bool(re.search(r"m[aặ]t\s*h[aà]ng\s*[eế]|kh[oô]ng\s*ai\s*mua|b[aá]n\s*(?:ko|kh[oô]ng)\s*(?:đc|được|dc)", q_low))
 
         # 2b. Kiểm tra Silent Zero (kết quả 0 hoặc 0.0 bất thường khi hỏi doanh thu / tổng tiền / lượng bán / trung bình)
-        # Miễn trừ cho các truy vấn đếm thuần túy (đếm số đơn, đơn huỷ, đợt giao, mặt hàng ế...)
+        # Miễn trừ cho truy vấn đếm thuần túy HOẶC truy vấn đã lọc đích danh theo sản phẩm/khách cụ thể kèm bộ lọc ngày/trạng thái
+        has_specific_entity_filter = bool(
+            clean_c and any(k in clean_c for k in ("str.contains", "product=", ".isin(", "item_c"))
+            and any(d in clean_c for d in ("clean_date", "start_date", "end_date", ".dt."))
+        )
         is_pure_count = is_count_query and not has_specific_product_or_unit
-        if penalize_zero_revenue_qty and num_val == 0.0 and is_revenue_or_qty and not is_change_or_profit and not is_pure_count:
+        if penalize_zero_revenue_qty and num_val == 0.0 and is_revenue_or_qty and not is_change_or_profit and not is_pure_count and not has_specific_entity_filter:
             return False, "Silent Zero: Kết quả tính toán bằng 0 bất thường cho câu hỏi doanh thu / số lượng / trung bình"
 
         # 2c. Kiểm tra nhầm lẫn Đếm số đơn (Count) sang Cộng tổng tiền (Sum VNĐ)
