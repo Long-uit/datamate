@@ -434,19 +434,17 @@ def prune_schema_by_intent(
     if len(kept_names) == 0:
         return schema_str
 
-    # --- GIỚI HẠN TỐI ĐA 5 BẢNG (Chống tràn VRAM Attention Matrix trên GPU Tesla T4) ---
-    if len(kept_names) > 5:
+    # --- GIỚI HẠN TỐI ĐA 3-4 BẢNG (Tối ưu Context Window & VRAM Attention Matrix) ---
+    max_k = 4 if intent == "multitable_join" else 3
+    if len(kept_names) > max_k:
         def _score_table(tbl_p: Dict[str, Any]) -> int:
             t_name = tbl_p["name"].lower()
             role = tbl_p.get("role", "").lower()
             score = 0
-            # 1. Bảng chứa thực thể đích (entity_tables)
             if any(e_t in t_name for e_t in entity_tables):
                 score += 100
-            # 2. Khớp trực tiếp với từ khóa trong câu hỏi
             if any(w in t_name for w in q_words if len(w) >= 3):
                 score += 50
-            # 3. Theo Intent
             if intent in ("revenue", "order_count", "cancelled_orders", "top_selling_product", "average_order_value"):
                 if any(k in t_name or k in role for k in ["banhang", "ban_hang", "hoadon", "hoa_don", "donhang", "don_hang"]):
                     score += 45
@@ -467,14 +465,13 @@ def prune_schema_by_intent(
             elif intent == "expense":
                 if any(k in t_name or k in role for k in ["chitudung", "phieuchi", "thuchi", "chiphi"]):
                     score += 45
-            # 4. Ưu tiên bảng bán hàng chung
             if any(k in role for k in ["bán hàng", "hóa đơn", "đơn hàng"]):
                 score += 20
             return score
 
         scored_kept = [(p["name"], _score_table(p)) for p in parsed_tables if p["name"] in kept_names]
         scored_kept.sort(key=lambda x: x[1], reverse=True)
-        kept_names = {name for name, _ in scored_kept[:5]}
+        kept_names = {name for name, _ in scored_kept[:max_k]}
 
     # --- TÁI CẤU TRÚC ĐỒNG BỘ NGUYÊN KHỐI (Atomic Re-rendering) ---
     kept_detail_blocks = [p["raw"] for p in parsed_tables if p["name"] in kept_names]
@@ -659,122 +656,66 @@ def build_dynamic_system_instruction(intent: str, question: str, shop_static_pre
     q_low = question.lower()
 
     core = r"""Bạn là chuyên gia phân tích dữ liệu kinh doanh Python/Pandas.
-Viết duy nhất một hàm:
-```python
-def solution(data):
-    # logic tính toán an toàn
-    return result
-```
-NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN:
-1. `data`: Dict `{tên_bảng: DataFrame}`. Có thể gọi trực tiếp `df = get_sales_table(data)` hoặc `data.get_sales_table()` để lấy hoặc gộp bảng bán hàng.
-2. Tìm cột an toàn bằng các hàm trợ giúp có sẵn:
-   - `get_date_col(df)`: Tự động tìm cột ngày bán (hỗ trợ ngay_ban, ngaylap, thời gian, date...).
-   - `get_amount_col(df)`: Tự động tìm cột tiền (hỗ trợ Tổng đơn, Thành tiền, Amount, Trị giá, Doanh thu...).
-   - `get_qty_col(df)`: Tự động tìm cột số lượng (hỗ trợ Số lượng, Sluong, SL bán...).
-   - `get_item_col(df)`: Tự động tìm cột tên hàng hóa / sản phẩm.
-3. Tạo `df['clean_date'] = clean_date(df[d_c])` trước khi gọi `.dt`. So sánh ngày bằng `(df['clean_date'].dt.year == Y) & (df['clean_date'].dt.month == M)` (luôn có ngoặc đơn quanh từng điều kiện bitwise `&`).
-4. Luôn bọc `clean_num(df[col]).sum()` hoặc `.mean()` khi tính tổng/trung bình số lượng hoặc tiền.
-5. Mặc định bỏ đơn hủy/trả/hoàn trừ khi câu hỏi hỏi đích danh đơn hủy:
-   `st_c = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt'])), None)`
-   `if st_c: df = df[~df[st_c].astype(str).str.contains(r'hủy|huỷ|huy|trả|tra|hoàn|hoan|cancel|return', case=False, na=False)]`
-6. Tiện ích sẵn có trong môi trường: `get_sales_table`, `get_date_col`, `get_amount_col`, `get_qty_col`, `get_item_col`, `clean_num`, `clean_date`, `filter_valid_sales`. Không import lại.
-7. Nếu dữ liệu sau lọc rỗng hoặc không tìm thấy: trả về 0 (doanh thu/số đơn/số lượng), 0.0 (tỉ lệ), hoặc [] (top-k). Không return None.
-8. Trả về đúng 1 giá trị vô hướng (int, float, str, list). Không trả về dictionary chứa nhiều thông tin.
-9. TUYỆT ĐỐI KHÔNG raise DataNotFoundError hay các Exception khác. Nếu bảng/cột không khớp, hãy trả về 0, 0.0 hoặc []!"""
+Viết duy nhất một hàm `def solution(data):` trả về kết quả chính xác.
+QUY TẮC CỐT LÕI:
+1. Tiện ích có sẵn: `get_sales_table(data)`, `get_date_col(df)`, `get_amount_col(df)`, `get_qty_col(df)`, `get_item_col(df)`, `clean_num(series)`, `clean_date(series)`.
+2. Doanh thu, số đơn, công nợ: ƯU TIÊN GỌI HELPER: `revenue(data, start_date=..., end_date=..., as_of_date=..., product=...)` (tự xử lý đơn hủy/trả theo Rulebook §1), `count_orders(data, ...)` và `debt(data, ...)`.
+3. Ngày: Gán `df['clean_date'] = clean_date(df[col])` trước khi so sánh với chuỗi ISO.
+4. Tiền & Số lượng: Luôn bọc `clean_num(df[col]).sum()` hoặc `.mean()`.
+5. Thiếu dữ liệu & Trả 0:
+   - Thiếu bảng/cột cần thiết hoặc thực thể khớp 0 dòng trong TOÀN BỘ lịch sử: BẮT BUỘC `raise CannotAnswer("lý do")` để hệ thống abstain an toàn.
+   - CHỈ trả về 0 (0.0, []) khi thực thể CÓ TỒN TẠI nhưng không có giao dịch trong kỳ/trạng thái được hỏi.
+6. Trả về đúng 1 giá trị vô hướng (int, float, str, list, dict cho Table)."""
 
     conditional_rules: List[str] = []
     q_clean = _strip_accents(q_low)
 
     if any(k in q_clean for k in ["ngay nao", "ngay gi", "thoi diem nao", "thoi gian nao", "hom nao"]):
         conditional_rules.append(
-            "- [CÂU HỎI TÌM NGÀY]: Câu hỏi hỏi 'ngày nào' / 'thời điểm nào' -> BẮT BUỘC group by theo ngày `df['clean_date'].dt.strftime('%Y-%m-%d')`, tìm ngày có giá trị cao nhất/thấp nhất và RETURN chuỗi ngày định dạng 'YYYY-MM-DD' (vd: return '2025-06-08'). TUYỆT ĐỐI KHÔNG RETURN TỔNG TIỀN."
+            "- [CÂU HỎI TÌM NGÀY]: BẮT BUỘC group by theo ngày `df['clean_date'].dt.strftime('%Y-%m-%d')`, tìm ngày max/min và RETURN chuỗi ngày 'YYYY-MM-DD'. TUYỆT ĐỐI KHÔNG RETURN TỔNG TIỀN."
         )
 
     if any(k in q_clean for k in ["mat hang nao", "san pham nao", "mon nao", "hang nao", "thuoc nao", "sp nao"]):
         conditional_rules.append(
-            "- [CÂU HỎI TÌM MẶT HÀNG/SẢN PHẨM]: Câu hỏi hỏi 'mặt hàng nào' / 'sản phẩm nào' -> BẮT BUỘC group by theo tên sản phẩm và RETURN chuỗi tên mặt hàng (string, vd: return 'Gạch ống'). TUYỆT ĐỐI KHÔNG RETURN TỔNG TIỀN."
+            "- [CÂU HỎI TÌM MẶT HÀNG]: Group by theo tên sản phẩm và RETURN chuỗi tên mặt hàng. TUYỆT ĐỐI KHÔNG RETURN TỔNG TIỀN."
         )
 
-    if any(k in q_clean for k in ["khach nao", "khach hang nao", "ai mua", "khach nao mua"]):
+    if any(k in q_clean for k in ["khach nao", "khach hang nao", "ai mua"]):
         conditional_rules.append(
-            "- [CÂU HỎI TÌM KHÁCH HÀNG]: Câu hỏi hỏi 'khách nào' / 'ai mua' -> BẮT BUỘC group by theo tên khách và RETURN chuỗi tên khách hàng (loại bỏ khách lẻ/vãng lai)."
+            "- [CÂU HỎI TÌM KHÁCH HÀNG]: Group by theo tên khách và RETURN chuỗi tên khách hàng (loại bỏ khách lẻ/vãng lai)."
         )
 
     if any(k in q_low for k in ["mấy đơn", "bao nhiêu đơn", "số đơn", "số lượng đơn", "so don", "có bao nhiêu đơn", "co bao nhiu don", "đếm số đơn", "dem so don", "bao nhiu don"]) or any(k in q_clean for k in ["may don", "bao nhieu don", "so don", "so luong don"]):
         conditional_rules.append(
-            "- [Đếm số lượng đơn]: BẮT BUỘC tìm cột mã đơn `order_col = next((c for c in cols if any(k in str(c).lower() for k in ['mã đơn', 'ma don', 'mã hoá đơn', 'mã hd', 'order_id', 'order id', 'mã chứng từ', 'mã gd', 'mã'])), None)` "
-            "và đếm số đơn duy nhất bằng `int(df[order_col].dropna().nunique())`. "
-            "TUYỆT ĐỐI CẤM dùng `len(df)` hay `df.shape[0]` vì mỗi đơn hàng gồm nhiều dòng mặt hàng! "
-            "TUYỆT ĐỐI CẤM đếm trên cột ngày tháng `df[date_col].nunique()` và TUYỆT ĐỐI CẤM tính tổng doanh thu/tiền hàng!"
+            "- [Đếm số đơn]: Tìm cột mã đơn `order_col = next((c for c in cols if any(k in str(c).lower() for k in ['mã đơn', 'ma don', 'mã hoá đơn', 'mã hd', 'order_id'])), None)` "
+            "và đếm `int(df[order_col].dropna().nunique())`. TUYỆT ĐỐI CẤM dùng `len(df)`!"
         )
 
     if any(k in q_low for k in ["huỷ", "hủy", "cancel", "huy"]) and any(k in q_low for k in ["đơn", "bill", "hoá đơn", "don"]):
         is_rate_query = any(k in q_low for k in ["tỉ lệ", "tỷ lệ", "ti le", "ty le", "%", "phần trăm", "phan tram", "suất"])
         if is_rate_query:
             conditional_rules.append(
-                "- [Tỉ lệ hủy đơn (%) (BẮT BUỘC)]: Khi tính tỉ lệ hủy đơn (%), mẫu số BẮT BUỘC là TỔNG SỐ ĐƠN (tất cả trạng thái) trong kỳ. "
-                "TUYỆT ĐỐI KHÔNG lọc bỏ đơn không hủy trước khi tính mẫu số! "
-                "Quy trình chuẩn: "
-                "1. Lọc theo kỳ thời gian: `df_period = df[(df['clean_date'] >= start) & (df['clean_date'] <= end)]`. "
-                "2. Tính mẫu số: `total_orders = int(df_period[order_col].dropna().nunique())`. Nếu total_orders == 0: return 0.0. "
-                "3. Tìm mask đơn hủy: `cancel_mask = df_period[status_col].astype(str).str.contains(r'hủy|huỷ|huy|cancel', case=False, na=False)`. "
-                "4. Đếm số đơn hủy (tử số): `cancelled_orders = int(df_period[cancel_mask][order_col].dropna().nunique())`. "
-                "5. Tính tỉ lệ %: `return round(float(cancelled_orders / total_orders * 100.0), 2)`. "
-                "TUYỆT ĐỐI CẤM dùng `len(df)` hay `df.shape[0]` vì mỗi đơn có nhiều dòng mặt hàng!"
+                "- [Tỉ lệ hủy đơn (%)]: Mẫu số là TỔNG SỐ ĐƠN trong kỳ `total = int(df_p[order_col].dropna().nunique())`. "
+                "Tử số là số đơn hủy: `cancel_orders = int(df_p[cancel_mask][order_col].dropna().nunique())`. "
+                "`return round(float(cancel_orders / total * 100.0), 2)`. TUYỆT ĐỐI CẤM dùng `len(df)`!"
             )
         else:
             conditional_rules.append(
-                "- [Đơn bị hủy]: Lọc GIỮ LẠI đơn có trạng thái hủy (cả có dấu và không dấu): "
+                "- [Đơn bị hủy]: Dùng bảng bán hàng / hóa đơn. Lọc trạng thái hủy: "
                 "`df[status_col].astype(str).str.contains(r'hủy|huỷ|huy|cancel', case=False, na=False)` "
-                "và đếm số đơn duy nhất bằng `int(df[order_col].dropna().nunique())`. "
-                "TUYỆT ĐỐI CẤM dùng `len(df)` hay `df.shape[0]` vì một đơn có thể có nhiều dòng chi tiết sản phẩm! "
-                "TUYỆT ĐỐI CẤM đếm trên cột ngày tháng!"
+                "và đếm số đơn bằng `int(df[order_col].dropna().nunique())`. TUYỆT ĐỐI CẤM dùng `len(df)`!"
             )
-
-    if any(k in q_low for k in ["ca sáng", "ca chiều", "ca sang", "ca chieu", "ca làm"]):
-        conditional_rules.append(
-            "- [Ca làm việc (Điều 2 Rulebook)]: Ca sáng: 06:00 đến 13:59 (`df['clean_date'].dt.hour.between(6, 13)`). "
-            "Ca chiều: 14:00 đến 21:59 (`df['clean_date'].dt.hour.between(14, 21)`). "
-            "BẮT BUỘC sử dụng bảng hóa đơn/bán hàng có cột thời gian có chứa giờ (ví dụ: 'Thời gian tạo', 'Giờ', 'ThoiGian') để trích xuất `.dt.hour`."
-        )
-
-    if any(k in q_low for k in ["đợt giao", "lượt giao", "chở giao", "giao hàng", "dot giao", "đợt hàng"]):
-        conditional_rules.append(
-            "- [Số đợt giao hàng / Vận chuyển (Điều 6 Rulebook)]: Khi câu hỏi hỏi về số đợt giao / lượt giao / chở hàng, "
-            "BẮT BUỘC sử dụng bảng có vai trò 'Sổ giao hàng / Vận chuyển' (ví dụ: SoGiaoHang, Bảng kê phiếu giao hàng). "
-            "Sử dụng cột ngày chở/giao và đếm lượt giao bằng: `int(df.drop_duplicates(subset=[col_don, col_lan]).shape[0])` hoặc `df[order_col].nunique()` hoặc `len(df)`. "
-            "TUYỆT ĐỐI KHÔNG tìm kiếm cột tiền/doanh thu trong bảng giao hàng!"
-        )
-
-    if any(k in q_low for k in ["huỷ", "hủy", "cancel", "huy"]) and any(k in q_low for k in ["đơn", "bill", "hoá đơn", "don"]):
-        conditional_rules.append(
-            "- [Đơn bị hủy]: BẮT BUỘC sử dụng bảng bán hàng / hóa đơn (So_chi_tiet_ban_hang, don_hang, DanhSachHoaDon). "
-            "TUYỆT ĐỐI KHÔNG sử dụng bảng giao hàng (vì phiếu giao hàng không chứa trạng thái hủy đơn)!"
-        )
-
-    if any(k in q_low for k in ["doanh thu", "tiền bán", "tổng tiền", "bán chạy", "doanh so", "doanh số", "mua nhiều"]):
-        conditional_rules.append(
-            "- [Doanh thu hợp lệ]: Chỉ tính đơn KHÔNG huỷ, KHÔNG trả hàng và KHÔNG hoàn hàng. Tìm cột trạng thái động: `st_col = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt', 'tình trạng', 'xử lý'])), None)`. "
-            "Nếu có st_col, lọc: `df = df[~df[st_col].astype(str).str.contains(r'hủy|huỷ|huy|trả|tra|hoàn|hoan|cancel|return', case=False, na=False)]`. "
-            "BẮT BUỘC gọi `clean_num(df[amt_col]).sum()` để tính tổng doanh thu."
-        )
 
     if any(k in q_low for k in ["từ", "trên", "dưới", "lớn hơn", "nhỏ hơn", "cao hơn", "thấp hơn", ">=", "<=", ">", "<"]) and any(k in q_low for k in ["đơn", "hoá đơn", "hoa don", "bill"]) and any(k in q_low for k in ["doanh thu", "tiền", "giá trị", "đồng", "k", "vnd"]):
         conditional_rules.append(
-            "- [Đếm đơn theo ngưỡng doanh thu / giá trị (ví dụ: 'đơn có doanh thu từ X đồng trở lên')]: "
-            "1. Lọc bảng bán hàng theo kỳ thời gian và bỏ đơn hủy/trả hàng. "
-            "2. Tìm cột mã đơn `order_col` và cột tiền `amt_col = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tiền hàng', 'tổng bill', 'khách cần trả', 'doanh thu'])), None)`. "
-            "3. Nếu bảng là chi tiết bán hàng (nhiều dòng cho cùng 1 đơn): BẮT BUỘC gom nhóm theo mã đơn để tính tổng tiền của từng đơn: "
-            "`order_rev = df.groupby(order_col)[amt_col].apply(lambda s: clean_num(s).sum())`. "
-            "4. Đếm số đơn thỏa điều kiện ngưỡng: `int((order_rev >= X).sum())` (hoặc `>` tùy câu hỏi)."
+            "- [Đếm đơn theo ngưỡng doanh thu]: Gom nhóm theo mã đơn để tính tổng tiền từng đơn: `order_rev = df.groupby(order_col)[amt_col].apply(lambda s: clean_num(s).sum())`, đếm `int((order_rev >= X).sum())`."
         )
 
     # Lọc sản phẩm cụ thể nếu câu hỏi đề cập
-    conditional_rules.append(
-        "- [Lọc sản phẩm / mặt hàng cụ thể]: Nếu câu hỏi đề cập tới tên món / mặt hàng / sản phẩm / hoạt chất cụ thể (ví dụ: 'nước ép dưa hấu', 'má heo', 'soda chanh dây', 'Natri clorid', 'thép cuộn phi 6'): "
-        "BẮT BUỘC tìm cột tên hàng `prod_col = next((c for c in cols if any(k in str(c).lower() for k in ['hàng', 'tên món', 'tên hàng', 'sản phẩm', 'món', 'mặt hàng', 'product', 'item'])), None)` "
-        "và lọc sản phẩm bằng regex linh hoạt chứa từ khóa câu hỏi: `df = df[df[prod_col].astype(str).str.contains(..., case=False, na=False)]` TRƯỚC KHI tính tổng tiền hoặc số lượng!"
-    )
+    if any(k in q_low for k in ["mặt hàng", "sản phẩm", "thuốc", "hoạt chất", "món", "cà phê", "nước ép", "thép", "sữa", "tã", "bánh", "ly", "chai", "hộp"]) or intent in ("multitable_join", "price_lookup", "quantity_sum"):
+        conditional_rules.append(
+            "- [Lọc sản phẩm cụ thể]: Tìm cột tên hàng `prod_col = get_item_col(df)` và lọc: `df = df[df[prod_col].astype(str).str.contains(..., case=False, na=False)]` TRƯỚC KHI tính tổng."
+        )
 
     if any(k in q_low for k in ["ly", "cốc", "chai", "lon", "kg", "cái", "hộp"]) and any(k in q_low for k in ["size", "(m)", "(l)", "(s)", "size m", "size l"]):
         conditional_rules.append(
@@ -799,7 +740,7 @@ NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN:
             r"TUYỆT ĐỐI KHÔNG tính tổng doanh thu!"
         )
 
-    if intent == "multitable_join" or any(k in q_low for k in ["hoạt chất", "kê đơn", "thuốc", "natri"]):
+    if any(k in q_low for k in ["hoạt chất", "kê đơn", "natri"]) or (intent == "multitable_join" and any(k in q_low for k in ["thuốc", "dược", "y tế", "toa", "bệnh"])):
         conditional_rules.append(
             "- [Ghép nối bảng Nhà thuốc / Pharmacy Schema]: "
             "Trong nhà thuốc, ngày bán nằm ở Header (`BanHang_HoaDon`), chi tiết bán hàng nằm ở Detail (`BanHang_ChiTietHoaDon`), và thông tin hoạt chất nằm ở Catalog (`BanHang_Thuoc` / `BanHang_HangHoa`). "
@@ -956,7 +897,7 @@ NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN:
 def extract_relevant_rulebook_clauses(
     rulebook_content: str,
     question: str,
-    max_chars: int = 1200,
+    max_chars: int = 400,
     schema_str: str = "",
     business_note: str = "",
 ) -> str:
@@ -1048,78 +989,35 @@ def extract_relevant_rulebook_clauses(
 # ==============================================================================
 
 EXEMPLAR_BANK: Dict[str, str] = {
-    "cong_no": """--- VÍ DỤ MINH HỌA: TÍNH CÔNG NỢ / TUỔI NỢ / KHÁCH CÒN NỢ ---
+    "cong_no": """--- VÍ DỤ: TÍNH CÔNG NỢ ---
 Câu hỏi: "Tính đến hết ngày 19/08/2026, có bao nhiêu khách còn nợ cửa hàng?" (as_of_date = "2026-08-19")
 ```python
 def solution(data):
-    # 1. Tìm bảng công nợ / sổ nợ (KHÔNG dùng cột thành tiền của bảng bán hàng)
-    df_debt = None
-    for name, df in data.items():
-        n_clean = re.sub(r'[^a-zA-Z0-9]', '', str(name).lower())
-        cols_low = [str(c).lower() for c in df.columns]
-        is_debt_tbl = (
-            any(k in n_clean for k in ['congno', 'sono', 'sogop', 'phaithu', 'hanno', 'phieuthu', 'soquy', 'thanhtoan'])
-            or any(any(k in c for k in ['còn nợ', 'tiền nợ', 'phải thu', 'hạn trả']) for c in cols_low)
-        )
-        if is_debt_tbl:
-            df_debt = df.copy()
-            break
-    if df_debt is None:
-        return 0
-
-    cols = df_debt.columns.tolist()
-    cust_col = next((c for c in cols if any(k in str(c).lower() for k in ['khách hàng', 'mã khách', 'tenkh', 'tên khách', 'makh', 'so kh'])), None)
-    debt_col = next((c for c in cols if any(k in str(c).lower() for k in ['còn nợ', 'tiền nợ', 'phải thu', 'cần thu', 'số tiền', 'tiền']) and 'hạn' not in str(c).lower()), None)
-    if not cust_col or not debt_col:
-        return 0
-
-    # 2. Lọc thời gian <= as_of_date nếu có cột ngày
-    d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian', 'ngaylap', 'hạn trả', 'han tra'])), None)
-    if d_c:
-        df_debt['clean_date'] = clean_date(df_debt[d_c])
-        df_debt = df_debt[df_debt['clean_date'] <= pd.Timestamp("2026-08-19 23:59:59")]
-
-    # 3. Lọc khoản còn nợ (> 0), loại bỏ khách lẻ
-    df_debt['clean_debt'] = clean_num(df_debt[debt_col])
-    valid_debt = df_debt[(df_debt['clean_debt'] > 0) & (~df_debt[cust_col].astype(str).str.lower().str.contains('lẻ|khách lẻ|nan|none'))]
-    if valid_debt.empty:
-        return 0
-
-    return int(valid_debt[cust_col].dropna().nunique())
+    df_d = next((df for k, df in data.items() if any(w in k.lower() for w in ['congno', 'sono', 'phaithu', 'soquy'])), None)
+    if df_d is None: raise CannotAnswer("Không tìm thấy bảng công nợ")
+    c_c = next((c for c in df_d.columns if any(w in str(c).lower() for w in ['khách hàng', 'mã khách', 'tenkh'])), None)
+    d_c = next((c for c in df_d.columns if any(w in str(c).lower() for w in ['còn nợ', 'tiền nợ', 'phải thu'])), None)
+    if not (c_c and d_c): raise CannotAnswer("Thiếu cột khách hàng hoặc số nợ")
+    df_d['clean_debt'] = clean_num(df_d[d_c])
+    valid = df_d[(df_d['clean_debt'] > 0) & (~df_d[c_c].astype(str).str.lower().str.contains(r'lẻ|khách lẻ|nan|none', na=False))]
+    return int(valid[c_c].dropna().nunique())
 ```""",
 
-    "purchase_import": """--- VÍ DỤ MINH HỌA: TÍNH TỔNG TIỀN / GIÁ TRỊ PHIẾU NHẬP HÀNG ---
+    "purchase_import": """--- VÍ DỤ: TÍNH TỔNG TIỀN NHẬP HÀNG ---
 Câu hỏi: "Tháng này tổng giá trị các phiếu nhập hàng là bao nhiêu?" (as_of_date = "2026-09-07")
 ```python
 def solution(data):
-    # 1. Tìm bảng nhập hàng (ưu tiên bảng tổng hợp phiếu nhập, tránh bảng chi tiết)
-    df_nhap = None
-    for name, df in data.items():
-        n_clean = re.sub(r'[^a-zA-Z0-9]', '', str(name).lower())
-        if 'nhap' in n_clean and not any(k in n_clean for k in ['chitiet', 'chi_tiet', 'detail', 'lohang']):
-            df_nhap = df.copy()
-            break
+    df_nhap = next((df for k, df in data.items() if 'nhap' in k.lower() and not any(w in k.lower() for w in ['chitiet', 'chi_tiet', 'detail'])), None)
     if df_nhap is None:
-        df_nhap = next((df.copy() for name, df in data.items() if 'nhap' in re.sub(r'[^a-zA-Z0-9]', '', str(name).lower())), None)
-    if df_nhap is None:
-        return 0
-
-    # 2. Tìm cột ngày và cột tiền
-    cols = df_nhap.columns.tolist()
-    d_c = next((c for c in cols if any(k in str(c).lower() for k in ['thời gian', 'ngày', 'date', 'ngaylap', 'ngay_nhap'])), None)
-    a_c = next((c for c in cols if any(k in str(c).lower() for k in ['cần trả ncc', 'tổng tiền', 'tong tien', 'thành tiền', 'giá trị', 'tiền']) and 'trả hàng' not in str(c).lower()), None)
-    if not d_c or not a_c:
-        return 0
-
-    # 3. Lọc đúng kỳ tháng này: năm 2026, tháng 9, từ ngày 1 đến hết as_of_date (dùng Timestamp)
+        raise CannotAnswer("Không tìm thấy bảng phiếu nhập")
+    d_c, a_c = get_date_col(df_nhap), get_amount_col(df_nhap)
+    if not (d_c and a_c):
+        raise CannotAnswer("Thiếu cột ngày hoặc tiền trong bảng nhập")
     df_nhap['clean_date'] = clean_date(df_nhap[d_c])
-    df_nhap = df_nhap[(df_nhap['clean_date'] >= pd.Timestamp("2026-09-01")) & (df_nhap['clean_date'] <= pd.Timestamp("2026-09-07 23:59:59"))]
-
-    # 4. Loại bỏ phiếu hủy nếu có trạng thái hoặc ghi chú
-    st_c = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt', 'ghi chú', 'cancel'])), None)
+    df_nhap = df_nhap[(df_nhap['clean_date'] >= '2026-09-01') & (df_nhap['clean_date'] <= '2026-09-07 23:59:59')]
+    st_c = next((c for c in df_nhap.columns if any(w in str(c).lower() for w in ['trạng thái', 'status', 'ghi chú'])), None)
     if st_c:
-        df_nhap = df_nhap[~df_nhap[st_c].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|cancel')]
-
+        df_nhap = df_nhap[~df_nhap[st_c].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|cancel', na=False)]
     return int(round(clean_num(df_nhap[a_c]).sum()))
 ```""",
 
@@ -1154,595 +1052,198 @@ def solution(data):
     return int(round(total))
 ```""",
 
-    "count_orders": """--- VÍ DỤ MINH HỌA: ĐẾM SỐ ĐƠN HÀNG (COUNT DISTINCT ORDERS) ---
+    "count_orders": """--- VÍ DỤ: ĐẾM SỐ ĐƠN HÀNG ---
 Câu hỏi: "Hôm nay cửa hàng có bao nhiêu đơn hàng?" (as_of_date = "2025-10-18")
 ```python
 def solution(data):
-    df_sales = get_sales_table(data)
-    if df_sales is None or df_sales.empty:
-        return 0
-
-    date_col = get_date_col(df_sales)
-    cols = df_sales.columns.tolist()
-    order_col = next((c for c in cols if any(k in str(c).lower() for k in ['mã đơn', 'ma don', 'mã hoá đơn', 'mã hd', 'order_id', 'order id', 'mã chứng từ', 'mã giao dịch'])), None)
-    if not date_col or not order_col:
-        return 0
-
-    df_sales['clean_date'] = clean_date(df_sales[date_col])
-    status_col = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt', 'tình trạng', 'xử lý'])), None)
-    if status_col:
-        df_sales = df_sales[~df_sales[status_col].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|trả|tra|cancel|return')]
-
-    mask = df_sales['clean_date'].dt.date == pd.to_datetime("2025-10-18").date()
-    df_filtered = df_sales[mask]
-    if df_filtered.empty:
-        return 0
-    return int(df_filtered[order_col].dropna().nunique())
+    return int(count_orders(data, start_date="2025-10-18", end_date="2025-10-18", as_of_date="2025-10-18", status="valid"))
 ```""",
 
-    "cancelled_orders": """--- VÍ DỤ MINH HỌA: ĐẾM SỐ ĐƠN BỊ HỦY (CANCELLED ORDERS COUNT) ---
+    "cancelled_orders": """--- VÍ DỤ: ĐẾM SỐ ĐƠN BỊ HỦY ---
 Câu hỏi: "Đếm số đơn đã huỷ trong tháng 12/2025" (as_of_date = "2026-06-02")
 ```python
 def solution(data):
-    df_sales = get_sales_table(data)
-    if df_sales is None or df_sales.empty:
-        return 0
-
-    date_col = get_date_col(df_sales)
-    cols = df_sales.columns.tolist()
-    order_col = next((c for c in cols if any(k in str(c).lower() for k in ['mã đơn', 'ma don', 'mã hoá đơn', 'mã hd', 'order_id', 'order id', 'mã chứng từ', 'mã giao dịch', 'mã phiếu', 'mã'])), None)
-    status_col = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt', 'tình trạng', 'xử lý'])), None)
-    if not date_col or not status_col:
-        return 0
-
-    df_sales['clean_date'] = clean_date(df_sales[date_col])
-    df_cancelled = df_sales[df_sales[status_col].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|cancel')]
-
-    mask = (df_cancelled['clean_date'].dt.year == 2025) & (df_cancelled['clean_date'].dt.month == 12)
-    df_filtered = df_cancelled[mask]
-    if df_filtered.empty:
-        return 0
-    if order_col:
-        return int(df_filtered[order_col].dropna().nunique())
-    return int(len(df_filtered))
+    return int(count_orders(data, start_date="2025-12-01", end_date="2025-12-31", as_of_date="2026-06-02", status="cancelled"))
 ```""",
 
-    "quantity_sum": r"""--- VÍ DỤ MINH HỌA: TÍNH TỔNG SỐ LƯỢNG MẶT HÀNG ĐÃ BÁN ---
+    "quantity_sum": r"""--- VÍ DỤ: TÍNH TỔNG SỐ LƯỢNG MẶT HÀNG ĐÃ BÁN ---
 Câu hỏi: "Trong tháng 5/2025 cửa hàng bán được bao nhiêu kg thép cuộn phi 6 Hòa Phát?" (as_of_date = "2026-05-16")
 ```python
 def solution(data):
-    df_sales = get_sales_table(data)
-    if df_sales is None or df_sales.empty:
+    df = get_sales_table(data)
+    if df is None or df.empty:
         return 0
-
-    date_col = get_date_col(df_sales)
-    qty_col = get_qty_col(df_sales)
-    item_col = get_item_col(df_sales)
-    if not date_col or not qty_col or not item_col:
+    d_c, q_c, i_c = get_date_col(df), get_qty_col(df), get_item_col(df)
+    if not (d_c and q_c and i_c):
         return 0
-
-    df_sales['clean_date'] = clean_date(df_sales[date_col])
-    cols = df_sales.columns.tolist()
-    status_col = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt', 'tình trạng'])), None)
-    if status_col:
-        df_sales = df_sales[~df_sales[status_col].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|trả|tra|cancel|return')]
-
-    mask_item = df_sales[item_col].astype(str).str.contains(r'thép cuộn.*phi\s*6', case=False, regex=True, na=False)
-    mask_date = (df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 5)
-    df_filtered = df_sales[mask_item & mask_date]
-    if df_filtered.empty:
-        return 0
-
-    return int(round(clean_num(df_filtered[qty_col]).sum()))
+    df['clean_date'] = clean_date(df[d_c])
+    df = filter_valid_sales(df)
+    df = df[(df['clean_date'].dt.year == 2025) & (df['clean_date'].dt.month == 5)]
+    matched = df[df[i_c].astype(str).str.contains(r'thép cuộn.*phi\s*6', case=False, regex=True, na=False)]
+    return int(round(clean_num(matched[q_c]).sum()))
 ```""",
 
-    "price_lookup": r"""--- VÍ DỤ MINH HỌA: TRA CỨU ĐƠN GIÁ / GIÁ BÁN (TWO-TIER LOOKUP) ---
+    "price_lookup": r"""--- VÍ DỤ: TRA CỨU ĐƠN GIÁ MẶT HÀNG ---
 Câu hỏi: "Giá bán một ly soda chanh dây (M) vào ngày 01/12/2025 là bao nhiêu?" (as_of_date = "2026-07-31")
 ```python
 def solution(data):
-    target_date = pd.to_datetime("2025-12-01").date()
-
-    # BƯỚC 1: Tìm trong nhật ký bán hàng có ngày giao dịch (Ưu tiên số 1 theo Điều 5 Rulebook)
-    for name, df in data.items():
-        if any(k in str(name).lower() for k in ['nhap', 'kho', 'chiphi', 'ncc']):
-            continue
+    for df in data.values():
         cols = df.columns.tolist()
-        i_c = next((c for c in cols if any(k in str(c).lower() for k in ['tên hàng', 'hàng', 'tên món', 'sản phẩm', 'mặt hàng'])), None)
-        p_c = next((c for c in cols if any(k in str(c).lower() for k in ['đơn giá', 'giá bán', 'giá lẻ', 'gia_ban', 'đơn giá bán'])), None)
-        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)
-
-        if i_c and p_c and d_c:
-            m_prod = df[i_c].astype(str).str.contains('soda chanh dây', case=False, na=False) & df[i_c].astype(str).str.contains(r'\(m\)|\bm\b', case=False, regex=True, na=False)
-            matched = df[m_prod].copy()
-            if not matched.empty:
-                matched['clean_date'] = clean_date(matched[d_c])
-                matched_day = matched[matched['clean_date'].dt.date == target_date]
-                if not matched_day.empty:
-                    return int(round(clean_num(matched_day[p_c]).iloc[0]))
-
-    # BƯỚC 2: Nếu không có giao dịch trong ngày, tra cứu Bảng giá hoặc Danh mục hàng hóa
-    for name, df in data.items():
-        cols = df.columns.tolist()
-        i_c = next((c for c in cols if any(k in str(c).lower() for k in ['tên hàng', 'hàng', 'tên món', 'sản phẩm', 'mặt hàng', 'tên thuốc'])), None)
-        p_c = next((c for c in cols if any(k in str(c).lower() for k in ['giá mới', 'giá bán', 'giá', 'đơn giá', 'giá lẻ'])), None)
+        i_c = next((c for c in cols if any(k in str(c).lower() for k in ['tên hàng', 'sản phẩm', 'mặt hàng', 'tên món'])), None)
+        p_c = next((c for c in cols if any(k in str(c).lower() for k in ['đơn giá', 'giá bán', 'giá mới', 'giá'])), None)
         if i_c and p_c:
-            m_prod = df[i_c].astype(str).str.contains('soda chanh dây', case=False, na=False) & df[i_c].astype(str).str.contains(r'\(m\)|\bm\b', case=False, regex=True, na=False)
-            matched = df[m_prod].copy()
+            m = df[i_c].astype(str).str.contains('soda chanh dây', case=False, na=False) & df[i_c].astype(str).str.contains(r'\(m\)|\bm\b', case=False, regex=True, na=False)
+            matched = df[m]
             if not matched.empty:
-                d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày áp dụng', 'ngày', 'date'])), None)
-                if d_c:
-                    matched['clean_date'] = clean_date(matched[d_c])
-                    valid = matched[matched['clean_date'].dt.date <= target_date]
-                    if not valid.empty:
-                        valid = valid.sort_values(by='clean_date', ascending=False)
-                        return int(round(clean_num(valid[p_c]).iloc[0]))
                 return int(round(clean_num(matched[p_c]).iloc[0]))
-
     return 0
 ```""",
 
-    "multitable_join": r"""--- VÍ DỤ MINH HỌA: GHÉP BẢNG BÁN HÀNG TỔNG HỢP & CHI TIẾT (MULTI-TABLE JOIN: DON_HANG + CHI_TIET_DON + SAN_PHAM / THUOC) ---
+    "multitable_join": r"""--- VÍ DỤ: DOANH THU THEO MẶT HÀNG (GHÉP BẢNG) ---
 Câu hỏi: "Tháng 8/2025 cửa hàng thu được bao nhiêu tiền từ mặt hàng thép cuộn phi 6?" (as_of_date = "2026-06-25")
 ```python
 def solution(data):
-    # 1. Tìm bảng đơn hàng (header), bảng chi tiết (detail) và bảng sản phẩm/danh mục (catalog)
-    # Hỗ trợ cả mô hình bán lẻ / vật liệu và mô hình nhà thuốc:
-    # - Header: BanHang_HoaDon, DonHang, HoaDon (chứa ngày bán, Order ID)
-    # - Detail: BanHang_ChiTietHoaDon, ChiTietDonHang, Detail (chứa Mã giao dịch, Ma hang, So luong, Don gia)
-    # - Catalog: BanHang_Thuoc, HangHoa, SanPham, DanhMuc (chứa Mã HH, Hoạt chất, Ten hang)
-    df_order = None
-    df_detail = None
-    df_catalog = None
-    for name, df in data.items():
-        n_clean = str(name).lower()
-        if any(k in n_clean for k in ['nhap', 'kho', 'chiphi', 'ncc', 'tonkho', 'khachhang', 'soquy']):
-            continue
-        cols = [str(c).lower() for c in df.columns]
-        if any(k in n_clean for k in ['chi_tiet', 'chitiet', 'detail', 'chitiethoadon']) or (any(k in c for k in ['mã hàng', 'ma hang', 'mã sp', 'mã hh', 'mã mặt hàng']) and any('tiền' in c or 'lượng' in c or 'giá' in c for c in cols)):
-            if df_detail is None:
-                df_detail = df.copy()
-        elif any(k in n_clean for k in ['don_hang', 'donhang', 'hoadon', 'hoa_don', 'banhang_hoadon']) or any(k in c for c in cols for k in ['ngày bán', 'ngay_ban', 'ngày đặt', 'thời gian tạo']):
-            if df_order is None:
-                df_order = df.copy()
-        elif any(k in n_clean for k in ['san_pham', 'sanpham', 'hang_hoa', 'thuoc', 'danhmuc', 'banhang_thuoc']):
-            if df_catalog is None:
-                df_catalog = df.copy()
-
-    # 2. Ghép nối Header và Detail với xử lý tên khóa phân kỳ (divergent keys)
-    # Ví dụ nhà thuốc: Header 'Order ID' ghép với Detail 'Mã giao dịch'
-    if df_order is not None and df_detail is not None:
-        ord_cols = df_order.columns.tolist()
-        det_cols = df_detail.columns.tolist()
-        k_ord = next((c for c in ord_cols if any(k in str(c).lower() for k in ['order id', 'order_id', 'mã chứng từ', 'mã hóa đơn', 'mã hd', 'mã đơn', 'mã giao dịch', 'mã gd', 'số hóa đơn'])), None)
-        k_det = next((c for c in det_cols if any(k in str(c).lower() for k in ['mã giao dịch', 'mã gd', 'order id', 'order_id', 'mã đơn hàng', 'mã đơn', 'mã chứng từ', 'mã hóa đơn'])), None)
-        
-        if k_ord and k_det:
-            merged = pd.merge(df_order, df_detail, left_on=k_ord, right_on=k_det, how='inner')
-        else:
-            merged = df_detail
-    elif df_detail is not None:
-        merged = df_detail
-    elif df_order is not None:
-        merged = df_order
-    else:
-        merged = get_sales_table(data)
-    if merged is None or merged.empty:
-        return 0
-
-    # 3. Ghép nối Catalog nếu cần tra tên mặt hàng hoặc hoạt chất (ví dụ Detail 'Ma hang' ghép với Catalog 'Mã HH')
-    if df_catalog is not None:
-        m_cols = merged.columns.tolist()
-        cat_cols = df_catalog.columns.tolist()
-        k_m = next((c for c in m_cols if any(k in str(c).lower() for k in ['ma hang', 'mã hàng', 'mã hh', 'ma_hh', 'mã sp', 'ma_sp', 'mã mặt hàng'])), None)
-        k_cat = next((c for c in cat_cols if any(k in str(c).lower() for k in ['mã hh', 'ma_hh', 'ma hang', 'mã hàng', 'mã sản phẩm bán', 'mã sp', 'ma_sp'])), None)
-        if k_m and k_cat:
-            merged = pd.merge(merged, df_catalog, left_on=k_m, right_on=k_cat, how='inner')
-
-    # 4. Xử lý cột ngày và lọc thời gian
-    cols = merged.columns.tolist()
-    d_c = get_date_col(merged)
-    if not d_c:
-        return 0
-    merged['clean_date'] = clean_date(merged[d_c])
-
-    # 5. BẮT BUỘC loại bỏ đơn hủy / trả hàng (diacritic-insensitive)
-    st_c = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'tình trạng', 'status', 'ghi chú tt'])), None)
-    if st_c:
-        merged = merged[~merged[st_c].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|trả|tra|cancel|return')]
-
-    # 6. Lọc theo kỳ tháng 8/2025: BẮT BUỘC có ngoặc đơn quanh từng điều kiện bitwise &
-    mask_date = (merged['clean_date'].dt.year == 2025) & (merged['clean_date'].dt.month == 8)
-    merged = merged[mask_date]
-
-    # 7. Lọc mặt hàng theo từ khóa regex linh hoạt (hoặc theo cột hoạt chất)
-    item_c = next((c for c in cols if any(k in str(c).lower() for k in ['tên sp', 'hàng', 'tên món', 'tên hàng', 'sản phẩm', 'mặt hàng', 'product', 'hoạt chất', 'tên thuốc'])), None)
-    if item_c:
-        mask_item = merged[item_c].astype(str).str.contains(r'thép cuộn.*phi\s*6', case=False, regex=True, na=False)
-        merged = merged[mask_item]
-
-    if merged.empty:
-        return 0
-
-    # 8. Tính tiền: Ưu tiên (SoLuong * Đơn giá) hoặc thành tiền
-    qty_c = next((c for c in cols if any(k in str(c).lower() for k in ['soluong', 'số lượng', 'sl', 'slg'])), None)
-    price_c = next((c for c in cols if any(k in str(c).lower() for k in ['đơn giá (đ)', 'đơn giá', 'don gia', 'giá bán', 'giá'])), None)
-    amt_c = next((c for c in cols if any(k in str(c).lower() for k in ['amount', 'thành tiền', 'thanh tien', 'tổng tiền', 'tong tien', 'tiền bán', 'doanh thu', 'tiền']) and 'thuế' not in str(c).lower() and 'giảm' not in str(c).lower()), None)
-    
-    if qty_c and price_c:
-        return int(round((clean_num(merged[qty_c]) * clean_num(merged[price_c])).sum()))
-    elif amt_c:
-        return int(round(clean_num(merged[amt_c]).sum()))
-    return 0
+    total = revenue(data, start_date="2025-08-01", end_date="2025-08-31", as_of_date="2026-06-25", product=r"thép cuộn.*phi\s*6")
+    return int(round(total))
 ```""",
 
-    "relational_join": r"""--- VÍ DỤ MINH HỌA: GHÉP NỐI BẢNG HEADER VÀ DETAIL (RELATIONAL TABLE JOIN) ---
+    "relational_join": r"""--- VÍ DỤ: GHÉP NỐI BẢNG HEADER & DETAIL (TOP HÀNG BÁN CHẠY) ---
 Câu hỏi: "Tháng 11/2025 top 5 hàng bán chạy nhất là gì?" (as_of_date = "2026-06-25")
 ```python
 def solution(data):
-    # 1. Tìm bảng Header (DanhSachHoaDon / don_hang chứa ngày) và Detail (DanhSachHoaDonChiTiet / chi_tiet_don chứa mặt hàng, số lượng)
-    df_hdr = next((df for n, df in data.items() if any(k in str(n).lower() for k in ['hoadon', 'hoa_don', 'don_hang', 'donhang']) or (any(k in str(c).lower() for c in df.columns for k in ['ngày', 'date', 'thời gian']) and not any(k in str(n).lower() for k in ['nhap', 'kho', 'chiphi']))), None)
-    df_det = next((df for n, df in data.items() if any(k in str(n).lower() for k in ['chitiethoadon', 'chi_tiet', 'chitiet']) or (any(k in str(c).lower() for c in df.columns for k in ['tên hàng', 'mặt hàng', 'sản phẩm']) and any(k in str(c).lower() for c in df.columns for k in ['số lượng', 'soluong', 'sl']))), None)
-
+    df_hdr = next((df for n, df in data.items() if any(k in str(c).lower() for c in df.columns for k in ['ngày', 'date', 'thời gian']) and not any(k in str(n).lower() for k in ['nhap', 'kho', 'chiphi'])), None)
+    df_det = next((df for n, df in data.items() if any(k in str(c).lower() for c in df.columns for k in ['tên hàng', 'sản phẩm']) and any(k in str(c).lower() for c in df.columns for k in ['số lượng', 'sl'])), None)
     if df_hdr is None or df_det is None:
-        merged = get_sales_table(data)
-        if merged is None:
-            return []
-    else:
-        # 2. Ghép nối Header và Detail trên khóa mã hóa đơn / mã đơn hàng
-        kh = next((c for c in df_hdr.columns if any(k in str(c).lower() for k in ['mã hóa đơn', 'mã đơn hàng', 'mã đơn', 'mahd', 'mã hd', 'order_id', 'mã'])), None)
-        kd = next((c for c in df_det.columns if any(k in str(c).lower() for k in ['mã hóa đơn', 'mã đơn hàng', 'mã đơn', 'mahd', 'mã hd', 'order_id', 'mã'])), None)
-        dh = get_date_col(df_hdr)
-
-        if kh and kd and dh:
-            merged = pd.merge(df_det, df_hdr[[kh, dh]], left_on=kd, right_on=kh, how='inner')
-            merged['clean_date'] = clean_date(merged[dh])
-        else:
-            merged = df_det
-
-    d_c = get_date_col(merged)
-    if d_c and 'clean_date' not in merged.columns:
-        merged['clean_date'] = clean_date(merged[d_c])
-
-    # 3. Lọc bỏ đơn hủy và lọc theo kỳ thời gian yêu cầu (ví dụ: tháng 11/2025)
-    cols = merged.columns.tolist()
-    st_c = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt'])), None)
-    if st_c:
-        merged = merged[~merged[st_c].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|trả|cancel', regex=True, na=False)]
-
-    mask_date = (merged['clean_date'].dt.year == 2025) & (merged['clean_date'].dt.month == 11)
-    df_period = merged[mask_date]
-    if df_period.empty:
         return []
-
-    # 4. Tính tổng số lượng và xếp hạng theo Điều 9 Tie-Breaker
-    prod_c = next((c for c in cols if any(k in str(c).lower() for k in ['tên hàng', 'sản phẩm', 'mặt hàng', 'tên món', 'tên thuốc'])), None)
-    qty_c = next((c for c in cols if any(k in str(c).lower() for k in ['số lượng', 'soluong', 'sl', 'quy đổi'])), None)
-    code_c = next((c for c in cols if any(k in str(c).lower() for k in ['mã hàng', 'mã hh', 'ma hang', 'mã mặt hàng', 'mã sp', 'mã'])), prod_c)
-
-    df_period['clean_qty'] = clean_num(df_period[qty_c])
-    grp = df_period.groupby([prod_c, code_c], as_index=False)['clean_qty'].sum()
-    grp = grp.sort_values(by=['clean_qty', code_c], ascending=[False, True])
-
-    return grp.head(5)[prod_c].astype(str).tolist()
+    kh = next(c for c in df_hdr.columns if any(k in str(c).lower() for k in ['mã đơn', 'mã hóa đơn', 'order_id', 'mã']))
+    kd = next(c for c in df_det.columns if any(k in str(c).lower() for k in ['mã đơn', 'mã hóa đơn', 'order_id', 'mã']))
+    dh = get_date_col(df_hdr)
+    merged = pd.merge(df_det, df_hdr[[kh, dh]], left_on=kd, right_on=kh)
+    merged['clean_date'] = clean_date(merged[dh])
+    p_c, q_c = get_item_col(merged), get_qty_col(merged)
+    df_p = merged[(merged['clean_date'].dt.year == 2025) & (merged['clean_date'].dt.month == 11)]
+    if df_p.empty:
+        return []
+    grp = df_p.groupby(p_c, as_index=False)[q_c].apply(lambda s: clean_num(s).sum())
+    return grp.sort_values(by=[q_c, p_c], ascending=[False, True]).head(5)[p_c].astype(str).tolist()
 ```""",
 
-    "delivery_batches": """--- VÍ DỤ MINH HỌA: ĐẾM SỐ ĐỢT GIAO HÀNG / LƯỢT GIAO (DELIVERY BATCH ROUTING) ---
+    "delivery_batches": """--- VÍ DỤ: ĐẾM SỐ ĐỢT GIAO HÀNG ---
 Câu hỏi: "Tháng này cửa hàng đã chở giao bao nhiêu đợt hàng cho khách nhỉ?" (as_of_date = "2026-09-07")
 ```python
 def solution(data):
-    # 1. BẮT BUỘC tìm bảng Sổ giao hàng / Vận chuyển (SoGiaoHang, BangKeGiaoHang, PhieuGiaoHang, GiaoHang)
-    df_delivery = None
-    for name, df in data.items():
-        n_clean = re.sub(r'[^a-zA-Z0-9]', '', str(name).lower())
-        cols_low = [str(c).lower() for c in df.columns]
-        if (
-            any(k in n_clean for k in ['giaohang', 'sogiaohang', 'phieugiao', 'vanchuyen', 'chohang', 'phieuxuat'])
-            or any(any(k in c for k in ['lượt giao', 'đợt giao', 'ngày chở', 'ngày giao', 'người chở', 'biển số']) for c in cols_low)
-        ):
-            df_delivery = df.copy()
-            break
-
-    if df_delivery is None:
+    df_del = next((df for n, df in data.items() if any(k in str(n).lower() for k in ['giaohang', 'vanchuyen', 'chohang'])), None)
+    if df_del is None:
+        raise CannotAnswer("Không tìm thấy bảng giao hàng / vận chuyển")
+    d_c = get_date_col(df_del)
+    df_del['clean_date'] = clean_date(df_del[d_c])
+    df_p = df_del[(df_del['clean_date'].dt.year == 2026) & (df_del['clean_date'].dt.month == 9) & (df_del['clean_date'] <= '2026-09-07')]
+    if df_p.empty:
         return 0
-
-    cols = df_delivery.columns.tolist()
-    d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày chở', 'ngay cho', 'ngày giao', 'ngay giao', 'thời gian', 'ngày', 'date'])), None)
-    if not d_c:
-        return 0
-
-    df_delivery['clean_date'] = clean_date(df_delivery[d_c])
-
-    # 2. Lọc thời gian tháng này (năm 2026, tháng 9, đến hết as_of_date): BẮT BUỘC có ngoặc đơn
-    mask = (
-        (df_delivery['clean_date'].dt.year == 2026)
-        & (df_delivery['clean_date'].dt.month == 9)
-        & (df_delivery['clean_date'].dt.date <= pd.to_datetime("2026-09-07").date())
-    )
-    df_filtered = df_delivery[mask]
-    if df_filtered.empty:
-        return 0
-
-    # 3. Đếm số đợt / lượt giao:
-    # BẮT BUỘC DÙNG CẶP KHÓA KẾT HỢP len(df_filtered[[ord_col, trip_col]].drop_duplicates()) vì 1 đơn có thể giao thành nhiều đợt!
-    ord_col = next((c for c in cols if any(k in str(c).lower() for k in ['mã bill', 'ma bill', 'mã đơn', 'ma don', 'mã đơn hàng', 'mã phiếu', 'order_id'])), None)
-    trip_col = next((c for c in cols if any(k in str(c).lower() for k in ['lượt giao', 'luot giao', 'lần giao', 'lan giao', 'đợt giao', 'dot giao'])), None)
-
-    if ord_col and trip_col:
-        return int(len(df_filtered[[ord_col, trip_col]].drop_duplicates()))
-    elif trip_col:
-        return int(df_filtered[trip_col].dropna().nunique())
-    elif ord_col:
-        return int(df_filtered[ord_col].dropna().nunique())
-
-    return int(len(df_filtered))
+    ord_c = next((c for c in df_del.columns if any(k in str(c).lower() for k in ['mã đơn', 'mã bill', 'mã phiếu', 'order_id'])), None)
+    trip_c = next((c for c in df_del.columns if any(k in str(c).lower() for k in ['lượt giao', 'đợt giao', 'lần giao'])), None)
+    if ord_c and trip_c:
+        return int(len(df_p[[ord_c, trip_c]].drop_duplicates()))
+    return int(df_p[trip_c or ord_c].dropna().nunique()) if (trip_c or ord_c) else len(df_p)
 ```""",
 
-    "shift_revenue": r"""--- VÍ DỤ MINH HỌA: TÍNH DOANH THU THEO CA (CA SÁNG / CA CHIỀU) ---
+    "shift_revenue": r"""--- VÍ DỤ: DOANH THU THEO CA (CA CHIỀU) ---
 Câu hỏi: "Ca chiều tuần trước doanh thu bao nhiêu?" (as_of_date = "2026-06-25")
 ```python
 def solution(data):
-    # 1. Tìm bảng hóa đơn bán hàng
-    df_sales = None
-    for name, df in data.items():
-        if any(k in str(name).lower() for k in ['nhap', 'kho', 'chiphi', 'ncc', 'tonkho']):
-            continue
-        cols = df.columns.tolist()
-        # BẮT BUỘC tìm cột thời gian có đủ GIỜ VÀ PHÚT (ví dụ 'Thời gian tạo' hoặc 'ThoiGianTao', KHÔNG dùng cột chỉ có ngày 'Thời gian')
-        dt_c = next((c for c in cols if any(k in str(c).lower() for k in ['thời gian tạo', 'thoigiantao', 'created_at', 'gio', 'giờ']) and 'ngày' not in str(c).lower()), None)
-        if not dt_c:
-            dt_c = next((c for c in cols if any(k in str(c).lower() for k in ['thời gian', 'thoigian', 'date', 'ngày'])), None)
-        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['tổng tiền hàng', 'thành tiền', 'tổng tiền', 'doanh thu']) and 'sau giảm' not in str(c).lower() and 'thuế' not in str(c).lower()), None)
-        if dt_c and a_c:
-            df_sales = df.copy()
-            time_col, amt_col = dt_c, a_c
-            break
-
-    if df_sales is None:
-        df_sales = get_sales_table(data)
-        if df_sales is None:
-            return 0
-        time_col = get_date_col(df_sales)
-        amt_col = get_amount_col(df_sales)
-        if not time_col or not amt_col:
-            return 0
-
-    df_sales['clean_dt'] = clean_date(df_sales[time_col])
-    cols_s = df_sales.columns.tolist()
-    status_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt', 'tình trạng'])), None)
-    if status_col:
-        # BẮT BUỘC loại bỏ đơn hủy / trả hàng (diacritic-insensitive)
-        df_sales = df_sales[~df_sales[status_col].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|trả|tra|cancel|return')]
-
-    # 2. Lọc khoảng thời gian tuần trước (start_date <= date <= end_date)
-    # Ví dụ tuần trước: 2026-06-08 đến 2026-06-14
-    start_date = pd.to_datetime("2026-06-08").date()
-    end_date = pd.to_datetime("2026-06-14").date()
-    mask_date = (df_sales['clean_dt'].dt.date >= start_date) & (df_sales['clean_dt'].dt.date <= end_date)
-    df_period = df_sales[mask_date]
-
-    # 3. Lọc theo ca làm việc (Shift Filtering) trên cột timestamp:
-    # - Ca sáng: từ 06:00 đến 13:59 (6 <= hour <= 13)
-    # - Ca chiều: từ 14:00 đến 21:59 (14 <= hour <= 21)
-    mask_shift = (df_period['clean_dt'].dt.hour >= 14) & (df_period['clean_dt'].dt.hour <= 21)
-    df_shift = df_period[mask_shift]
+    df = get_sales_table(data)
+    if df is None:
+        raise CannotAnswer("Không tìm thấy bảng bán hàng")
+    t_c = next((c for c in df.columns if any(k in str(c).lower() for k in ['thời gian tạo', 'created_at', 'giờ', 'thoigian']) and 'ngày' not in str(c).lower()), get_date_col(df))
+    amt_c = get_amount_col(df)
+    df['clean_dt'] = clean_date(df[t_c])
+    df_p = df[(df['clean_dt'].dt.date >= pd.to_datetime('2026-06-08').date()) & (df['clean_dt'].dt.date <= pd.to_datetime('2026-06-14').date())]
+    df_shift = df_p[(df_p['clean_dt'].dt.hour >= 14) & (df_p['clean_dt'].dt.hour <= 21)]
     if df_shift.empty:
         return 0
-
-    # BẮT BUỘC dùng Tổng tiền hàng (gross revenue), TUYỆT ĐỐI KHÔNG dùng Tổng sau giảm giá hoặc Khách đã trả
-    return int(round(clean_num(df_shift[amt_col]).sum()))
-
+    return int(round(clean_num(df_shift[amt_c]).sum()))
 ```""",
 
-    "ranking_topk": """--- VÍ DỤ MINH HỌA: TÌM ĐỐI TƯỢNG NHIỀU NHẤT / XẾP HẠNG (RANKING TOP-K) / ĐỒNG HẠNG ---
+    "ranking_topk": """--- VÍ DỤ: XẾP HẠNG TOP 5 HÀNG BÁN CHẠY ---
 Câu hỏi: "Tháng 9/2025 top 5 hàng bán chạy nhất là gì?" (as_of_date = "2026-09-03")
 ```python
 def solution(data):
-    # 1. Tìm bảng bán hàng: nếu tách rời Header (DanhSachHoaDon / don_hang có ngày) và Detail (DanhSachHoaDonChiTiet / chi_tiet_don có tên hàng, số lượng), ghép nối qua mã hóa đơn
-    df_sales = None
-    df_hdr = next((df for n, df in data.items() if any(k in str(c).lower() for c in df.columns for k in ['ngày', 'date', 'thời gian']) and not any(k in str(n).lower() for k in ['nhap', 'kho', 'chiphi'])), None)
-    df_det = next((df for n, df in data.items() if any(k in str(c).lower() for c in df.columns for k in ['tên hàng', 'sản phẩm', 'mặt hàng', 'tên thuốc', 'hàng']) and any(k in str(c).lower() for c in df.columns for k in ['số lượng', 'soluong', 'sl'])), None)
-
-    if df_det is not None and df_hdr is not None and df_det is not df_hdr:
-        kd = next((c for c in df_det.columns if any(k in str(c).lower() for k in ['mã hóa đơn', 'mã đơn hàng', 'mã đơn', 'mahd', 'mã hd', 'order_id', 'mã'])), None)
-        kh = next((c for c in df_hdr.columns if any(k in str(c).lower() for k in ['mã hóa đơn', 'mã đơn hàng', 'mã đơn', 'mahd', 'mã hd', 'order_id', 'mã'])), None)
-        dh = next((c for c in df_hdr.columns if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)
-        if kd and kh and dh:
-            df_sales = pd.merge(df_det, df_hdr[[kh, dh]], left_on=kd, right_on=kh, how='inner')
-            df_sales['clean_date'] = clean_date(df_sales[dh])
-    elif df_det is not None and any(k in str(c).lower() for c in df_det.columns for k in ['ngày', 'date', 'thời gian']):
-        df_sales = df_det.copy()
-        d_c = next((c for c in df_sales.columns if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)
-        df_sales['clean_date'] = clean_date(df_sales[d_c])
-    elif df_hdr is not None:
-        df_sales = df_hdr.copy()
-        d_c = next((c for c in df_sales.columns if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)
-        df_sales['clean_date'] = clean_date(df_sales[d_c])
-
-    if df_sales is None:
+    df = get_sales_table(data)
+    if df is None:
+        raise CannotAnswer("Không tìm thấy bảng bán hàng")
+    d_c, p_c, q_c = get_date_col(df), get_item_col(df), get_qty_col(df)
+    code_c = next((c for c in df.columns if any(k in str(c).lower() for k in ['mã hàng', 'mã hh', 'mã sp'])), p_c)
+    df['clean_date'] = clean_date(df[d_c])
+    df_p = df[(df['clean_date'].dt.year == 2025) & (df['clean_date'].dt.month == 9)]
+    if df_p.empty:
         return []
-
-    cols = df_sales.columns.tolist()
-    prod_col = next((c for c in cols if any(k in str(c).lower() for k in ['tên hàng', 'sản phẩm', 'mặt hàng', 'tên thuốc', 'hàng'])), None)
-    qty_col = next((c for c in cols if any(k in str(c).lower() for k in ['số lượng', 'soluong', 'sl', 'quy đổi'])), None)
-    code_col = next((c for c in cols if any(k in str(c).lower() for k in ['mã hàng', 'mã hh', 'ma hang', 'mã sp', 'mã'])), prod_col)
-    st_col = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt'])), None)
-
-    # 2. Loại bỏ đơn hủy và lọc theo kỳ thời gian yêu cầu (ví dụ: tháng 9/2025)
-    if st_col:
-        df_sales = df_sales[~df_sales[st_col].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|trả|cancel', regex=True, na=False)]
-    mask = (df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 9)
-    df_period = df_sales[mask]
-    if df_period.empty:
-        return []
-
-    # 3. Tính tổng số lượng và xếp hạng theo Điều 9 Tie-Breaker
-    df_period['clean_qty'] = clean_num(df_period[qty_col])
-    grp = df_period.groupby([prod_col, code_col], as_index=False)['clean_qty'].sum()
-    grp = grp.sort_values(by=['clean_qty', code_col], ascending=[False, True])
-
-    # NẾU CÂU HỎI HỎI TOP-K (K >= 2, vd: "top 5 hàng bán chạy nhất", "3 mặt hàng bán nhiều nhất"):
-    # BẮT BUỘC trả về danh sách chuỗi tên (list of strings đúng K phần tử):
-    return grp.head(5)[prod_col].astype(str).tolist()
-
-    # NẾU CÂU HỎI CHỈ HỎI 1 MẶT HÀNG ĐỨNG ĐẦU (Top-1, vd: "hàng nào chạy nhất", "sp bán chạy nhất"):
-    # BẮT BUỘC trả về chuỗi ký tự đơn lẻ (scalar string):
-    # return str(grp.iloc[0][prod_col])
+    grp = df_p.groupby([p_c, code_c], as_index=False)[q_c].apply(lambda s: clean_num(s).sum()).rename(columns={q_c: 'total_qty'})
+    grp = grp.sort_values(by=['total_qty', code_c], ascending=[False, True])
+    return grp.head(5)[p_c].astype(str).tolist()
 ```""",
 
-    "ranking_customer": """--- VÍ DỤ MINH HỌA: XẾP HẠNG KHÁCH HÀNG CHI TIÊU NHIỀU NHẤT (TOP-K CUSTOMERS) ---
+    "ranking_customer": """--- VÍ DỤ: TOP KHÁCH HÀNG CHI TIÊU NHIỀU NHẤT ---
 Câu hỏi: "Liệt kê 3 khách chi tiêu nhiều nhất trong tháng 6 năm 2025" (as_of_date = "2026-06-16")
 ```python
 def solution(data):
-    df_sales = None
-    date_col = None
-    cust_col = None
-    amt_col = None
-
-    # 1. Tìm bảng bán hàng/hóa đơn có cột ngày, cột khách hàng và cột thành tiền
-    for name, df in data.items():
-        if any(k in name.lower() for k in ['nhap', 'chiphi', 'tonkho', 'ncc']):
-            continue
-        cols = df.columns.tolist()
-        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'ngaylap', 'thời gian'])), None)
-        c_c = next((c for c in cols if any(k in str(c).lower() for k in ['tên khách', 'khách hàng', 'khach_hang', 'customer', 'tên kh', 'khách'])), None)
-        a_c = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tongtien', 'doanh thu', 'thực thu', 'khách phải trả', 'tổng cộng'])), None)
-        if d_c and c_c and a_c:
-            df_sales = df.copy()
-            date_col, cust_col, amt_col = d_c, c_c, a_c
-            break
-
-    # Nếu bảng bán hàng tách rời bảng khách hàng:
-    if df_sales is None:
-        df_ord = next((df.copy() for n, df in data.items() if any(k in str(c).lower() for c in df.columns for k in ['ngày', 'date', 'thời gian']) and any(k in str(c).lower() for c in df.columns for k in ['khách', 'customer'])), None)
-        if df_ord is not None:
-            cols_o = df_ord.columns.tolist()
-            d_c = next((c for c in cols_o if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)
-            c_c = next((c for c in cols_o if any(k in str(c).lower() for k in ['tên khách', 'khách hàng', 'khach_hang', 'customer', 'tên kh', 'khách'])), None)
-            a_c = next((c for c in cols_o if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tongtien', 'doanh thu', 'thực thu', 'khách phải trả', 'tổng cộng'])), None)
-            if d_c and c_c and a_c:
-                df_sales = df_ord
-                date_col, cust_col, amt_col = d_c, c_c, a_c
-
-    if df_sales is None:
+    df = get_sales_table(data)
+    if df is None:
+        raise CannotAnswer("Không tìm thấy bảng bán hàng")
+    d_c, a_c = get_date_col(df), get_amount_col(df)
+    c_c = next((c for c in df.columns if any(k in str(c).lower() for k in ['tên khách', 'khách hàng', 'customer', 'tên kh'])), None)
+    if not c_c:
+        raise CannotAnswer("Không tìm thấy cột khách hàng")
+    code_c = next((c for c in df.columns if any(k in str(c).lower() for k in ['mã khách', 'mã kh', 'makh'])), c_c)
+    df['clean_date'] = clean_date(df[d_c])
+    df_p = df[(df['clean_date'].dt.year == 2025) & (df['clean_date'].dt.month == 6)]
+    df_p = df_p[~df_p[c_c].astype(str).str.contains(r'lẻ|khách lẻ|nan|none|^$', case=False, na=False)]
+    if df_p.empty:
         return []
-
-    df_sales['clean_date'] = clean_date(df_sales[date_col])
-    cols_s = df_sales.columns.tolist()
-    status_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt'])), None)
-    if status_col:
-        df_sales = df_sales[~df_sales[status_col].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|trả|tra|cancel')]
-
-    # Lọc thời gian: tháng 6 năm 2025
-    mask = (df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 6)
-    df_period = df_sales[mask]
-    if df_period.empty:
-        return []
-
-    # Rulebook Điều 3: Bỏ khách lẻ / lẻ / nan / none
-    df_cust = df_period[~df_period[cust_col].astype(str).str.lower().str.contains(r'lẻ|khách lẻ|khach le|nan|none|^$', regex=True, na=False)]
-    if df_cust.empty:
-        return []
-
-    df_cust['clean_amt'] = clean_num(df_cust[amt_col])
-    code_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['mã khách', 'mã kh', 'makh', 'ma_kh', 'customer_id'])), cust_col)
-
-    # Xếp theo tổng tiền chi tiêu (doanh thu) giảm dần
-    grp_cust = df_cust.groupby([cust_col, code_col], as_index=False)['clean_amt'].sum()
-    grp_cust = grp_cust.sort_values(by=['clean_amt', code_col], ascending=[False, True])
-
-    # Trả về danh sách Top-K tên khách hàng (list of strings: ['Tên 1', 'Tên 2', ...])
-    return grp_cust.head(3)[cust_col].astype(str).tolist()
+    grp = df_p.groupby([c_c, code_c], as_index=False)[a_c].apply(lambda s: clean_num(s).sum()).rename(columns={a_c: 'total_amt'})
+    grp = grp.sort_values(by=['total_amt', code_c], ascending=[False, True])
+    return grp.head(3)[c_c].astype(str).tolist()
 ```""",
 
-    "average_order_value": """--- VÍ DỤ MINH HỌA: TÍNH GIÁ TRỊ TRUNG BÌNH MỘT ĐƠN HÀNG (AOV) ---
+    "average_order_value": """--- VÍ DỤ: GIÁ TRỊ TRUNG BÌNH MỘT ĐƠN HÀNG (AOV) ---
 Câu hỏi: "Giá trị trung bình một đơn tháng 10/2025 là bao nhiêu?" (as_of_date = "2026-05-29")
 ```python
 def solution(data):
-    # 1. Tìm bảng bán hàng / đơn hàng (hỗ trợ cả bảng đơn lẻ và bảng phân mảnh)
-    sales_dfs = []
-    for name, df in data.items():
-        n_low = re.sub(r'[^a-zA-Z0-9]', '', str(name).lower())
-        if any(k in n_low for k in ['nhap', 'kho', 'chiphi', 'ncc', 'thekho', 'banggia', 'danhmuc', 'quydoi']):
-            continue
-        cols = [str(c).lower() for c in df.columns]
-        if any(k in c for c in cols for k in ['ngày', 'date', 'thời gian']) or any(k in c for c in cols for k in ['tiền', 'doanh thu', 'trị giá']):
-            sales_dfs.append(df.copy())
-
-    if not sales_dfs:
+    df = get_sales_table(data)
+    if df is None:
+        raise CannotAnswer("Không tìm thấy bảng bán hàng")
+    d_c, a_c = get_date_col(df), get_amount_col(df)
+    o_c = next((c for c in df.columns if any(k in str(c).lower() for k in ['mã đơn', 'mã hóa đơn', 'mã hd', 'order_id'])), None)
+    df['clean_date'] = clean_date(df[d_c])
+    df_p = df[(df['clean_date'].dt.year == 2025) & (df['clean_date'].dt.month == 10)]
+    if df_p.empty:
         return 0
-    df_sales = pd.concat(sales_dfs, ignore_index=True) if len(sales_dfs) > 1 else sales_dfs[0]
-
-    cols = df_sales.columns.tolist()
-    d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian', 'ngaylap', 'ngày đặt'])), None)
-    o_c = next((c for c in cols if any(k in str(c).lower() for k in ['mã đơn', 'ma don', 'mã hoá đơn', 'mã hd', 'order_id', 'order id', 'mã chứng từ', 'mã'])), None)
-    amt_c = next((c for c in cols if any(k in str(c).lower() for k in ['thành tiền', 'tổng tiền', 'tongtien', 'tiền bán', 'doanh thu', 'trị giá', 'tiền']) and 'thuế' not in str(c).lower() and 'giá lẻ' not in str(c).lower() and 'đơn giá' not in str(c).lower()), None)
-    st_c = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt', 'tình trạng', 'xử lý'])), None)
-
-    if not d_c or not amt_c:
-        return 0
-
-    df_sales['clean_date'] = clean_date(df_sales[d_c])
-    # 2. Loại bỏ đơn hủy, trả hàng, hoàn hàng
-    if st_c:
-        df_sales = df_sales[~df_sales[st_c].astype(str).str.contains(r'hủy|huỷ|huy|trả|tra|hoàn|hoan|cancel|return', case=False, na=False)]
-
-    mask = (df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 10)
-    df_period = df_sales[mask]
-    if df_period.empty:
-        return 0
-
-    # 3. Tính doanh thu từng đơn và lấy giá trị trung bình một đơn (AOV)
-    df_period['clean_amt'] = clean_num(df_period[amt_c])
-    if o_c:
-        order_rev = df_period.groupby(o_c)['clean_amt'].sum()
-        aov = order_rev.mean()
-    else:
-        aov = df_period['clean_amt'].mean()
-
-    # Làm tròn về đồng theo Điều 3 & Điều 9 (BẮT BUỘC return int(round(aov)), TUYỆT ĐỐI CẤM return int)
+    df_p['clean_amt'] = clean_num(df_p[a_c])
+    aov = df_p.groupby(o_c)['clean_amt'].sum().mean() if o_c else df_p['clean_amt'].mean()
     return int(round(aov))
 ```""",
 
-    "rate_percentage": """--- VÍ DỤ MINH HỌA: TÍNH TỈ LỆ PHẦN TRĂM (%) ---
+    "rate_percentage": """--- VÍ DỤ: TỈ LỆ PHẦN TRĂM (%) ---
 Câu hỏi: "Tháng 6/2026 tỉ lệ hủy đơn là bao nhiêu phần trăm?" (as_of_date = "2026-06-30")
 ```python
 def solution(data):
-    df_ord = None
-    date_col = None
-    status_col = None
-    order_col = None
-    for name, df in data.items():
-        cols = df.columns.tolist()
-        d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'ngaylap', 'thời gian'])), None)
-        s_c = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'tình trạng', 'ghi chú tt'])), None)
-        if d_c and s_c:
-            df_ord = df.copy()
-            date_col = d_c
-            status_col = s_c
-            order_col = next((c for c in cols if any(k in str(c).lower() for k in ['mã đơn', 'số hđ', 'so hd', 'order id', 'mã giao dịch', 'mã phiếu', 'số phiếu'])), None)
-            break
-
-    if df_ord is None or not date_col or not status_col:
+    df = get_sales_table(data)
+    if df is None:
+        raise CannotAnswer("Không tìm thấy bảng bán hàng")
+    d_c = get_date_col(df)
+    s_c = next((c for c in df.columns if any(k in str(c).lower() for k in ['trạng thái', 'status', 'tình trạng'])), None)
+    o_c = next((c for c in df.columns if any(k in str(c).lower() for k in ['mã đơn', 'mã hd', 'order_id'])), None)
+    if not s_c:
+        raise CannotAnswer("Không tìm thấy cột trạng thái đơn hàng")
+    df['clean_date'] = clean_date(df[d_c])
+    df_p = df[(df['clean_date'] >= '2026-06-01') & (df['clean_date'] <= '2026-06-30 23:59:59')]
+    if df_p.empty:
         return 0.0
-
-    df_ord['clean_date'] = clean_date(df_ord[date_col])
-    mask = (df_ord['clean_date'] >= pd.Timestamp("2026-06-01")) & (df_ord['clean_date'] <= pd.Timestamp("2026-06-30 23:59:59"))
-    df_period = df_ord[mask]
-    if df_period.empty:
-        return 0.0
-
-    cancel_mask = df_period[status_col].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|cancel', na=False)
-    if order_col:
-        total_orders = df_period[order_col].dropna().nunique()
-        cancelled_count = df_period[cancel_mask][order_col].dropna().nunique()
-    else:
-        total_orders = len(df_period)
-        cancelled_count = int(cancel_mask.sum())
-
+    cancel_mask = df_p[s_c].astype(str).str.contains(r'hủy|huỷ|huy|cancel', case=False, na=False)
+    total_orders = df_p[o_c].dropna().nunique() if o_c else len(df_p)
+    cancel_orders = df_p[cancel_mask][o_c].dropna().nunique() if o_c else int(cancel_mask.sum())
     if total_orders == 0:
         return 0.0
-    rate = (cancelled_count / total_orders) * 100.0
-    return round(float(rate), 2)
+    return round(float(cancel_orders / total_orders * 100.0), 2)
 ```""",
 
     "category_share_percentage": """--- VÍ DỤ MINH HỌA: TỈ TRỌNG DOANH THU NHÓM HÀNG / MẶT HÀNG (%) ---
@@ -1757,189 +1258,103 @@ def solution(data):
     return round(float(rev_group / rev_total * 100.0), 2)
 ```""",
 
-    "price_increase_impact": """--- VÍ DỤ MINH HỌA: SO SÁNH SỐ LƯỢNG BÁN TRƯỚC VÀ SAU ĐỢT TĂNG GIÁ (%) ---
-Câu hỏi: "So số ly Cà phê muối bán ra trong 30 ngày kể từ ngày 2026-04-09, ngày tăng giá Cà phê muối, với 30 ngày ngay trước ngày đó: tăng hay giảm bao nhiêu %?" (as_of_date = "2026-06-27")
+    "price_increase_impact": """--- VÍ DỤ: TÁC ĐỘNG TĂNG GIÁ (%) ---
+Câu hỏi: "So số ly Cà phê muối bán ra trong 30 ngày kể từ ngày 2026-04-09 với 30 ngày ngay trước ngày đó: tăng hay giảm bao nhiêu %?" (as_of_date = "2026-06-27")
 ```python
 def solution(data):
-    dfs = [df for n, df in data.items() if any(k in str(n).lower() for k in ['banhang', 'donhang', 'hoadon', 'chitiet', 'ban_hang', 'don_hang'])]
-    df_sales = pd.concat(dfs, ignore_index=True) if dfs else list(data.values())[0].copy()
-    df_sales = filter_valid_sales(df_sales)
-
-    cols = df_sales.columns.tolist()
-    d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)
-    p_c = next((c for c in cols if any(k in str(c).lower() for k in ['tên hàng', 'mặt hàng', 'sản phẩm', 'tên món', 'tên thuốc'])), None)
-    q_c = next((c for c in cols if 'quy đổi' in str(c).lower()), None) or next((c for c in cols if any(k in str(c).lower() for k in ['số lượng', 'sl', 'qty'])), None)
-
-    df_sales['clean_date'] = clean_date(df_sales[d_c])
-    df_sales['clean_qty'] = clean_num(df_sales[q_c])
-    df_prod = df_sales[df_sales[p_c].astype(str).str.contains('Cà phê muối', case=False, na=False)]
-
-    # 30 ngày kể từ 2026-04-09: 2026-04-09 đến 2026-05-08; 30 ngày ngay trước: 2026-03-10 đến 2026-04-08
-    m_after = (df_prod['clean_date'] >= pd.Timestamp("2026-04-09")) & (df_prod['clean_date'] <= pd.Timestamp("2026-05-08 23:59:59"))
-    m_before = (df_prod['clean_date'] >= pd.Timestamp("2026-03-10")) & (df_prod['clean_date'] <= pd.Timestamp("2026-04-08 23:59:59"))
-
-    qty_after = df_prod[m_after]['clean_qty'].sum()
-    qty_before = df_prod[m_before]['clean_qty'].sum()
-    if qty_before == 0:
+    df = get_sales_table(data)
+    if df is None:
+        raise CannotAnswer("Không tìm thấy bảng bán hàng")
+    d_c, p_c = get_date_col(df), get_item_col(df)
+    q_c = next((c for c in df.columns if 'quy đổi' in str(c).lower()), None) or get_qty_col(df)
+    df['clean_date'] = clean_date(df[d_c])
+    matched = df[df[p_c].astype(str).str.contains('Cà phê muối', case=False, na=False)]
+    if matched.empty:
+        raise CannotAnswer("Không tìm thấy sản phẩm Cà phê muối trong lịch sử")
+    m_after = (matched['clean_date'] >= '2026-04-09') & (matched['clean_date'] <= '2026-05-08 23:59:59')
+    m_before = (matched['clean_date'] >= '2026-03-10') & (matched['clean_date'] <= '2026-04-08 23:59:59')
+    q_after = clean_num(matched[m_after][q_c]).sum()
+    q_before = clean_num(matched[m_before][q_c]).sum()
+    if q_before == 0:
         return 0.0
-    return round(float(((qty_after - qty_before) / qty_before) * 100.0), 2)
+    return round(float(((q_after - q_before) / q_before) * 100.0), 2)
 ```""",
 
-    "table_debt": """--- VÍ DỤ MINH HỌA: TRẢ VỀ BẢNG TOP KHÁCH HÀNG CÒN NỢ (TABLE DICT) ---
+    "table_debt": """--- VÍ DỤ: BẢNG TOP KHÁCH HÀNG NỢ (TABLE DICT) ---
 Câu hỏi: "Cho danh sách 3 khách hàng đang nợ nhiều nhất kèm số tiền còn nợ hiện tại?" (as_of_date = "2026-06-30")
 ```python
 def solution(data):
-    df_no = None
-    for name, df in data.items():
-        if any(k in str(name).lower() for k in ['no', 'congno', 'cong_no', 'khachno']):
-            df_no = df.copy()
-            break
+    df_no = next((df for n, df in data.items() if any(k in str(n).lower() for k in ['no', 'congno', 'khachno'])), None)
     if df_no is None:
-        return {'columns': ['khach_hang', 'so_tien_no'], 'rows': []}
-
+        raise CannotAnswer("Không tìm thấy bảng công nợ")
     cols = df_no.columns.tolist()
     c_cust = next((c for c in cols if any(k in str(c).lower() for k in ['khách', 'người nợ', 'tên kh'])), None)
-    c_remain = next((c for c in cols if any(k in str(c).lower() for k in ['còn nợ', 'dư nợ', 'con no', 'phải thu'])), None)
-    c_borrow = next((c for c in cols if any(k in str(c).lower() for k in ['tiền nợ', 'nợ gốc', 'phát sinh', 'mua nợ'])), None)
-    c_paid = next((c for c in cols if any(k in str(c).lower() for k in ['đã trả', 'thanh toán', 'trả nợ'])), None)
-
-    if c_remain:
-        df_no['debt_val'] = clean_num(df_no[c_remain])
-    else:
-        df_no['debt_val'] = clean_num(df_no[c_borrow]) - (clean_num(df_no[c_paid]) if c_paid else 0)
-
-    grouped = df_no.groupby(c_cust, as_index=False)['debt_val'].sum()
-    grouped = grouped[grouped['debt_val'] > 0]
-    grouped = grouped.sort_values(by=['debt_val', c_cust], ascending=[False, True]).head(3)
-    rows = [[str(r[c_cust]).strip(), int(round(r['debt_val']))] for _, r in grouped.iterrows()]
+    c_rem = next((c for c in cols if any(k in str(c).lower() for k in ['còn nợ', 'dư nợ', 'phải thu'])), None)
+    df_no['clean_debt'] = clean_num(df_no[c_rem])
+    grp = df_no.groupby(c_cust, as_index=False)['clean_debt'].sum()
+    grp = grp[grp['clean_debt'] > 0].sort_values(by=['clean_debt', c_cust], ascending=[False, True]).head(3)
+    rows = [[str(r[c_cust]).strip(), int(round(r['clean_debt']))] for _, r in grp.iterrows()]
     return {'columns': ['khach_hang', 'so_tien_no'], 'rows': rows}
 ```""",
 
-    "date_peak_revenue": """--- VÍ DỤ MINH HỌA: TÌM NGÀY CÓ DOANH THU CAO NHẤT ('YYYY-MM-DD') ---
+    "date_peak_revenue": """--- VÍ DỤ: TÌM NGÀY DOANH THU CAO NHẤT ('YYYY-MM-DD') ---
 Câu hỏi: "Trong tháng 8/2025, ngày nào cửa hàng có doanh thu cao nhất?" (as_of_date = "2026-06-30")
 ```python
 def solution(data):
-    dfs = [df for n, df in data.items() if any(k in str(n).lower() for k in ['banhang', 'donhang', 'hoadon', 'ban_hang', 'don_hang']) and 'chitiet' not in str(n).lower()]
-    df_sales = pd.concat(dfs, ignore_index=True) if dfs else list(data.values())[0].copy()
-    df_sales = filter_valid_sales(df_sales)
-
-    cols = df_sales.columns.tolist()
-    d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)
-    a_c = next((c for c in cols if any(k in str(c).lower() for k in ['tổng tiền hàng', 'thành tiền', 'trị giá', 'doanh thu', 'tổng tiền']) and 'thuế' not in str(c).lower()), None)
-
-    df_sales['clean_date'] = clean_date(df_sales[d_c])
-    df_sales['clean_amt'] = clean_num(df_sales[a_c])
-    mask = (df_sales['clean_date'] >= pd.Timestamp("2025-08-01")) & (df_sales['clean_date'] <= pd.Timestamp("2025-08-31 23:59:59"))
-    df_m = df_sales[mask].copy()
-    df_m['day_str'] = df_m['clean_date'].dt.strftime('%Y-%m-%d')
-    daily = df_m.groupby('day_str', as_index=False)['clean_amt'].sum()
-    daily = daily.sort_values(by=['clean_amt', 'day_str'], ascending=[False, True])
-    return str(daily.iloc[0]['day_str'])
+    df = get_sales_table(data)
+    if df is None:
+        raise CannotAnswer("Không tìm thấy bảng bán hàng")
+    d_c, a_c = get_date_col(df), get_amount_col(df)
+    df['clean_date'] = clean_date(df[d_c])
+    df_p = df[(df['clean_date'] >= '2025-08-01') & (df['clean_date'] <= '2025-08-31 23:59:59')].copy()
+    if df_p.empty:
+        raise CannotAnswer("Không có dữ liệu bán hàng tháng 8/2025")
+    df_p['day_str'] = df_p['clean_date'].dt.strftime('%Y-%m-%d')
+    daily = df_p.groupby('day_str', as_index=False)[a_c].apply(lambda s: clean_num(s).sum()).rename(columns={a_c: 'total'})
+    return str(daily.sort_values(by=['total', 'day_str'], ascending=[False, True]).iloc[0]['day_str'])
 ```""",
 
-    "inventory_unit_conversion": """--- VÍ DỤ MINH HỌA: TỒN KHO & QUY ĐỔI ĐƠN VỊ (HỘP VÀ VIÊN LẺ) ---
+    "inventory_unit_conversion": """--- VÍ DỤ: TỒN KHO & QUY ĐỔI ĐƠN VỊ ---
 Câu hỏi: "Sản phẩm Hapacol 650 còn tồn bao nhiêu hộp chẵn và bao nhiêu viên lẻ?" (as_of_date = "2026-07-31")
 ```python
 def solution(data):
-    # 1. Tìm bảng tồn kho (BaoCaoTonKho, TonKho, TheKho, KhoHang)
-    df_stock = None
-    for name, df in data.items():
-        n_clean = re.sub(r'[^a-zA-Z0-9]', '', str(name).lower())
-        if any(k in n_clean for k in ['tonkho', 'baocaotonkho', 'thekho', 'kho']):
-            df_stock = df.copy()
-            break
+    df_stock = next((df for n, df in data.items() if any(k in str(n).lower() for k in ['tonkho', 'kho', 'thekho'])), None)
     if df_stock is None:
-        for name, df in data.items():
-            cols = [str(c).lower() for c in df.columns]
-            if any(k in c for k in cols for k in ['tồn cuối', 'số lượng tồn', 'tồn kho', 'tồn thực']):
-                df_stock = df.copy()
-                break
-
-    if df_stock is None:
-        return [0, 0]
-
-    cols = df_stock.columns.tolist()
-    remain_col = next((c for c in cols if any(k in str(c).lower() for k in ['tồn cuối', 'số lượng tồn', 'tồn kho', 'soluongton', 'tồn thực'])), None)
-    prod_col = next((c for c in cols if any(k in str(c).lower() for k in ['tên hàng', 'sản phẩm', 'mặt hàng', 'product'])), None)
-    unit_col = next((c for c in cols if any(k in str(c).lower() for k in ['quy cách', 'đơn vị', 'đvt'])), None)
-
-    if not prod_col or not remain_col:
-        return [0, 0]
-
-    matched = df_stock[df_stock[prod_col].astype(str).str.lower().str.contains('hapacol 650', na=False)]
+        raise CannotAnswer("Không tìm thấy bảng tồn kho")
+    p_c = get_item_col(df_stock)
+    rem_c = next((c for c in df_stock.columns if any(k in str(c).lower() for k in ['tồn cuối', 'tồn kho', 'tồn thực'])), None)
+    unit_c = next((c for c in df_stock.columns if any(k in str(c).lower() for k in ['quy cách', 'đơn vị', 'đvt'])), None)
+    matched = df_stock[df_stock[p_c].astype(str).str.contains('hapacol 650', case=False, na=False)]
     if matched.empty:
-        return [0, 0]
-
-    total_units = int(round(clean_num(matched[remain_col]).iloc[0]))
-    packing_size = 100
-    if unit_col and not matched[unit_col].isna().all():
-        val = matched[unit_col].iloc[0]
-        m = re.search(r"\\d+", str(val))
+        raise CannotAnswer("Không tìm thấy sản phẩm Hapacol 650 trong danh mục")
+    total_units = int(round(clean_num(matched[rem_c]).iloc[0]))
+    pack = 100
+    if unit_c and not matched[unit_c].isna().all():
+        m = re.search(r'\d+', str(matched[unit_c].iloc[0]))
         if m:
-            packing_size = int(m.group(0))
-
-    boxes, pills = divmod(total_units, packing_size)
+            pack = int(m.group(0))
+    boxes, pills = divmod(total_units, pack)
     return [int(boxes), int(pills)]
 ```""",
 
-    "time_series": """--- VÍ DỤ MINH HỌA: PHÂN TÍCH CHUỖI THỜI GIAN & SO SÁNH KỲ LIỀN TRƯỚC ---
+    "time_series": """--- VÍ DỤ: SO SÁNH TĂNG TRƯỞNG DOANH THU (%) ---
 Câu hỏi: "Doanh thu tháng này tăng hay giảm bao nhiêu phần trăm so với tháng trước?" (as_of_date = "2026-05-25")
 ```python
 def solution(data):
-    df_sales = get_sales_table(data)
-    if df_sales is None or df_sales.empty:
-        return 0.0
-
-    date_col = get_date_col(df_sales)
-    amt_col = get_amount_col(df_sales)
-    if not date_col or not amt_col:
-        return 0.0
-
-    df_sales['clean_date'] = clean_date(df_sales[date_col])
-    df_sales['clean_amt'] = clean_num(df_sales[amt_col])
-
-    mask_curr = (df_sales['clean_date'] >= pd.Timestamp("2026-05-01")) & (df_sales['clean_date'] <= pd.Timestamp("2026-05-25 23:59:59"))
-    mask_prev = (df_sales['clean_date'] >= pd.Timestamp("2026-04-01")) & (df_sales['clean_date'] <= pd.Timestamp("2026-04-25 23:59:59"))
-
-    rev_curr = df_sales[mask_curr]['clean_amt'].sum()
-    rev_prev = df_sales[mask_prev]['clean_amt'].sum()
-
+    rev_curr = revenue(data, start_date="2026-05-01", end_date="2026-05-25", as_of_date="2026-05-25")
+    rev_prev = revenue(data, start_date="2026-04-01", end_date="2026-04-25", as_of_date="2026-05-25")
     if rev_prev == 0:
         return 0.0
-
-    pct_change = ((rev_curr - rev_prev) / rev_prev) * 100.0
-    return round(float(pct_change), 2)
+    return round(float((rev_curr - rev_prev) / rev_prev * 100.0), 2)
 ```""",
 
-    "boolean_trend": """--- VÍ DỤ MINH HỌA: KIỂM TRA XU HƯỚNG DOANH THU (BOOLEAN TREND) ---
+    "boolean_trend": """--- VÍ DỤ: KIỂM TRA XU HƯỚNG TĂNG LIÊN TỤC (BOOLEAN) ---
 Câu hỏi: "Từ tháng 7/2025 qua tháng 8/2025 rồi tháng 9/2025, doanh thu có tăng liên tục không?" (as_of_date = "2026-06-24")
 ```python
 def solution(data):
-    # 1. Ghép các bảng bán hàng nếu bị phân mảnh (ví dụ: SoBanHang_1, SoBanHang_2026)
-    dfs = []
-    for n, df in data.items():
-        if any(k in str(n).lower() for k in ['banhang', 'donhang', 'hoadon']):
-            dfs.append(df)
-    df_sales = pd.concat(dfs, ignore_index=True) if dfs else list(data.values())[0]
-
-    cols = df_sales.columns.tolist()
-    d_c = next((c for c in cols if any(k in str(c).lower() for k in ['ngày', 'date', 'thời gian'])), None)
-    a_c = next((c for c in cols if any(k in str(c).lower() for k in ['trị giá', 'thành tiền', 'tổng tiền', 'tiền']) and 'thuế' not in str(c).lower()), None)
-    st_c = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status'])), None)
-
-    df_sales['clean_date'] = clean_date(df_sales[d_c])
-    df_sales['clean_amt'] = clean_num(df_sales[a_c])
-
-    # Bỏ đơn hủy/trả hàng/hoàn hàng
-    if st_c:
-        df_sales = df_sales[~df_sales[st_c].astype(str).str.contains(r'hủy|huỷ|huy|trả|tra|hoàn|hoan|cancel', case=False, na=False)]
-
-    # Tính doanh thu từng tháng
-    r7 = df_sales[(df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 7)]['clean_amt'].sum()
-    r8 = df_sales[(df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 8)]['clean_amt'].sum()
-    r9 = df_sales[(df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 9)]['clean_amt'].sum()
-
-    # Tăng liên tục nghĩa là r7 < r8 < r9. Trả về đúng giá trị Boolean True/False
+    r7 = revenue(data, start_date="2025-07-01", end_date="2025-07-31")
+    r8 = revenue(data, start_date="2025-08-01", end_date="2025-08-31")
+    r9 = revenue(data, start_date="2025-09-01", end_date="2025-09-30")
     return bool(r7 < r8 < r9)
 ```""",
 
@@ -1949,7 +1364,7 @@ Câu hỏi: "Nhân viên nào có tay nghề cao nhất tiệm?" (as_of_date = "
 def solution(data):
     has_skill = any('tay nghề' in str(c).lower() or 'trình độ' in str(c).lower() for df in data.values() for c in df.columns)
     if not has_skill:
-        raise DataNotFoundError("Dữ liệu không có thông tin về tay nghề hoặc trình độ", column_name="tay nghề")
+        raise CannotAnswer("Dữ liệu cửa hàng không có thông tin về tay nghề hoặc trình độ của nhân viên")
     return None
 ```""",
 }
@@ -2127,11 +1542,28 @@ def build_prompt(
             matches = None
 
     if matches:
+        q_unacc = _strip_accents(question).lower()
         entity_lines = []
         for m in matches[:5]:
             val = getattr(m, "matched_value", str(m))
             term = getattr(m, "query_term", "")
+            score = getattr(m, "score", 1.0)
             meta = getattr(m, "metadata", {}) or {}
+
+            # Không in mục "THỰC THỂ" nếu câu hỏi không chứa thực thể (kiểm tra độ xuất hiện trong câu hỏi)
+            val_unacc = _strip_accents(val).lower()
+            term_unacc = _strip_accents(term).lower() if term else ""
+            _stop_words = {"bao", "thung", "chai", "hop", "goi", "lon", "cai", "chiec", "kg", "gam", "lit", "ngay", "thang", "nam", "tong", "tien", "so", "don", "hang", "san", "pham", "khach", "loai"}
+            val_words = [w for w in re.findall(r"\w+", val_unacc) if len(w) >= 3 and w not in _stop_words]
+
+            has_in_question = (
+                (term_unacc and len(term_unacc) >= 3 and term_unacc in q_unacc)
+                or (val_unacc and len(val_unacc) >= 4 and val_unacc in q_unacc)
+                or (val_words and any(w in q_unacc for w in val_words))
+            )
+            if not has_in_question or score < 0.60:
+                continue
+
             src_tbl = meta.get("source_table", "")
             src_col = meta.get("source_col", "")
             loc = f" (ở bảng '{src_tbl}', cột '{src_col}')" if src_tbl and src_col else ""
@@ -2165,12 +1597,12 @@ def build_prompt(
         rb_text = extract_relevant_rulebook_clauses(
             rulebook_content,
             question,
-            max_chars=1200,
+            max_chars=220,
             schema_str=active_schema,
             business_note=business_note or "",
         )
         if rb_text:
-            rulebook_block = f"\n==================== QUY TẮC NGHIỆP VỤ BẮT BUỘC ====================\n{rb_text}\n"
+            rulebook_block = f"\n{rb_text}\n"
 
     biz_context = ""
     if business_note and business_note.strip():
@@ -2187,15 +1619,13 @@ def build_prompt(
     if shop_memory_hints and shop_memory_hints.strip():
         biz_context += f"\nKINH NGHIỆM SCHEMA ĐÃ XÁC MINH CHO CỬA HÀNG NÀY:\n{shop_memory_hints.strip()}\n"
 
-    req_3 = "3. Ưu tiên gọi các hàm nghiệp vụ tất định đã có sẵn trong sandbox: `revenue(data, start_date=..., end_date=..., as_of_date=...)` để tính doanh thu (tự động lấy thành tiền dòng hàng sau chiết khấu, không trừ voucher đơn, không gồm VAT/ship, loại cả đơn hủy/trả), `count_orders(data, start_date=..., end_date=..., status='valid'|'cancelled')` để đếm đơn, và `debt(data, end_date=...)` để tính công nợ, thay vì tự chọn cột tiền cấp đơn (như Tổng bill, Khách trả). Nếu cần lọc bảng trực tiếp: tìm cột ngày gốc bằng `d_c = next(...)`, tạo `df['clean_date'] = clean_date(df[d_c])` và dùng `df['clean_date'].dt.year`, `df['clean_date'].dt.month`."
+    req_3 = "3. Ưu tiên gọi các hàm nghiệp vụ tất định có sẵn trong sandbox: `revenue(data, start_date=..., end_date=..., as_of_date=..., product=...)` để tính doanh thu, `count_orders(data, start_date=..., end_date=..., status='valid'|'cancelled')` để đếm đơn, và `debt(data, end_date=...)` để tính công nợ."
     if intent in ("count_orders", "cancelled_orders"):
-        req_3 += " Khi đếm đơn (kể cả đơn hủy), gọi `count_orders(data, start_date=..., end_date=..., status='cancelled' if hủy else 'valid')` hoặc tìm cột mã đơn order_col = next(...) và đếm int(df[order_col].dropna().nunique()). TUYỆT ĐỐI CẤM dùng len(df) hay df.shape[0]!"
+        req_3 += " Khi đếm đơn, tìm cột mã đơn order_col = next(...) và đếm int(df[order_col].dropna().nunique()). TUYỆT ĐỐI CẤM dùng len(df) hay df.shape[0]!"
     elif intent == "quantity_sum":
         req_3 += " Khi tính số lượng (ly, kg), BẮT BUỘC tìm cột số lượng qty_col = next(...) và tính tổng int(round(clean_num(df[qty_col]).sum())). TUYỆT ĐỐI CẤM tính tổng cột tiền."
     elif intent == "price_lookup":
         req_3 += " Khi tra cứu giá, tìm cột đơn giá / giá bán của đúng sản phẩm. TUYỆT ĐỐI CẤM tính trung bình toàn bộ danh mục df['Giá bán'].mean() và TUYỆT ĐỐI CẤM tính tổng doanh thu."
-    else:
-        req_3 += " Khi tính doanh thu bán hàng, gọi trực tiếp `revenue(data, start_date=..., end_date=...)` (hoặc truyền thêm `product=...` nếu hỏi riêng 1 mặt hàng) để đảm bảo đúng quy tắc Rulebook §1."
 
     shop_static_prefix = (
         "==================== HỒ SƠ SCHEMA & GHI CHÚ CỬA HÀNG (STATIC SHOP PREFIX) ====================\n"
@@ -2309,8 +1739,8 @@ CÂU HỎI CỦA NGƯỜI DÙNG:
 HƯỚNG DẪN SỬA LỖI:
 1. Đọc kỹ chi tiết lỗi ở trên (KeyError, DataNotFoundError, TypeError, logic sai lệch).
 2. Kiểm tra danh sách bảng và cột thực tế trong data để chọn đúng cột và bảng:
-   - Ưu tiên dùng các hàm helper tích hợp sẵn: `df = get_sales_table(data)`, `d_c = get_date_col(df)`, `amt_c = get_amount_col(df)`, `qty_c = get_qty_col(df)`, `item_c = get_item_col(df)`.
-   - TUYỆT ĐỐI KHÔNG raise DataNotFoundError hay các exception khác! Nếu không tìm thấy hoặc kết quả rỗng, hãy return 0 (đối với số tiền/số đơn/số lượng), 0.0 (tỉ lệ), hoặc [] (danh sách).
+   - Ưu tiên dùng các hàm helper tích hợp sẵn: `revenue(...)`, `count_orders(...)`, `debt(...)`, `get_sales_table(...)`.
+   - Nếu thiếu bảng/cột cần thiết hoặc thực thể không tồn tại trong toàn bộ lịch sử cửa hàng: BẮT BUỘC `raise CannotAnswer("lý do")`. Chỉ return 0 khi thực thể có tồn tại nhưng không phát sinh giao dịch trong kỳ được hỏi.
 3. Viết lại hàm `def solution(data):` hoàn chỉnh, ngắn gọn, trực diện:
 ```python
 """

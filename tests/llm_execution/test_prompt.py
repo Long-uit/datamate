@@ -98,12 +98,12 @@ class TestPromptBuilder(unittest.TestCase):
     def test_select_few_shots_selection(self):
         """Kiểm tra chọn đúng ví dụ theo intent và không bị thừa ví dụ khác."""
         few_shot_rate = select_few_shots("rate_percentage")
-        self.assertIn("TÍNH TỈ LỆ PHẦN TRĂM", few_shot_rate)
+        self.assertIn("TỈ LỆ PHẦN TRĂM", few_shot_rate)
         self.assertNotIn("Dịp Tết 2026, mặt hàng nào bán chạy nhất", few_shot_rate)
 
         few_shot_rank = select_few_shots("ranking_topk")
-        self.assertIn("TÌM ĐỐI TƯỢNG NHIỀU NHẤT", few_shot_rank)
-        self.assertNotIn("TÍNH TỈ LỆ PHẦN TRĂM", few_shot_rank)
+        self.assertIn("XẾP HẠNG TOP", few_shot_rank)
+        self.assertNotIn("TỈ LỆ PHẦN TRĂM", few_shot_rank)
 
         few_shot_unans = select_few_shots("unanswerable_suspect")
         self.assertIn("CÂU HỎI THIẾU DỮ LIỆU", few_shot_unans)
@@ -111,8 +111,8 @@ class TestPromptBuilder(unittest.TestCase):
     def test_few_shot_time_series(self):
         """Kiểm tra ví dụ mẫu cho intent time_series."""
         few_shot = select_few_shots("time_series")
-        self.assertIn("PHÂN TÍCH CHUỖI THỜI GIAN", few_shot)
-        self.assertIn("pct_change", few_shot)
+        self.assertIn("TĂNG TRƯỞNG DOANH THU", few_shot)
+        self.assertIn("revenue", few_shot)
 
     # --------------------------------------------------------------------------
     # Tiêu chí 3: Giải mã thời gian tự động (Temporal Grounding)
@@ -211,7 +211,7 @@ class TestPromptBuilder(unittest.TestCase):
         )
         self.assertIsInstance(sys_p, str)
         self.assertIsInstance(usr_p, str)
-        self.assertIn("NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN", sys_p)
+        self.assertIn("QUY TẮC CỐT LÕI", sys_p)
         self.assertIn("VÍ DỤ MINH HỌA PHÙ HỢP NHẤT", sys_p)
         self.assertIn("Dịp Tết 2026, mặt hàng nào bán chạy nhất ạ?", usr_p)
         self.assertIn("2026-02-10", usr_p)

@@ -867,13 +867,14 @@ def should_retry_self_correction(
     err_type: Optional[str] = None,
 ) -> bool:
     """
-    Bước 3: Với lỗi DataNotFoundError (lỗi schema / không tìm thấy bảng hoặc cột)
-    thì KHÔNG chạy vòng tự sửa lỗi bằng LLM, vì các retry sinh lại đúng code cũ và tốn thời gian.
+    Quyết định có kích hoạt vòng tự sửa lỗi (Self-Correction) hay không.
+    Với lỗi CannotAnswer hoặc DataNotFoundError (không tìm thấy bảng/cột/thực thể),
+    KHÔNG chạy retry để tránh vòng lặp vô ích và chuyển thẳng sang Abstain an toàn.
     """
-    if err_type == "DataNotFoundError":
+    if err_type in ("CannotAnswer", "DataNotFoundError"):
         return False
     err_str = str(exec_err or "")
-    if "DataNotFoundError" in err_str or "Không tìm thấy bảng" in err_str or "Không tìm thấy cột" in err_str:
+    if any(k in err_str for k in ("CannotAnswer", "DataNotFoundError", "Không tìm thấy bảng", "Không tìm thấy cột")):
         return False
     return bool(exec_err or sanity_err)
 

@@ -17,6 +17,21 @@ class DataMateError(Exception):
     pass
 
 
+class CannotAnswer(DataMateError):
+    """
+    Ném ra khi hàm solution(data) xác định câu hỏi không thể trả lời được
+    (do thiếu bảng/cột cần thiết hoặc thực thể không tồn tại trong toàn bộ lịch sử cửa hàng).
+    Báo hiệu cho pipeline chuyển thẳng thành Abstain an toàn (0.0 điểm).
+    """
+
+    def __init__(self, message: str = "Không thể trả lời câu hỏi do thiếu dữ liệu hoặc thực thể không tồn tại.") -> None:
+        super().__init__(message)
+        self.message = message
+
+    def __str__(self) -> str:
+        return self.message
+
+
 class DataNotFoundError(DataMateError):
     """
     Ném ra khi hàm solution(data) không tìm thấy bảng hoặc cột cần thiết trong dữ liệu.
@@ -55,3 +70,10 @@ class DataNotFoundError(DataMateError):
         if self.available_columns:
             parts.append(f"[Các cột thực tế có sẵn: {', '.join(self.available_columns[:15])}]")
         return " ".join(parts)
+
+
+__all__ = [
+    "DataMateError",
+    "CannotAnswer",
+    "DataNotFoundError",
+]

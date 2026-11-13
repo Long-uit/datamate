@@ -164,7 +164,7 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
         data_dict = build_canonical_data_dict(bd)
 
         # Sử dụng Rich Schema Profiler hiển thị kiểu dữ liệu, min-max date và giá trị mẫu (tối ưu 15 cột)
-        schema_summary = profile_business_schema(bd, max_cols=15)
+        schema_summary = profile_business_schema(bd, max_cols=10)
         shop_meta = extract_shop_metadata(business_obj=bd, data_dict=data_dict)
         candidates = extract_candidates_from_business(bd)
         return data_dict, con, schema_summary, bd, shop_meta, candidates
@@ -212,7 +212,7 @@ def execute_solution(
 
     # Fallback chạy in-process: ủy quyền trực tiếp cho execute_code_in_env để đồng nhất 100% với sandbox worker
     from datamate.llm_execution.worker import execute_code_in_env
-    from datamate.exceptions import DataNotFoundError
+    from datamate.exceptions import DataNotFoundError, CannotAnswer
 
     t_start = time.perf_counter()
     res_payload = execute_code_in_env(
@@ -226,6 +226,7 @@ def execute_solution(
         filter_future_data=filter_future_data,
         clean_num=clean_num,
         clean_date=clean_date,
+        CannotAnswer=CannotAnswer,
         DataNotFoundError=DataNotFoundError,
         as_of_date=as_of_date,
     )
@@ -634,7 +635,8 @@ def main():
             )
 
             # 5.5. Cơ chế Cứu hộ Chủ động (Active Deterministic Fallback) nếu LLM + Self-Correction thất bại
-            if exec_err or sanity_err:
+            is_cannot_answer = bool(exec_err and "CannotAnswer" in str(exec_err))
+            if (exec_err or sanity_err) and not is_cannot_answer:
                 fb_val, fb_src = try_deterministic_fallback(
                     intent=intent,
                     question=normalized_q,
@@ -655,7 +657,10 @@ def main():
 
             # 6. Chuẩn hóa kết quả đầu ra & Đánh giá Calibrated Abstention Gate (Module 6)
             confidence = 0.0
-            if exec_err == "gen_failed":
+            if is_cannot_answer:
+                sub_ans = make_abstain(f"CannotAnswer: {exec_err}")
+                print(f"  🛡️ Mô hình xác định không thể trả lời (CannotAnswer) -> Abstain an toàn (0 điểm)")
+            elif exec_err == "gen_failed":
                 sub_ans = make_abstain("Generation Failed: no valid code generated")
                 print(f"  🛡️ Sinh mã thất bại -> Abstain an toàn (0 điểm)")
             elif exec_err:

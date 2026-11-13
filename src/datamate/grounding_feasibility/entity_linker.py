@@ -277,17 +277,16 @@ BUSINESS_ENTITY_STOPWORDS: set[str] = {
     "cửa hàng", "cua hang", "tổng cộng", "tong cong", "bao nhiêu", "bao nhieu", "tỉ trọng", "ti trong", "phần trăm", "phan tram",
 }
 
-# Các cột tiềm năng chứa thực thể (Mở rộng toàn diện các trường nghiệp vụ)
+# Các cột tiềm năng chứa thực thể (Tập trung chính vào Sản phẩm, Khách hàng, Danh mục và Hoạt chất)
 ENTITY_COL_MAP = [
     ("product", [
-        r"s[aả]n\s*ph[aẩ]m",
         r"t[eê]n\s*h[aà]ng",
         r"t[eê]n\s*m[aặ]t\s*h[aà]ng",
+        r"t[eê]n\s*s[aả]n\s*ph[aẩ]m",
+        r"s[aả]n\s*ph[aẩ]m",
         r"m[aặ]t\s*h[aà]ng",
         r"thu[oố]c",
-        r"sku",
-        r"m[aã]\s*h[aà]ng",
-        r"m[aã]\s*sp",
+        r"t[eê]n\s*thu[oố]c",
     ]),
     ("active_ingredient", [
         r"ho[aạ]t\s*ch[aấ]t",
@@ -304,10 +303,8 @@ ENTITY_COL_MAP = [
         r"category",
     ]),
     ("customer", [
-        r"kh[aá]ch\s*h[aà]ng",
         r"t[eê]n\s*kh[aá]ch",
-        r"m[aã]\s*kh",
-        r"m[aã]\s*kh[aá]ch",
+        r"kh[aá]ch\s*h[aà]ng",
     ]),
     ("staff", [
         r"nh[aâ]n\s*vi[eê]n",
@@ -513,6 +510,18 @@ def extract_candidates_from_business(business: BusinessData) -> list[Candidate]:
             continue
 
         for col in ti.columns:
+            # 1. Loại bỏ các cột số lượng, tiền, ngày, mã đơn khỏi không gian thực thể
+            col_unacc = remove_accents(str(col)).lower()
+            if any(k in col_unacc for k in [
+                "so luong", "soluong", "sl", "quy doi", "quy cach", "don vi", "dvt",
+                "trong luong", "khoi luong", "can nang",
+                "don gia", "dongia", "gia ban", "gia nhap", "thanh tien", "tong tien",
+                "tien hang", "chiet khau", "giam gia", "phi", "thue", "vat", "tien",
+                "gia", "no", "du no", "ngay", "date", "thoi gian", "gio", "time",
+                "ma don", "ma hoa don", "ma hd", "order id", "ma ct", "so hd", "so phieu",
+            ]):
+                continue
+
             norm_col = normalize_entity_text(col)
 
             # Xác định loại thực thể qua ENTITY_COL_MAP mở rộng
@@ -541,6 +550,10 @@ def extract_candidates_from_business(business: BusinessData) -> list[Candidate]:
                 for val in unique_vals:
                     val_str = str(val).strip()
                     if not val_str or len(val_str) < 2:
+                        continue
+                    # Bỏ qua nếu giá trị thực thể là số lượng / đơn vị (ví dụ: '2 bao', '1 thùng', '10 kg') hoặc số thuần túy
+                    val_unacc = remove_accents(val_str).lower().strip()
+                    if re.match(r"^\d+(?:[.,]\d+)?(?:\s*(?:bao|thung|hop|goi|chai|ly|kg|g|lon|can|vi|vien|cai|chiec|met|m|m2|m3|l|lit|cuon|bo|cap))?$", val_unacc):
                         continue
                     key = (entity_type, val_str)
                     if key not in seen:

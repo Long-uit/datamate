@@ -56,49 +56,45 @@ def profile_table_columns(df: pd.DataFrame, max_cols: int = 15) -> List[str]:
             except Exception:
                 pass
 
-        # 2. Nhận diện cột tiền tệ / số lượng (kiểm tra trước phân loại để tránh nhầm số thành categorical)
-        # Gắn nhãn ngữ nghĩa theo Rulebook để mô hình không chọn nhầm giữa Tiền hàng thuần vs Tiền khách trả
+        # 2. Nhận diện cột tiền tệ / số lượng
         is_num_keyword = (
             any(k in c_low for k in ["tiền", "giá", "số lượng", "soluong", "doanh thu", "chiết khấu", "giảm giá", "thuế", "vat", "nợ", "tồn", "cần trả", "đã trả", "đơn giá", "phí ship", "phí vận chuyển"])
             or bool(re.search(r"\bsl\b", c_low))
         )
-        sample_val = _normalize_text(non_null.iloc[0])
-        if len(sample_val) > 20:
-            sample_val = sample_val[:17] + "..."
 
         if is_num_keyword:
             if any(k in c_low for k in ["quy đổi", "quy doi", "cơ sở", "co so"]):
-                num_tag = "SL quy đổi cơ sở"
+                num_tag = "SL quy đổi"
             elif any(k in c_low for k in ["số lượng", "soluong"]) or bool(re.search(r"\bsl\b", c_low)):
                 num_tag = "số lượng"
             elif any(k in c_low for k in ["đơn giá", "don gia", "giá bán", "gia ban", "giá nhập", "gia nhap"]):
                 num_tag = "đơn giá"
-            elif any(k in c_low for k in ["chiết khấu", "chiet khau", "giảm giá", "giam gia", "thuế", "vat", "phí ship", "phí vận chuyển"]):
-                num_tag = "giảm giá/thuế/ship"
+            elif any(k in c_low for k in ["chiết khấu", "chiet khau", "giảm giá", "giam gia", "thuế", "vat", "phí ship"]):
+                num_tag = "giảm giá/thuế"
             elif any(k in c_low for k in ["khách cần trả", "khách đã trả", "thanh toán", "tổng bill", "khach tra"]):
-                num_tag = "tiền thanh toán cấp đơn"
+                num_tag = "tiền thanh toán"
             elif any(k in c_low for k in ["thành tiền", "thanh tien", "tổng tiền hàng", "tong tien hang", "doanh thu", "tổng sau giảm"]):
                 num_tag = "tiền hàng/doanh thu"
             else:
-                num_tag = "số/tiền"
-            col_previews.append(f"'{col_name}' ({num_tag}, vd: '{sample_val}')")
+                num_tag = "tiền"
+            col_previews.append(f"'{col_name}' ({num_tag})")
             continue
 
-        # 3. Nhận diện cột phân loại (categorical):
-        # Chỉ đánh nhãn phân loại khi tên cột có ngữ nghĩa phân loại HOẶC khi bảng có đủ dòng (>= 15 dòng) và n_unique <= 6
-        is_cat_keyword = any(k in c_low for k in ["trạng thái", "status", "tình trạng", "kênh", "channel", "loại", "hình thức", "phương thức", "nhóm", "phân loại", "đơn vị", "đvt", "dvt", "gender", "giới tính"])
-        is_valid_categorical = is_cat_keyword or (n_rows >= 15 and 1 <= n_unique <= 6)
-        
-        if is_valid_categorical and 1 <= n_unique <= 6:
+        # 3. Nhận diện cột phân loại (categorical)
+        is_cat_keyword = any(k in c_low for k in ["trạng thái", "status", "tình trạng", "kênh", "channel", "phương thức", "hình thức"])
+        if is_cat_keyword and 1 <= n_unique <= 6:
             unique_vals = [_normalize_text(v) for v in non_null.unique() if _normalize_text(v)]
             unique_vals = [v for v in unique_vals if v.lower() not in ("nan", "none", "null")]
             if unique_vals:
-                vals_str = ", ".join(f"'{v[:18]}...'" if len(v) > 20 else f"'{v}'" for v in unique_vals[:3])
+                vals_str = ", ".join(f"'{v[:10]}'" for v in unique_vals[:2])
                 col_previews.append(f"'{col_name}' (phân loại: [{vals_str}])")
                 continue
+        elif 1 <= n_unique <= 6 and n_rows >= 15:
+            col_previews.append(f"'{col_name}' (phân loại)")
+            continue
 
         # 4. Mặc định là chuỗi / mã
-        col_previews.append(f"'{col_name}' (vd: '{sample_val}')")
+        col_previews.append(f"'{col_name}'")
 
     return col_previews
 
@@ -135,19 +131,19 @@ def infer_table_role(table_name: str, df: pd.DataFrame) -> str:
     has_sales_name = any(k in t_clean for k in ["banhang", "donhang", "hoadon", "sobanhang", "pos", "giaodich", "chitietdon", "hoadonchitiet", "chitietbanhang", "danhsachhoadon"])
     has_sales_id = any(any(k in c for k in ["mã đơn", "mã hoá đơn", "mã hd", "mã bill", "mã phiếu", "order_id", "mã chứng từ"]) for c in cols_low)
 
-    # 1. Sổ giao hàng / Vận chuyển (đợt giao, lượt giao, ngày chở/giao, mã vận đơn, biển số xe)
+    # 1. Sổ giao hàng / Vận chuyển
     is_delivery = (
         any(k in t_clean for k in ["giaohang", "phieugiao", "vanchuyen", "chohang", "sochohang", "delivery", "ship"])
         or any(any(k in c for k in ["ngày giao", "ngày chở", "lần giao", "lượt giao", "biển số", "người chở", "người giao", "sl thực giao", "đợt giao"]) for c in cols_low)
     ) and not has_money
     if is_delivery:
-        return "Sổ giao hàng / Vận chuyển (đợt giao, lượt giao, ngày chở/giao, mã vận đơn, biển số xe)"
+        return "Sổ giao hàng"
 
-    # 2. Bán hàng (Ưu tiên kiểm tra trước công nợ để tránh bảng hóa đơn có cột 'Còn nợ' bị nhầm thành nợ)
+    # 2. Bán hàng
     if (has_sales_name and (has_date or has_money or has_qty or has_sales_id)) or (has_sales_id and (has_date or has_money or has_item)) or (has_date and has_money):
         if has_item and has_qty:
-            return "Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)"
-        return "Bán hàng tổng hợp (hóa đơn, tổng tiền, ngày bán, trạng thái/ghi chú TT)"
+            return "Bán hàng chi tiết"
+        return "Bán hàng tổng hợp"
 
     # 3. Kiểm tra nhập hàng / phiếu nhập
     is_import = (
@@ -156,8 +152,8 @@ def infer_table_role(table_name: str, df: pd.DataFrame) -> str:
     )
     if is_import:
         if any(any(k in c for k in ["mã hàng", "tên hàng", "sản phẩm", "product", "sku"]) for c in cols_low):
-            return "Nhập hàng chi tiết (mặt hàng, số lượng, giá nhập)"
-        return "Nhập hàng tổng hợp (phiếu nhập, ngày nhập, tiền nhập)"
+            return "Nhập hàng chi tiết"
+        return "Nhập hàng tổng hợp"
 
     # 4. Kiểm tra tồn kho / thẻ kho
     is_inv = (
@@ -165,7 +161,7 @@ def infer_table_role(table_name: str, df: pd.DataFrame) -> str:
         or any(any(k in c for k in ["tồn kho", "tồn cuối", "tồn thực", "số lượng tồn", "sl tồn", "tồn đầu"]) for c in cols_low)
     )
     if is_inv:
-        return "Tồn kho / Thẻ kho (số lượng tồn, tồn thực)"
+        return "Tồn kho"
 
     # 5. Kiểm tra chi phí vận hành
     is_cost = (
@@ -173,35 +169,35 @@ def infer_table_role(table_name: str, df: pd.DataFrame) -> str:
         or any(any(k in c for k in ["chi phí", "khoản chi", "loại chi"]) for c in cols_low)
     )
     if is_cost:
-        return "Sổ chi phí vận hành"
+        return "Sổ chi phí"
 
-    # 6. Kiểm tra công nợ / sổ nợ (Chỉ nhận diện khi tên bảng rõ ràng hoặc có cột nợ chuyên biệt và KHÔNG phải bảng bán hàng)
+    # 6. Kiểm tra công nợ / sổ nợ
     is_debt = (
         any(k in t_clean for k in ["congno", "sono", "sogop", "phaithu", "phaitra", "hanno", "phieuthu", "soquy"])
         or (any(any(k in c for k in ["hạn nợ", "số ngày được nợ", "tuổi nợ", "thu nợ"]) for c in cols_low) and not has_sales_id)
     )
     if is_debt:
-        return "Công nợ / Sổ theo dõi nợ & thanh toán"
+        return "Công nợ"
 
-    # 7. Kiểm tra danh mục khách hàng (không có ngày giao dịch và không có tiền)
+    # 7. Kiểm tra danh mục khách hàng
     is_cust = (
         any(k in t_clean for k in ["khachhang", "customer"])
         or any(any(k in c for k in ["mã khách", "tên khách", "nhóm khách", "sđt", "điện thoại", "tenkh", "makh"]) for c in cols_low)
     ) and not has_date and not has_money
     if is_cust:
-        return "Danh mục khách hàng (mã khách, tên khách, nhóm khách, địa chỉ)"
+        return "Danh mục khách hàng"
 
-    # 8. Kiểm tra danh mục sản phẩm / thuốc / bảng giá (không có ngày giao dịch và không có tiền)
+    # 8. Kiểm tra danh mục sản phẩm
     is_prod = (
         any(k in t_clean for k in ["sanpham", "hanghoa", "danhmuc", "thuoc", "banggia"])
         or has_item
     ) and not has_date and not has_money
     if is_prod:
-        return "Danh mục sản phẩm / thuốc / bảng giá (mã hàng, tên hàng, hoạt chất, quy cách, giá)"
+        return "Danh mục sản phẩm"
 
     # 9. Fallback bán hàng nếu có has_item và has_qty
     if has_item and has_qty:
-        return "Bán hàng chi tiết (từng mặt hàng, số lượng, thành tiền)"
+        return "Bán hàng chi tiết"
 
     return "Bảng dữ liệu khác"
 
@@ -224,8 +220,8 @@ def infer_table_granularity(df: pd.DataFrame) -> str:
         return ""
     n_unique = non_null.nunique()
     if len(non_null) > n_unique * 1.05:
-        return "Chi tiết từng món (nhiều dòng/đơn -> đếm đơn phải dùng nunique)"
-    return "Cấp đơn hàng (1 dòng = 1 đơn)"
+        return "Nhiều dòng/đơn"
+    return "1 dòng/đơn"
 
 
 def discover_join_keys(business: BusinessData) -> List[str]:
@@ -259,11 +255,9 @@ def discover_join_keys(business: BusinessData) -> List[str]:
     return join_hints
 
 
-def profile_business_schema(business: BusinessData, max_cols: int = 15) -> str:
+def profile_business_schema(business: BusinessData, max_cols: int = 10) -> str:
     """Tạo bản tóm tắt schema phong phú (Rich Schema) kèm Table Roles, Granularity và Join Keys."""
     schema_lines: List[str] = []
-    role_summary_lines: List[str] = ["### VAI TRÒ DỰ ĐOÁN CỦA CÁC BẢNG (TABLE ROLES):"]
-
     for ti in business.tables:
         t_base = Path(ti.fixed_file_name).stem if hasattr(ti, "fixed_file_name") and ti.fixed_file_name else ti.table_id
         t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
@@ -271,7 +265,6 @@ def profile_business_schema(business: BusinessData, max_cols: int = 15) -> str:
         role = infer_table_role(t_name, ti.df)
         granularity = infer_table_granularity(ti.df)
         gran_tag = f" | {granularity}" if granularity else ""
-        role_summary_lines.append(f"- Bảng '{t_name}' (alias: '{ti.table_id}'): {role}")
 
         cols_desc = profile_table_columns(ti.df, max_cols=max_cols)
         extra_note = f", ... và {len(ti.columns) - max_cols} cột khác" if len(ti.columns) > max_cols else ""
@@ -282,11 +275,11 @@ def profile_business_schema(business: BusinessData, max_cols: int = 15) -> str:
         )
 
     join_hints = discover_join_keys(business)
+    join_block = ""
     if join_hints:
-        role_summary_lines.append("\n### LIÊN KẾT BẢNG (JOIN KEYS):")
-        role_summary_lines.extend(join_hints)
+        join_block = "### LIÊN KẾT BẢNG (JOIN KEYS):\n" + "\n".join(join_hints) + "\n\n"
 
-    return "\n".join(role_summary_lines) + "\n\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n" + "\n".join(schema_lines)
+    return f"{join_block}### CHI TIẾT CÁC BẢNG VÀ CỘT:\n" + "\n".join(schema_lines)
 
 
 def describe_schema(business: BusinessData, max_sample: int = 3) -> str:

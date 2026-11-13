@@ -26,6 +26,7 @@ import traceback
 import unicodedata
 from typing import Any, Dict
 
+from datamate.exceptions import CannotAnswer, DataNotFoundError
 from datamate.llm_execution.sandbox import clean_date, clean_num, sanitize_code_syntax, _strip_accents, _patch_pandas_resilience
 _patch_pandas_resilience()
 
@@ -738,10 +739,17 @@ def execute_code_in_env(
     filter_future_data: Any,
     clean_num: Any,
     clean_date: Any,
-    DataNotFoundError: Any,
+    CannotAnswer: Any = None,
+    DataNotFoundError: Any = None,
     as_of_date: Any = None,
 ) -> Dict[str, Any]:
     """Thực thi mã nguồn an toàn trong môi trường namespace có dữ liệu nạp sẵn."""
+    if CannotAnswer is None:
+        from datamate.exceptions import CannotAnswer as _CA
+        CannotAnswer = _CA
+    if DataNotFoundError is None:
+        from datamate.exceptions import DataNotFoundError as _DNE
+        DataNotFoundError = _DNE
     from datamate.ingestion_schema.cleaner import filter_order_status, normalize_col_for_match
 
     clean_code_no_comment = re.sub(r"#.*", "", code_str or "").lower()
@@ -879,6 +887,7 @@ def execute_code_in_env(
         "clean_num": clean_num,
         "clean_date": clean_date,
         "_strip_accents": _strip_accents,
+        "CannotAnswer": CannotAnswer,
         "DataNotFoundError": DataNotFoundError,
         "_resolve_col_alias": _resolve_col_alias,
         "get_date_col": get_date_col,
@@ -888,6 +897,7 @@ def execute_code_in_env(
         "get_sales_table": get_sales_table,
     }
     if isinstance(namespace.get("__builtins__"), dict):
+        namespace["__builtins__"]["CannotAnswer"] = CannotAnswer
         namespace["__builtins__"]["DataNotFoundError"] = DataNotFoundError
         namespace["__builtins__"]["get_date_col"] = get_date_col
         namespace["__builtins__"]["get_amount_col"] = get_amount_col
@@ -927,6 +937,7 @@ def execute_code_in_env(
         # Bảo vệ tuyệt đối các hàm chuẩn của DataMate: không để mã mô hình shadow
         namespace["clean_date"] = clean_date
         namespace["clean_num"] = clean_num
+        namespace["CannotAnswer"] = CannotAnswer
         namespace["DataNotFoundError"] = DataNotFoundError
         namespace["get_date_col"] = get_date_col
         namespace["get_amount_col"] = get_amount_col
@@ -938,6 +949,7 @@ def execute_code_in_env(
             if hasattr(sol_fn, "__globals__"):
                 sol_fn.__globals__["clean_date"] = clean_date
                 sol_fn.__globals__["clean_num"] = clean_num
+                sol_fn.__globals__["CannotAnswer"] = CannotAnswer
                 sol_fn.__globals__["DataNotFoundError"] = DataNotFoundError
                 sol_fn.__globals__["get_date_col"] = get_date_col
                 sol_fn.__globals__["get_amount_col"] = get_amount_col
@@ -1000,15 +1012,19 @@ def execute_code_in_env(
                 res_payload["error"] = f"CANNOT_SERIALIZE_JSON: {ser_err}"
                 res_payload["error_type"] = "SerializationError"
 
-    except DataNotFoundError as dne:
+    except (CannotAnswer, DataNotFoundError) as dne:
         res_payload["ok"] = False
-        res_payload["error_type"] = "DataNotFoundError"
+        res_payload["error_type"] = type(dne).__name__
         res_payload["error"] = str(dne)
         res_payload["missing_info"] = str(dne)
     except Exception as exc:
         res_payload["ok"] = False
         err_tb = traceback.format_exc()
-        if "DataNotFoundError" in str(exc) or "DataNotFoundError" in err_tb:
+        if "CannotAnswer" in str(exc) or "CannotAnswer" in err_tb:
+            res_payload["error_type"] = "CannotAnswer"
+            res_payload["error"] = str(exc)
+            res_payload["missing_info"] = str(exc)
+        elif "DataNotFoundError" in str(exc) or "DataNotFoundError" in err_tb:
             res_payload["error_type"] = "DataNotFoundError"
             res_payload["error"] = str(exc)
             res_payload["missing_info"] = str(exc)
@@ -1037,7 +1053,7 @@ def _load_shop_context(biz_dir: Path):
     from datamate.output_abstention.normalizer import apply_tie_breaker
     from datamate.grounding_feasibility.temporal import filter_future_data
     from datamate.llm_execution.sandbox import clean_num, clean_date
-    from datamate.exceptions import DataNotFoundError
+    from datamate.exceptions import DataNotFoundError, CannotAnswer
 
     class _LazySQLiteConnection:
         """Tối ưu hóa nạp kép: Không nạp SQLite mặc định. Chỉ dựng SQLite Mirror khi mã thực sự gọi con."""
@@ -1093,6 +1109,7 @@ def _load_shop_context(biz_dir: Path):
         "filter_future_data": filter_future_data,
         "clean_num": clean_num,
         "clean_date": clean_date,
+        "CannotAnswer": CannotAnswer,
         "DataNotFoundError": DataNotFoundError,
     }
 
@@ -1143,6 +1160,7 @@ def main():
                     filter_future_data=ctx["filter_future_data"],
                     clean_num=ctx["clean_num"],
                     clean_date=ctx["clean_date"],
+                    CannotAnswer=ctx.get("CannotAnswer", CannotAnswer),
                     DataNotFoundError=ctx["DataNotFoundError"],
                     as_of_date=as_of_date,
                 )
@@ -1182,6 +1200,7 @@ def main():
         filter_future_data=ctx["filter_future_data"],
         clean_num=ctx["clean_num"],
         clean_date=ctx["clean_date"],
+        CannotAnswer=ctx.get("CannotAnswer", CannotAnswer),
         DataNotFoundError=ctx["DataNotFoundError"],
     )
 

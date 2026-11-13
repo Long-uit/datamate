@@ -77,7 +77,7 @@ class TestSchemaProfiler(unittest.TestCase):
 
     def test_profile_business_schema(self):
         schema_text = profile_business_schema(self.bd)
-        self.assertIn("TABLE ROLES", schema_text)
+        self.assertIn("Vai trò", schema_text)
         self.assertIn("HoaDon", schema_text)
         self.assertIn("SanPham", schema_text)
         self.assertIn("CHI TIẾT CÁC BẢNG VÀ CỘT", schema_text)

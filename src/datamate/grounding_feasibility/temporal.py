@@ -724,8 +724,9 @@ def resolve_temporal_context(
                 f"END_DATE = '{primary_win.end_date}'\n"
                 f"COMP_START_DATE = '{comp_win.start_date}'\n"
                 f"COMP_END_DATE = '{comp_win.end_date}'\n"
-                f"# Kỳ chính: (df[date_col] >= pd.Timestamp('{primary_win.start_date}')) & (df[date_col] <= pd.Timestamp('{primary_win.end_date} 23:59:59'))\n"
-                f"# Kỳ so sánh: (df[date_col] >= pd.Timestamp('{comp_win.start_date}')) & (df[date_col] <= pd.Timestamp('{comp_win.end_date} 23:59:59'))"
+                f"# df['clean_date'] = clean_date(df[date_col])\n"
+                f"# Kỳ chính: (df['clean_date'] >= '{primary_win.start_date}') & (df['clean_date'] <= '{primary_win.end_date} 23:59:59')\n"
+                f"# Kỳ so sánh: (df['clean_date'] >= '{comp_win.start_date}') & (df['clean_date'] <= '{comp_win.end_date} 23:59:59')"
             )
             return {
                 "as_of_date": as_of_date_str,
@@ -741,7 +742,8 @@ def resolve_temporal_context(
             code_hint = (
                 f"START_DATE = '{primary_win.start_date}'\n"
                 f"END_DATE = '{primary_win.end_date}'\n"
-                f"(df[date_col] >= pd.Timestamp('{primary_win.start_date}')) & (df[date_col] <= pd.Timestamp('{primary_win.end_date} 23:59:59'))"
+                f"# df['clean_date'] = clean_date(df[date_col])\n"
+                f"(df['clean_date'] >= '{primary_win.start_date}') & (df['clean_date'] <= '{primary_win.end_date} 23:59:59')"
             )
             return {
                 "as_of_date": as_of_date_str,
@@ -763,7 +765,7 @@ def resolve_temporal_context(
         "comparison_end": None,
         "comparison_desc": None,
         "description": f"Mốc thời gian tham chiếu (hôm nay): {as_of_date_str}",
-        "code_hint": f"df[date_col] <= pd.Timestamp('{as_of_date_str} 23:59:59')",
+        "code_hint": f"df['clean_date'] = clean_date(df[date_col])\ndf['clean_date'] <= '{as_of_date_str} 23:59:59'",
     }
 
 

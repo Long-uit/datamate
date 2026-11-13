@@ -221,24 +221,30 @@ class TestTemporalGrounder(unittest.TestCase):
         # 1. Hôm nay (ngày đơn lẻ)
         ctx_today = resolve_temporal_context("Doanh thu hôm nay", as_of_date="2025-05-15")
         hint_today = ctx_today["code_hint"]
-        self.assertIn("pd.Timestamp('2025-05-15')", hint_today)
-        self.assertIn("pd.Timestamp('2025-05-15 23:59:59')", hint_today)
+        self.assertIn("START_DATE = '2025-05-15'", hint_today)
+        self.assertIn("END_DATE = '2025-05-15'", hint_today)
+        self.assertIn("clean_date", hint_today)
+        self.assertNotIn("pd.Timestamp", hint_today)
         self.assertNotIn(".dt.date", hint_today)
         self.assertNotIn(".date()", hint_today)
 
         # 2. Khoảng thời gian (từ đầu năm đến hết hôm nay)
         ctx_ytd = resolve_temporal_context("Doanh thu từ đầu năm đến hết hôm nay", as_of_date="2025-05-15")
         hint_ytd = ctx_ytd["code_hint"]
-        self.assertIn("pd.Timestamp('2025-01-01')", hint_ytd)
-        self.assertIn("pd.Timestamp('2025-05-15 23:59:59')", hint_ytd)
+        self.assertIn("START_DATE = '2025-01-01'", hint_ytd)
+        self.assertIn("END_DATE = '2025-05-15'", hint_ytd)
+        self.assertIn("clean_date", hint_ytd)
+        self.assertNotIn("pd.Timestamp", hint_ytd)
         self.assertNotIn(".dt.date", hint_ytd)
         self.assertNotIn(".date()", hint_ytd)
 
         # 3. Quý
         ctx_q = resolve_temporal_context("Doanh số Q2/2025", as_of_date="2025-05-15")
         hint_q = ctx_q["code_hint"]
-        self.assertIn("pd.Timestamp('2025-04-01')", hint_q)
-        self.assertIn("pd.Timestamp('2025-06-30 23:59:59')", hint_q)
+        self.assertIn("START_DATE = '2025-04-01'", hint_q)
+        self.assertIn("END_DATE = '2025-06-30'", hint_q)
+        self.assertIn("clean_date", hint_q)
+        self.assertNotIn("pd.Timestamp", hint_q)
         self.assertNotIn(".dt.date", hint_q)
         self.assertNotIn(".date()", hint_q)
 
@@ -247,17 +253,20 @@ class TestTemporalGrounder(unittest.TestCase):
         hint_cmp = ctx_cmp["code_hint"]
         self.assertIn("Kỳ chính:", hint_cmp)
         self.assertIn("Kỳ so sánh:", hint_cmp)
-        self.assertIn("pd.Timestamp('2025-05-01')", hint_cmp)
-        self.assertIn("pd.Timestamp('2025-05-15 23:59:59')", hint_cmp)
-        self.assertIn("pd.Timestamp('2025-04-01')", hint_cmp)
-        self.assertIn("pd.Timestamp('2025-04-15 23:59:59')", hint_cmp)
+        self.assertIn("START_DATE = '2025-05-01'", hint_cmp)
+        self.assertIn("END_DATE = '2025-05-15'", hint_cmp)
+        self.assertIn("COMP_START_DATE = '2025-04-01'", hint_cmp)
+        self.assertIn("COMP_END_DATE = '2025-04-15'", hint_cmp)
+        self.assertIn("clean_date", hint_cmp)
+        self.assertNotIn("pd.Timestamp", hint_cmp)
         self.assertNotIn(".dt.date", hint_cmp)
         self.assertNotIn(".date()", hint_cmp)
 
         # 5. Fallback mặc định
         ctx_fb = resolve_temporal_context("Sản phẩm nào đắt nhất", as_of_date="2025-05-15")
         hint_fb = ctx_fb["code_hint"]
-        self.assertIn("pd.Timestamp('2025-05-15 23:59:59')", hint_fb)
+        self.assertIn("clean_date", hint_fb)
+        self.assertNotIn("pd.Timestamp", hint_fb)
         self.assertNotIn(".dt.date", hint_fb)
         self.assertNotIn(".date()", hint_fb)
 

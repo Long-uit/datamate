@@ -191,6 +191,8 @@ def load_business_data(biz_id: str, data_root: Path) -> Tuple[Dict[str, pd.DataF
 
                 if data_dict:
                     data_dict._aliases = aliases
+                    if bd is not None:
+                        schema_summary = profile_business_schema(bd)
                     return data_dict, None, schema_summary, bd, shop_meta, candidates
         except Exception:
             pass
@@ -311,6 +313,7 @@ def execute_solution(
 
     # In-process fallback: truyền trực tiếp code_text cho execute_code_in_env để dùng smart_data đã lọc và sắp xếp
     from datamate.llm_execution.worker import execute_code_in_env
+    from datamate.exceptions import DataNotFoundError, CannotAnswer
 
     t_start = time.perf_counter()
     res_payload = execute_code_in_env(
@@ -324,6 +327,7 @@ def execute_solution(
         filter_future_data=filter_future_data,
         clean_num=clean_num,
         clean_date=clean_date,
+        CannotAnswer=CannotAnswer,
         DataNotFoundError=DataNotFoundError,
         as_of_date=as_of_date,
     )
@@ -2419,7 +2423,8 @@ def run_batch_evaluation(args: argparse.Namespace):
             shop_memory.record_attempt(biz_id, code_text, exec_err or sanity_err)
 
             # Cơ chế Cứu hộ Chủ động (Active Deterministic Fallback) nếu LLM + Self-Correction thất bại
-            if exec_err or sanity_err:
+            is_cannot_answer = bool(exec_err and "CannotAnswer" in str(exec_err))
+            if (exec_err or sanity_err) and not is_cannot_answer:
                 fb_val, fb_src = try_deterministic_fallback(
                     intent=intent,
                     question=normalized_q,
@@ -2442,7 +2447,9 @@ def run_batch_evaluation(args: argparse.Namespace):
             t_norm = time.perf_counter()
             confidence = 0.0
             grounding_eval_res = {}
-            if exec_err == "gen_failed":
+            if is_cannot_answer:
+                sub_ans = make_abstain(f"CannotAnswer: {exec_err}")
+            elif exec_err == "gen_failed":
                 sub_ans = make_abstain("Generation Failed: no valid code generated")
             elif exec_err:
                 sub_ans = make_abstain(f"Runtime Error: {exec_err}")
