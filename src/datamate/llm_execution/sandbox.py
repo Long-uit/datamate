@@ -818,11 +818,20 @@ def _patch_pandas_date_comparisons():
         if orig and not getattr(orig, "_is_date_resilient", False):
             def _make_series_op(orig_op):
                 def _wrapped(self, other):
-                    if isinstance(other, datetime.date) and not isinstance(other, datetime.datetime):
+                    if isinstance(other, (datetime.date, datetime.datetime, pd.Timestamp)):
                         if pd.api.types.is_datetime64_any_dtype(self):
                             return orig_op(self, pd.Timestamp(other))
                         elif self.dtype == object or str(self.dtype).startswith("string"):
-                            return orig_op(self.astype(str).str[:10], other.isoformat())
+                            try:
+                                return orig_op(clean_date(self), pd.Timestamp(other))
+                            except Exception:
+                                other_iso = other.isoformat() if hasattr(other, "isoformat") else str(other)[:10]
+                                return orig_op(self.astype(str).str[:10], other_iso[:10])
+                    elif isinstance(other, str) and pd.api.types.is_datetime64_any_dtype(self):
+                        try:
+                            return orig_op(self, pd.Timestamp(other))
+                        except Exception:
+                            pass
                     return orig_op(self, other)
                 _wrapped._is_date_resilient = True
                 return _wrapped
@@ -837,7 +846,7 @@ def _patch_pandas_date_comparisons():
         if orig and not getattr(orig, "_is_date_resilient", False):
             def _make_ts_op(orig_op):
                 def _wrapped(self, other):
-                    if isinstance(other, datetime.date) and not isinstance(other, datetime.datetime):
+                    if isinstance(other, datetime.date) and not isinstance(other, (datetime.datetime, pd.Timestamp)):
                         return orig_op(self, pd.Timestamp(other))
                     return orig_op(self, other)
                 _wrapped._is_date_resilient = True
@@ -945,6 +954,66 @@ def get_sales_table(data: Any) -> Any:
         for name, df in data.items():
             if hasattr(df, "columns"):
                 return df
+        return None
+
+
+def get_order_col(df: Any) -> Any:
+    """Tìm cột mã đơn/mã hoá đơn trong DataFrame."""
+    try:
+        from datamate.llm_execution.worker import get_order_col as _goc
+        return _goc(df)
+    except Exception:
+        if df is None or not hasattr(df, "columns"):
+            return None
+        for c in df.columns:
+            cl = str(c).lower()
+            if any(k in cl for k in ("mã đơn", "madon", "mã hoá đơn", "mahoadon", "mã hd", "mahd", "order id", "order_id", "mã chứng từ", "số phiếu", "mã gd", "số ct", "so ct", "so hoa don", "số hđ")):
+                return c
+        return None
+
+
+def get_customer_col(df: Any) -> Any:
+    """Tìm cột khách hàng trong DataFrame."""
+    try:
+        from datamate.llm_execution.worker import get_customer_col as _gcc
+        return _gcc(df)
+    except Exception:
+        if df is None or not hasattr(df, "columns"):
+            return None
+        for c in df.columns:
+            cl = str(c).lower()
+            if any(k in cl for k in ("khách hàng", "khachhang", "mã khách", "makh", "tên khách", "tenkh", "customer", "so kh", "khach")):
+                return c
+        return None
+
+
+def get_price_col(df: Any) -> Any:
+    """Tìm cột đơn giá/giá bán trong DataFrame."""
+    try:
+        from datamate.llm_execution.worker import get_price_col as _gpc
+        return _gpc(df)
+    except Exception:
+        if df is None or not hasattr(df, "columns"):
+            return None
+        for c in df.columns:
+            cl = str(c).lower()
+            if any(k in cl for k in ("đơn giá", "dongia", "giá bán", "giaban", "giá 1 đv", "đơn giá bán", "price", "unit price", "giá")):
+                return c
+        return None
+
+
+def get_status_col(df: Any) -> Any:
+    """Tìm cột trạng thái đơn hàng trong DataFrame."""
+    try:
+        from datamate.llm_execution.worker import get_status_col as _gsc
+        return _gsc(df)
+    except Exception:
+        if df is None or not hasattr(df, "columns"):
+            return None
+        for c in df.columns:
+            cl = str(c).lower()
+            if any(k in cl for k in ("trạng thái", "trangthai", "status", "tình trạng", "tinhtrang", "ghi chú tt", "xử lý", "xu ly")):
+                return c
         return None
 
 
@@ -1324,6 +1393,9 @@ def revenue(
     as_of_date: Any = None,
     product: Optional[str] = None,
     customer: Optional[str] = None,
+    payment_method: Optional[str] = None,
+    channel: Optional[str] = None,
+    **kwargs: Any,
 ) -> int:
     """
     Hàm tính Doanh thu tất định theo đúng Điều 1 & Điều 5 Rulebook:
@@ -1425,6 +1497,22 @@ def revenue(
         if cust_col:
             df = df[df[cust_col].astype(str).str.contains(str(customer), case=False, na=False)]
 
+    if payment_method:
+        pay_col = next(
+            (c for c in cols if any(k in _norm(c) for k in ["hinh thuc", "phuong thuc", "thanh toan", "payment", "loai thanh toan"])),
+            None,
+        )
+        if pay_col:
+            df = df[df[pay_col].astype(str).str.contains(str(payment_method), case=False, na=False)]
+
+    if channel:
+        chan_col = next(
+            (c for c in cols if any(k in _norm(c) for k in ["kenh", "channel", "nguon", "ban qua"])),
+            None,
+        )
+        if chan_col:
+            df = df[df[chan_col].astype(str).str.contains(str(channel), case=False, na=False)]
+
     if df.empty:
         return 0
 
@@ -1443,6 +1531,7 @@ def count_orders(
     status: str = "valid",
     product: Optional[str] = None,
     customer: Optional[str] = None,
+    **kwargs: Any,
 ) -> int:
     """
     Hàm đếm số đơn hàng tất định theo Điều 1 Rulebook:
@@ -1793,6 +1882,10 @@ __all__ = [
     "get_amount_col",
     "get_qty_col",
     "get_item_col",
+    "get_order_col",
+    "get_customer_col",
+    "get_price_col",
+    "get_status_col",
     "get_sales_table",
     "sanitize_code_syntax",
     "_strip_accents",

@@ -158,6 +158,70 @@ def get_item_col(df: Any) -> Any:
     return None
 
 
+def get_order_col(df: Any) -> Any:
+    """Tìm cột mã đơn/mã hoá đơn trong DataFrame."""
+    if df is None or not hasattr(df, "columns"):
+        return None
+    cols = list(df.columns)
+    for c in cols:
+        norm = _norm_col_name(c)
+        if norm in ("madon", "mahoadon", "mahd", "orderid", "machungtu", "sophieu", "magd", "soct", "sohoadon", "sohd", "billid", "id"):
+            return c
+    for c in cols:
+        norm = _norm_col_name(c)
+        if any(k in norm for k in ("madon", "mahd", "hoadon", "order", "phieu", "chungtu")):
+            return c
+    return None
+
+
+def get_customer_col(df: Any) -> Any:
+    """Tìm cột khách hàng trong DataFrame."""
+    if df is None or not hasattr(df, "columns"):
+        return None
+    cols = list(df.columns)
+    for c in cols:
+        norm = _norm_col_name(c)
+        if norm in ("khachhang", "makhach", "makh", "tenkhach", "tenkh", "customer", "sokh", "khach", "nhomkhach"):
+            return c
+    for c in cols:
+        norm = _norm_col_name(c)
+        if any(k in norm for k in ("khachhang", "makh", "tenkh", "customer", "khach")):
+            return c
+    return None
+
+
+def get_price_col(df: Any) -> Any:
+    """Tìm cột đơn giá/giá bán trong DataFrame."""
+    if df is None or not hasattr(df, "columns"):
+        return None
+    cols = list(df.columns)
+    for c in cols:
+        norm = _norm_col_name(c)
+        if norm in ("dongia", "giaban", "gia1dv", "dongiaban", "price", "unitprice", "dongianhap", "gianhap"):
+            return c
+    for c in cols:
+        norm = _norm_col_name(c)
+        if any(k in norm for k in ("dongia", "giaban", "gia")):
+            return c
+    return None
+
+
+def get_status_col(df: Any) -> Any:
+    """Tìm cột trạng thái đơn hàng trong DataFrame."""
+    if df is None or not hasattr(df, "columns"):
+        return None
+    cols = list(df.columns)
+    for c in cols:
+        norm = _norm_col_name(c)
+        if norm in ("trangthai", "status", "tinhtrang", "ghichutt", "xuly", "trangthaixuly"):
+            return c
+    for c in cols:
+        norm = _norm_col_name(c)
+        if any(k in norm for k in ("trangthai", "status", "tinhtrang", "ghichutt")):
+            return c
+    return None
+
+
 def get_sales_table(data: Any) -> Any:
     """Lấy bảng bán hàng tối ưu nhất từ dictionary data."""
     if not data or not isinstance(data, dict):
@@ -885,6 +949,10 @@ def execute_code_in_env(
         "get_amount_col": get_amount_col,
         "get_qty_col": get_qty_col,
         "get_item_col": get_item_col,
+        "get_order_col": get_order_col,
+        "get_customer_col": get_customer_col,
+        "get_price_col": get_price_col,
+        "get_status_col": get_status_col,
         "get_sales_table": get_sales_table,
     }
     if isinstance(namespace.get("__builtins__"), dict):
@@ -893,6 +961,10 @@ def execute_code_in_env(
         namespace["__builtins__"]["get_amount_col"] = get_amount_col
         namespace["__builtins__"]["get_qty_col"] = get_qty_col
         namespace["__builtins__"]["get_item_col"] = get_item_col
+        namespace["__builtins__"]["get_order_col"] = get_order_col
+        namespace["__builtins__"]["get_customer_col"] = get_customer_col
+        namespace["__builtins__"]["get_price_col"] = get_price_col
+        namespace["__builtins__"]["get_status_col"] = get_status_col
         namespace["__builtins__"]["get_sales_table"] = get_sales_table
 
     # Bắt stdout của code
@@ -932,6 +1004,10 @@ def execute_code_in_env(
         namespace["get_amount_col"] = get_amount_col
         namespace["get_qty_col"] = get_qty_col
         namespace["get_item_col"] = get_item_col
+        namespace["get_order_col"] = get_order_col
+        namespace["get_customer_col"] = get_customer_col
+        namespace["get_price_col"] = get_price_col
+        namespace["get_status_col"] = get_status_col
         namespace["get_sales_table"] = get_sales_table
         if "solution" in namespace and callable(namespace["solution"]):
             sol_fn = namespace["solution"]
@@ -943,6 +1019,10 @@ def execute_code_in_env(
                 sol_fn.__globals__["get_amount_col"] = get_amount_col
                 sol_fn.__globals__["get_qty_col"] = get_qty_col
                 sol_fn.__globals__["get_item_col"] = get_item_col
+                sol_fn.__globals__["get_order_col"] = get_order_col
+                sol_fn.__globals__["get_customer_col"] = get_customer_col
+                sol_fn.__globals__["get_price_col"] = get_price_col
+                sol_fn.__globals__["get_status_col"] = get_status_col
                 sol_fn.__globals__["get_sales_table"] = get_sales_table
 
         if "FINAL_RESULT" not in namespace:
@@ -1012,6 +1092,13 @@ def execute_code_in_env(
             res_payload["error_type"] = "DataNotFoundError"
             res_payload["error"] = str(exc)
             res_payload["missing_info"] = str(exc)
+        elif isinstance(exc, KeyError) and str(exc).strip() in ("None", "''", '""', "'None'"):
+            res_payload["error_type"] = "KeyError"
+            res_payload["error"] = (
+                f"{err_tb}\nLỗi KeyError: None xảy ra do một biến tên cột có giá trị None "
+                "(không tìm thấy cột tương ứng trong bảng). Hãy kiểm tra lại danh sách cột thực tế của bảng "
+                "để chọn đúng tên cột, hoặc dùng các hàm trợ giúp get_date_col, get_amount_col, get_qty_col, get_item_col, get_order_col."
+            )
         else:
             res_payload["error_type"] = type(exc).__name__
             res_payload["error"] = err_tb

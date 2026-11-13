@@ -292,7 +292,6 @@ def prune_schema_by_intent(
         desc = p["desc"]
         desc_norm = p["desc_norm"]
 
-        is_sales = any(k in role_low for k in ["bán hàng", "hóa đơn"]) or any(k in t_name_low for k in ["banhang", "donhang", "hoadon", "pos", "chitietdon", "sobanhang"])
         is_delivery = any(k in role_low for k in ["giao hàng", "vận chuyển"]) or any(k in t_name_low for k in ["giaohang", "phieugiao", "vanchuyen", "chohang", "sochohang"])
         is_product = any(k in role_low for k in ["sản phẩm", "thuốc", "bảng giá"]) or any(k in t_name_low for k in ["sanpham", "hanghoa", "danhmuc", "thuoc", "banggia"])
         is_cust = any(k in role_low for k in ["khách hàng"]) or any(k in t_name_low for k in ["khachhang", "customer"])
@@ -300,6 +299,17 @@ def prune_schema_by_intent(
         is_expense = "chi phí" in role_low or any(k in t_name_low for k in ["chiphi", "soquy"])
         is_import = "nhập hàng" in role_low or any(k in t_name_low for k in ["nhaphang", "nhap"])
         is_inv = "tồn kho" in role_low or any(k in t_name_low for k in ["tonkho", "thekho"])
+        
+        is_master_catalog = is_product or is_cust or any(k in t_name_low for k in ["donviquydoi", "quydoi", "lichsugia", "lohang", "phieuthu"])
+        has_trans_indicators = (
+            any(any(k in c for k in ["ngày", "date", "thời gian", "ngaylap", "ngay_ban"]) for c in p["cols"])
+            and any(any(k in c for k in ["thành tiền", "tổng tiền", "tiền", "số lượng", "sl", "amount", "trị giá", "doanh thu"]) for c in p["cols"])
+        )
+        is_sales = (
+            (any(k in role_low for k in ["bán hàng", "hóa đơn"]) or any(k in t_name_low for k in ["donhang", "hoadon", "chitietdon", "sobanhang", "pos", "ban_hang", "banhang"]))
+            and (has_trans_indicators or "chi tiết" in role_low or "tổng hợp" in role_low)
+            and not is_master_catalog
+        )
         is_hr = any(k in desc for k in ["bảng lương", "chấm công", "nhanvien"]) and not is_sales
 
         # --- NGUYÊN TẮC VÀNG 1: BẢO VỆ THỰC THỂ (Entity Keyword Protection) ---
@@ -474,7 +484,7 @@ def prune_schema_by_intent(
 
         scored_kept = [(p["name"], _score_table(p)) for p in parsed_tables if p["name"] in kept_names]
         scored_kept.sort(key=lambda x: x[1], reverse=True)
-        kept_names = {name for name, _ in scored_kept[:5]}
+        kept_names = {name for name, _ in scored_kept[:4]}
 
     # --- TÁI CẤU TRÚC ĐỒNG BỘ NGUYÊN KHỐI (Atomic Re-rendering) ---
     kept_detail_blocks = [p["raw"] for p in parsed_tables if p["name"] in kept_names]
@@ -672,12 +682,16 @@ NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN:
    - `get_amount_col(df)`: Tự động tìm cột tiền (hỗ trợ Tổng đơn, Thành tiền, Amount, Trị giá, Doanh thu...).
    - `get_qty_col(df)`: Tự động tìm cột số lượng (hỗ trợ Số lượng, Sluong, SL bán...).
    - `get_item_col(df)`: Tự động tìm cột tên hàng hóa / sản phẩm.
+   - `get_order_col(df)`: Tự động tìm cột mã đơn / mã hoá đơn (hỗ trợ ma_don, order_id, so_phieu...).
+   - `get_customer_col(df)`: Tự động tìm cột khách hàng (hỗ trợ khach_hang, ten_khach, ma_khach...).
+   - `get_price_col(df)`: Tự động tìm cột đơn giá / giá bán.
+   - `get_status_col(df)`: Tự động tìm cột trạng thái (hỗ trợ trang_thai, status, ghi chú tt...).
 3. Tạo `df['clean_date'] = clean_date(df[d_c])` trước khi gọi `.dt`. So sánh ngày bằng `(df['clean_date'].dt.year == Y) & (df['clean_date'].dt.month == M)` (luôn có ngoặc đơn quanh từng điều kiện bitwise `&`).
 4. Luôn bọc `clean_num(df[col]).sum()` hoặc `.mean()` khi tính tổng/trung bình số lượng hoặc tiền.
 5. Mặc định bỏ đơn hủy/trả/hoàn trừ khi câu hỏi hỏi đích danh đơn hủy:
    `st_c = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt'])), None)`
    `if st_c: df = df[~df[st_c].astype(str).str.contains(r'hủy|huỷ|huy|trả|tra|hoàn|hoan|cancel|return', case=False, na=False)]`
-6. Tiện ích sẵn có trong môi trường: `get_sales_table`, `get_date_col`, `get_amount_col`, `get_qty_col`, `get_item_col`, `clean_num`, `clean_date`, `filter_valid_sales`. Không import lại.
+6. Tiện ích sẵn có trong môi trường: `get_sales_table`, `get_date_col`, `get_amount_col`, `get_qty_col`, `get_item_col`, `get_order_col`, `get_customer_col`, `get_price_col`, `get_status_col`, `clean_num`, `clean_date`, `filter_valid_sales`, `revenue`, `count_orders`, `debt`. Không import lại.
 7. Nếu dữ liệu sau lọc rỗng hoặc không tìm thấy: trả về 0 (doanh thu/số đơn/số lượng), 0.0 (tỉ lệ), hoặc [] (top-k). Không return None.
 8. Trả về đúng 1 giá trị vô hướng (int, float, str, list). Không trả về dictionary chứa nhiều thông tin.
 9. TUYỆT ĐỐI KHÔNG raise DataNotFoundError hay các Exception khác. Nếu bảng/cột không khớp, hãy trả về 0, 0.0 hoặc []!"""
@@ -939,7 +953,7 @@ NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN:
             "BẮT BUỘC loại bỏ đơn hủy/trả hàng và dùng cột 'Tổng tiền hàng' (gross revenue trước giảm giá đơn)."
         )
 
-    rules_text = "\n".join(conditional_rules) if conditional_rules else "- Tính toán chính xác theo đúng yêu cầu trong câu hỏi."
+    rules_text = "\n".join(conditional_rules[:4]) if conditional_rules else "- Tính toán chính xác theo đúng yêu cầu trong câu hỏi."
 
     output_format = """ĐỊNH DẠNG ĐÁP ÁN:
 - Số nguyên/tiền: `int` | Tỉ lệ %: `float` (làm tròn 2 chữ số) | Ngày: `"YYYY-MM-DD"` | Top K: `list` | Bảng: `dict`.
@@ -2254,9 +2268,8 @@ YÊU CẦU THỰC HIỆN:
 2. Áp dụng khoảng thời gian đã được giải mã và mốc as_of_date để lọc dữ liệu.
 {req_3}
 {return_format_instruction}
-5. Chỉ viết duy nhất một hàm `def solution(data):` trả về kết quả, không viết giải thích bên ngoài.
+5. Chỉ viết duy nhất một hàm `def solution(data):` trả về kết quả trong khối code ```python, không viết giải thích bên ngoài.
 6. Viết code ngắn gọn, không viết comment dài dòng để tránh bị cắt cụt token.
-```python
 """
 
     if return_messages:
@@ -2344,8 +2357,7 @@ HƯỚNG DẪN SỬA LỖI:
 2. Kiểm tra danh sách bảng và cột thực tế trong data để chọn đúng cột và bảng:
    - Ưu tiên dùng các hàm helper tích hợp sẵn: `df = get_sales_table(data)`, `d_c = get_date_col(df)`, `amt_c = get_amount_col(df)`, `qty_c = get_qty_col(df)`, `item_c = get_item_col(df)`.
    - TUYỆT ĐỐI KHÔNG raise DataNotFoundError hay các exception khác! Nếu không tìm thấy hoặc kết quả rỗng, hãy return 0 (đối với số tiền/số đơn/số lượng), 0.0 (tỉ lệ), hoặc [] (danh sách).
-3. Viết lại hàm `def solution(data):` hoàn chỉnh, ngắn gọn, trực diện:
-```python
+3. Viết lại hàm `def solution(data):` hoàn chỉnh, ngắn gọn, trực diện trong khối code ```python:
 """
     return retry_sys_prompt.strip(), retry_user_prompt
 

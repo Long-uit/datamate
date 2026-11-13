@@ -193,6 +193,7 @@ def extract_python_code(text: str) -> str:
     """
     Bóc tách và làm sạch khối mã nguồn Python từ văn bản phản hồi của mô hình.
     Xử lý các trường hợp: bọc trong ```python, bọc trong ```, hoặc viết trực tiếp def solution.
+    Bảo toàn các import ở trước def solution và xử lý mượt mà khi fence ``` bị thiếu dấu đóng.
     
     Args:
         text (str): Toàn bộ văn bản do mô hình sinh ra.
@@ -200,36 +201,42 @@ def extract_python_code(text: str) -> str:
     Returns:
         str: Đoạn mã Python đã làm sạch.
     """
-    if not text:
+    if not text or not text.strip():
         return ""
 
     text = text.strip()
 
-    # Trường hợp 1: Có khối ```python ... ``` hoàn chỉnh
-    match_py = re.search(r"```python\s*(.*?)\s*```", text, re.DOTALL | re.IGNORECASE)
-    if match_py:
-        code = match_py.group(1).strip()
+    # Trường hợp 1: Có khối ```python ... ``` hoặc ```py ... ``` hoặc ``` ... ``` hoàn chỉnh
+    match_closed = re.search(r"```(?:python|py)?\s*\n?(.*?)\n?```", text, re.DOTALL | re.IGNORECASE)
+    if match_closed:
+        code = match_closed.group(1).strip()
         return cut_after_first_solution(code)
 
-    # Trường hợp 2: Có khối ``` ... ``` chung
-    match_generic = re.search(r"```\s*(.*?)\s*```", text, re.DOTALL)
-    if match_generic:
-        code = match_generic.group(1).strip()
-        return cut_after_first_solution(code)
-
-    # Trường hợp 3: Khối ```python nhưng bị cắt cụt chưa đóng ```
-    match_unclosed = re.search(r"```python\s*(def\s+solution.*)", text, re.DOTALL | re.IGNORECASE)
+    # Trường hợp 2: Khối ```python hoặc ```py hoặc ``` chưa đóng (unclosed fence)
+    match_unclosed = re.search(r"```(?:python|py)?\s*\n?(.*)", text, re.DOTALL | re.IGNORECASE)
     if match_unclosed:
-        code = match_unclosed.group(1).strip()
-        return cut_after_first_solution(code)
+        candidate = match_unclosed.group(1).strip()
+        if "def solution" in candidate:
+            return cut_after_first_solution(candidate)
 
-    # Trường hợp 4: Viết trực tiếp def solution( mà không bọc backtick
-    if "def solution(" in text:
-        idx = text.find("def solution(")
-        code = text[idx:].strip()
-        if code.endswith("```"):
-            code = code[:-3].strip()
-        return cut_after_first_solution(code)
+    # Trường hợp 3: Viết trực tiếp def solution( hoặc có import phía trước
+    if "def solution" in text:
+        lines = text.splitlines()
+        code_lines = []
+        found_sol = False
+        for line in lines:
+            if not found_sol:
+                if re.match(r"^\s*(import|from)\s+", line) or line.strip().startswith("#"):
+                    code_lines.append(line)
+                elif re.match(r"^\s*def\s+solution\s*\(", line):
+                    found_sol = True
+                    code_lines.append(line)
+            else:
+                if line.strip() == "```":
+                    break
+                code_lines.append(line)
+        if found_sol:
+            return cut_after_first_solution("\n".join(code_lines).strip())
 
     return text
 
@@ -478,11 +485,11 @@ class LLMClient:
         # Cấu hình lượng tử hóa (mặc định ưu tiên 4-bit NF4: siêu nhẹ, bảo đảm tuyệt đối không OOM)
         quant_mode = (os.environ.get("DATAMATE_QUANTIZATION") or "4bit").lower().strip()
         
-        # TỰ ĐỘNG BẢO VỆ OOM: Nếu chỉ có 1 GPU (<= 16GB) mà nạp mô hình 14B, 8-bit (14GB) chắc chắn OOM
-        # -> Tự động kích hoạt 4-bit NF4 (~8.5GB) để dành 6GB VRAM cho Attention Forward!
+        # TỰ ĐỘNG BẢO VỆ OOM: Nếu GPU (<= 16.5GB như Tesla T4) mà nạp mô hình 14B, 8-bit (14GB) dễ gây OOM
+        # -> Tự động kích hoạt 4-bit NF4 (~8.5GB tổng) để dành >6GB VRAM cho Attention Forward / KV-Cache!
         is_14b = "14b" in str(self.model_id).lower()
-        if has_cuda and num_gpus == 1 and is_14b and min_gpu_vram <= 20.0 and quant_mode != "4bit":
-            print(f"[LLMClient] ⚠️ Phát hiện chỉ có 1 GPU ({torch.cuda.get_device_name(0)}, {min_gpu_vram:.1f} GB) chạy mô hình 14B.")
+        if has_cuda and is_14b and min_gpu_vram <= 16.5 and quant_mode != "4bit":
+            print(f"[LLMClient] ⚠️ Phát hiện phần cứng GPU ({min_gpu_vram:.1f} GB <= 16GB) chạy mô hình 14B.")
             print(f"[LLMClient] 🛡️ Tự động chuyển lượng tử hóa sang 4-bit NF4 để chống CUDA Out of Memory!")
             quant_mode = "4bit"
 
@@ -713,8 +720,38 @@ class LLMClient:
         if not self.is_loaded or self.tokenizer is None:
             return ""
 
+        # QUẢN LÝ NGÂN SÁCH CONTEXT AN TOÀN TRÊN TỪNG PHẦN CỨNG (Text-Level Clean Pruning):
+        # - GPU <= 16GB (Tesla T4 trên Kaggle, P100): giới hạn 2,800 tokens để dành >6GB VRAM cho Attention/KV-Cache
+        # - GPU >= 24GB (RTX 5090 trên máy BTC, A100, RTX 4090): 8,192 tokens
+        num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+        min_vram_gb = min(
+            (torch.cuda.get_device_properties(i).total_memory / (1024 ** 3) for i in range(num_gpus)),
+            default=15.0
+        ) if num_gpus > 0 else 15.0
+
+        MAX_SAFE_INPUT_TOKENS = 8192 if min_vram_gb >= 24.0 else 2800
+
+        # Tỉa text sạch sẽ bảo toàn cấu trúc ChatML (không bao giờ cắt đứt tensor)
+        cleaned_messages = [dict(m) for m in messages]
+        raw_text_len = sum(len(m.get("content", "")) for m in cleaned_messages)
+
+        if raw_text_len > 7000:
+            for m in cleaned_messages:
+                if m.get("role") == "system":
+                    content = m["content"]
+                    # 1. Bỏ khối ví dụ mẫu nếu prompt quá dài
+                    if "==================== VÍ DỤ MINH HỌA" in content:
+                        parts = content.split("==================== VÍ DỤ MINH HỌA")
+                        content = parts[0].strip()
+                    # 2. Cắt bớt phần chi tiết cột schema nếu vẫn quá dài (> 4,500 ký tự)
+                    if len(content) > 4500 and "### CHI TIẾT CÁC BẢNG VÀ CỘT:" in content:
+                        head_sec, detail_sec = content.split("### CHI TIẾT CÁC BẢNG VÀ CỘT:", 1)
+                        detail_lines = detail_sec.splitlines()
+                        content = f"{head_sec}\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n" + "\n".join(detail_lines[:50])
+                    m["content"] = content
+
         chat_text = self.tokenizer.apply_chat_template(
-            messages,
+            cleaned_messages,
             tokenize=False,
             add_generation_prompt=True
         )
@@ -735,39 +772,26 @@ class LLMClient:
             return ""
 
         inputs = self.tokenizer([chat_text], return_tensors="pt").to(self.model.device)
-
         start_len = inputs.input_ids.shape[1]
 
-        # TRÁNH BÙNG NỔ ATTENTION MATRIX TRÊN TESLA T4:
-        # Ngưỡng an toàn thích ứng phần cứng:
-        # - GPU <= 16GB (Tesla T4 trên Kaggle): giới hạn 3,584 tokens (Math SDPA ~1.02GB)
-        # - GPU >= 24GB (RTX 5090 trên máy BTC, A100, RTX 4090): giới hạn 8,192 tokens (FlashAttention native)
-        num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
-        min_vram_gb = min(
-            (torch.cuda.get_device_properties(i).total_memory / (1024 ** 3) for i in range(num_gpus)),
-            default=15.0
-        ) if num_gpus > 0 else 15.0
-
-        MAX_SAFE_INPUT_TOKENS = 8192 if min_vram_gb >= 24.0 else 3584
+        # Nếu sau khi tỉa text vẫn vượt ngưỡng MAX_SAFE_INPUT_TOKENS, tiếp tục nén ở tầng text sạch
         if start_len > MAX_SAFE_INPUT_TOKENS:
-            head_len = 1024
-            tail_len = MAX_SAFE_INPUT_TOKENS - head_len
-            head_ids = inputs.input_ids[:, :head_len]
-            tail_ids = inputs.input_ids[:, -tail_len:]
-            inputs.input_ids = torch.cat([head_ids, tail_ids], dim=1)
-            if hasattr(inputs, "attention_mask") and inputs.attention_mask is not None:
-                head_mask = inputs.attention_mask[:, :head_len]
-                tail_mask = inputs.attention_mask[:, -tail_len:]
-                inputs.attention_mask = torch.cat([head_mask, tail_mask], dim=1)
-            print(f"[LLMClient] ⚡ Prompt dài ({start_len} tokens). Tự động cắt giữa còn {MAX_SAFE_INPUT_TOKENS} tokens (1024 đầu + {tail_len} cuối) để bảo vệ VRAM GPU.")
+            print(f"[LLMClient] ⚡ Prompt dài ({start_len} tokens). Tự động nén gọn System Prompt xuống {MAX_SAFE_INPUT_TOKENS} tokens...")
+            ratio = max(0.4, (MAX_SAFE_INPUT_TOKENS - 400) / max(start_len, 1))
+            for m in cleaned_messages:
+                if m.get("role") == "system":
+                    m["content"] = m["content"][:int(len(m["content"]) * ratio)].strip()
+            chat_text = self.tokenizer.apply_chat_template(
+                cleaned_messages,
+                tokenize=False,
+                add_generation_prompt=True
+            )
+            inputs = self.tokenizer([chat_text], return_tensors="pt").to(self.model.device)
             start_len = inputs.input_ids.shape[1]
 
         stopping_criteria = StoppingCriteriaList([CodeBlockEndStoppingCriteria(self.tokenizer, start_len)])
 
-        # Cấu hình Greedy Decoding (T=0) chuẩn kèm StoppingCriteria tối ưu tốc độ:
-        # Bật repetition_penalty=1.05 để chống lặp code
-        # Giới hạn max_new_tokens tối đa 1536 để tiết kiệm VRAM KV-cache
-        gen_tokens = min(max_new_tokens, 1536) if max_new_tokens > 0 else 1024
+        gen_tokens = min(max_new_tokens, 768) if max_new_tokens > 0 else 512
         try:
             with torch.inference_mode():
                 output_tokens = self.model.generate(
@@ -785,31 +809,29 @@ class LLMClient:
                 )
         except (torch.cuda.OutOfMemoryError, RuntimeError) as oom_err:
             if "out of memory" in str(oom_err).lower():
-                print(f"[LLMClient] ⚠️ Cảnh báo CUDA OOM khi sinh mã: {oom_err}. Đang dọn dẹp cache và cắt giảm prompt xuống 2048 tokens...")
+                print(f"[LLMClient] ⚠️ Cảnh báo CUDA OOM: {oom_err}. Dọn dẹp cache và khởi tạo prompt tối giản...")
                 import gc
                 gc.collect()
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                 try:
-                    cur_len = inputs.input_ids.shape[1]
-                    if cur_len > 2048:
-                        r_head = 512
-                        r_tail = 2048 - r_head
-                        retry_ids = torch.cat([inputs.input_ids[:, :r_head], inputs.input_ids[:, -r_tail:]], dim=1)
-                        retry_mask = (
-                            torch.cat([inputs.attention_mask[:, :r_head], inputs.attention_mask[:, -r_tail:]], dim=1)
-                            if hasattr(inputs, "attention_mask") and inputs.attention_mask is not None
-                            else None
-                        )
-                    else:
-                        retry_ids = inputs.input_ids
-                        retry_mask = inputs.attention_mask if hasattr(inputs, "attention_mask") else None
-
-                    retry_start_len = retry_ids.shape[1]
+                    # Tạo prompt tối giản nguyên vẹn chuẩn ChatML, không cắt đứt tensor
+                    oom_user_content = messages[-1].get("content", "")
+                    oom_messages = [
+                        {
+                            "role": "system",
+                            "content": (
+                                "Bạn là chuyên gia lập trình Python phân tích dữ liệu. "
+                                "Chỉ viết duy nhất một hàm `def solution(data):` trả về kết quả số hoặc chuỗi hoặc list. "
+                                "Dùng get_sales_table, clean_date, clean_num, get_amount_col, get_qty_col."
+                            ),
+                        },
+                        {"role": "user", "content": oom_user_content},
+                    ]
+                    oom_chat = self.tokenizer.apply_chat_template(oom_messages, tokenize=False, add_generation_prompt=True)
+                    retry_inputs = self.tokenizer([oom_chat], return_tensors="pt").to(self.model.device)
+                    retry_start_len = retry_inputs.input_ids.shape[1]
                     retry_stopping = StoppingCriteriaList([CodeBlockEndStoppingCriteria(self.tokenizer, retry_start_len)])
-                    retry_inputs = {"input_ids": retry_ids}
-                    if retry_mask is not None:
-                        retry_inputs["attention_mask"] = retry_mask
 
                     with torch.inference_mode():
                         output_tokens = self.model.generate(
@@ -826,7 +848,7 @@ class LLMClient:
                             eos_token_id=self.tokenizer.eos_token_id
                         )
                     inputs = retry_inputs
-                    print(f"[LLMClient] ✅ Phục hồi OOM thành công với prompt 2048 tokens!")
+                    print(f"[LLMClient] ✅ Phục hồi OOM thành công với prompt ChatML tinh gọn!")
                 except Exception as retry_err:
                     print(f"[LLMClient] ❌ Thử lại sau OOM vẫn gặp lỗi ({retry_err}). Pipeline sẽ fallback an toàn.")
                     import gc
