@@ -78,7 +78,7 @@ class CodeBlockEndStoppingCriteria(StoppingCriteria):
     def __call__(self, input_ids: Any, scores: Any, **kwargs) -> bool:
         new_ids = input_ids[0][self.start_len:]
         num_new = len(new_ids)
-        if num_new < 12 or (num_new - self._decoded_len) < 4:
+        if num_new < 12 or (num_new - self._decoded_len) < 8:
             return False
 
         # Chỉ decode phần token mới phát sinh thay vì toàn bộ chuỗi từ đầu
@@ -325,22 +325,21 @@ def build_balanced_device_map(
             extra_modules = ["model.rotary_emb"]
 
         last_gpu = num_gpus - 1
-        
-        # Tính toán số tầng bớt đi ở GPU cuối để bù trừ dung lượng khổng lồ của lm_head (vocab 152k)
-        head_equiv_layers = min(6, max(2, int(num_layers * 0.12)))
-        
         device_map: Dict[str, int] = {}
         
         if num_gpus == 2:
-            # Chia cho 2 GPU: GPU 0 gánh nhiều hơn head_equiv_layers tầng
-            split_idx = (num_layers // 2) + (head_equiv_layers // 2)
-            # Giới hạn an toàn split_idx không vượt quá num_layers - 1
-            split_idx = max(1, min(split_idx, num_layers - 2))
+            # Đối với họ mô hình Qwen2 / Qwen2.5 / LLaMA:
+            # GPU 0 gánh embed_tokens (~0.78 GB trong 8-bit)
+            # GPU 1 gánh lm_head (~0.78 GB trong 8-bit)
+            # Do embed_tokens và lm_head có kích thước tương đương nhau (~0.78 GB),
+            # chia đôi chính xác số tầng (num_layers // 2) tạo ra sự cân bằng đối xứng tuyệt đối (~7.26 GB vs ~7.27 GB).
+            split_idx = num_layers // 2
             for i in range(num_layers):
                 device_map[f"{layer_prefix}.{i}"] = 0 if i < split_idx else 1
-            print(f"[LLMClient] ⚖️ Phân bổ tầng cân bằng 2 GPU ({num_layers} tầng): GPU 0 nhận {split_idx} tầng (0..{split_idx-1}), GPU 1 nhận {num_layers - split_idx} tầng ({split_idx}..{num_layers-1}) + lm_head")
+            print(f"[LLMClient] ⚖️ Phân bổ tầng cân bằng đối xứng 2 GPU ({num_layers} tầng): GPU 0 nhận {split_idx} tầng (0..{split_idx-1}) + embed (~7.3GB), GPU 1 nhận {num_layers - split_idx} tầng ({split_idx}..{num_layers-1}) + lm_head (~7.3GB)")
         else:
             # Chia cho N > 2 GPU
+            head_equiv_layers = min(6, max(2, int(num_layers * 0.12)))
             base_layers = (num_layers - head_equiv_layers) // num_gpus
             curr = 0
             for g in range(num_gpus - 1):
@@ -482,15 +481,16 @@ class LLMClient:
         else:
             compute_dtype = torch.float32
 
-        # Cấu hình lượng tử hóa (mặc định ưu tiên 4-bit NF4: siêu nhẹ, bảo đảm tuyệt đối không OOM)
-        quant_mode = (os.environ.get("DATAMATE_QUANTIZATION") or "4bit").lower().strip()
+        # Cấu hình lượng tử hóa thống nhất toàn hệ thống: Mặc định 8-bit INT8 cho Qwen2.5-Coder-14B
+        quant_mode = (os.environ.get("DATAMATE_QUANTIZATION") or "8bit").lower().strip()
         
-        # TỰ ĐỘNG BẢO VỆ OOM: Nếu GPU (<= 16.5GB như Tesla T4) mà nạp mô hình 14B, 8-bit (14GB) dễ gây OOM
-        # -> Tự động kích hoạt 4-bit NF4 (~8.5GB tổng) để dành >6GB VRAM cho Attention Forward / KV-Cache!
+        # TỰ ĐỘNG BẢO VỆ OOM ĐƠN GPU:
+        # Nếu chỉ có DUY NHẤT 1 GPU (<= 16.5GB như 1 card T4/P100 đơn) mà nạp mô hình 14B, 8-bit (~14.5GB) sẽ không đủ VRAM cho forward.
+        # Khi có từ 2 GPU trở lên (2x T4 trên Kaggle hoặc 2x RTX 5090 của BTC), mô hình 8-bit được chia đều ~7.3GB mỗi GPU, hoàn toàn an toàn!
         is_14b = "14b" in str(self.model_id).lower()
-        if has_cuda and is_14b and min_gpu_vram <= 16.5 and quant_mode != "4bit":
-            print(f"[LLMClient] ⚠️ Phát hiện phần cứng GPU ({min_gpu_vram:.1f} GB <= 16GB) chạy mô hình 14B.")
-            print(f"[LLMClient] 🛡️ Tự động chuyển lượng tử hóa sang 4-bit NF4 để chống CUDA Out of Memory!")
+        if has_cuda and num_gpus == 1 and is_14b and min_gpu_vram <= 16.5 and quant_mode != "4bit":
+            print(f"[LLMClient] ⚠️ Phát hiện cấu hình ĐƠN GPU ({min_gpu_vram:.1f} GB <= 16GB) chạy mô hình 14B.")
+            print(f"[LLMClient] 🛡️ Tự động chuyển lượng tử hóa sang 4-bit NF4 để chống CUDA Out of Memory trên card đơn!")
             quant_mode = "4bit"
 
         if quant_mode in ("4bit", "4-bit", "nf4"):
@@ -502,11 +502,13 @@ class LLMClient:
             )
             print(f"[LLMClient] Áp dụng lượng tử hóa: 4-bit NF4 (compute_dtype={compute_dtype})")
         else:
+            # Khi có >= 2 GPU, toàn bộ tầng nằm gọn trong VRAM (~7.3GB/GPU), tắt CPU offload để đạt tốc độ cao nhất
+            enable_cpu_offload = (num_gpus < 2)
             quant_config = BitsAndBytesConfig(
                 load_in_8bit=True,
-                llm_int8_enable_fp32_cpu_offload=True,
+                llm_int8_enable_fp32_cpu_offload=enable_cpu_offload,
             )
-            print(f"[LLMClient] Áp dụng lượng tử hóa: 8-bit INT8 (load_in_8bit=True, llm_int8_enable_fp32_cpu_offload=True)")
+            print(f"[LLMClient] Áp dụng lượng tử hóa thống nhất: 8-bit INT8 (load_in_8bit=True, cpu_offload={enable_cpu_offload})")
 
         # 2. Dọn dẹp bộ nhớ GPU trước khi nạp model
         if has_cuda:
