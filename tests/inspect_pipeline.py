@@ -1872,15 +1872,24 @@ def run_batch_evaluation(args: argparse.Namespace):
         target_questions = [q for q in target_questions if q.get("id") in replay_map]
 
     if getattr(args, "range", None):
-        # Hỗ trợ định dạng START-END (ví dụ: 1-50, 101-200, 1:50)
-        m_range = re.match(r"^(\d+)[\-:,_](\d+)$", str(args.range).strip())
-        if m_range:
-            s_num = max(1, int(m_range.group(1)))
-            e_num = min(len(all_questions), int(m_range.group(2)))
+        # Hỗ trợ định dạng START-END (ví dụ: 1-50, 101-200, 1:50, -50)
+        range_str = str(args.range).strip()
+        m_range = re.match(r"^(\d*)[\-:,_](\d*)$", range_str)
+        if m_range and (m_range.group(1) or m_range.group(2)):
+            s_num = int(m_range.group(1)) if m_range.group(1) else 1
+            e_num = int(m_range.group(2)) if m_range.group(2) else len(all_questions)
+            s_num = max(1, s_num)
+            e_num = min(len(all_questions), e_num)
             if s_num <= e_num:
                 target_questions = all_questions[s_num - 1 : e_num]
                 args.no_fill_abstain = True
                 print(f"• Chọn khoảng câu hỏi   : từ câu {s_num} đến câu {e_num} ({len(target_questions)} câu)")
+        elif range_str.isdigit():
+            s_num = 1
+            e_num = min(len(all_questions), int(range_str))
+            target_questions = all_questions[s_num - 1 : e_num]
+            args.no_fill_abstain = True
+            print(f"• Chọn khoảng câu hỏi   : từ câu {s_num} đến câu {e_num} ({len(target_questions)} câu)")
 
     if getattr(args, "batch_index", None) is not None and 1 <= args.batch_index <= 6:
         bs = getattr(args, "batch_size", None) or 20

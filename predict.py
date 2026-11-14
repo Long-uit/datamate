@@ -25,6 +25,7 @@ import sys
 
 if "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+import re
 import json
 import time
 import argparse
@@ -307,13 +308,25 @@ def main():
         print(f"• Lọc theo Question ID  : {args.id} ({len(target_questions)} câu)")
 
     if getattr(args, "range", None):
-        m_range = re.match(r"^(\d+)[\-:,_](\d+)$", str(args.range).strip())
-        if m_range:
-            s_num = max(1, int(m_range.group(1)))
-            e_num = min(len(target_questions), int(m_range.group(2)))
+        range_str = str(args.range).strip()
+        m_range = re.match(r"^(\d*)[\-:,_](\d*)$", range_str)
+        if m_range and (m_range.group(1) or m_range.group(2)):
+            s_num = int(m_range.group(1)) if m_range.group(1) else 1
+            e_num = int(m_range.group(2)) if m_range.group(2) else len(target_questions)
+            s_num = max(1, s_num)
+            e_num = min(len(target_questions), e_num)
             if s_num <= e_num:
                 target_questions = target_questions[s_num - 1 : e_num]
                 print(f"• Chọn khoảng câu hỏi   : từ câu {s_num} đến câu {e_num} ({len(target_questions)} câu)")
+            else:
+                print(f"⚠️ Khoảng câu hỏi không hợp lệ: {args.range} (start {s_num} > end {e_num})")
+        elif range_str.isdigit():
+            s_num = 1
+            e_num = min(len(target_questions), int(range_str))
+            target_questions = target_questions[s_num - 1 : e_num]
+            print(f"• Chọn khoảng câu hỏi   : từ câu {s_num} đến câu {e_num} ({len(target_questions)} câu)")
+        else:
+            print(f"⚠️ Định dạng --range không hợp lệ: '{args.range}'. Định dạng đúng: 'start-end' (ví dụ: '1-100', '1-9', '-9').")
 
     # Xử lý tính năng Resume nếu được kích hoạt
     existing_completed_ids = set()
