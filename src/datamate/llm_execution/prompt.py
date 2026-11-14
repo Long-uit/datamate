@@ -121,7 +121,8 @@ def classify_intent(question: str) -> str:
     if any(k in q_lower for k in [
         "công nợ", "cong no", "còn nợ", "con no", "tuổi nợ", "tuoi no",
         "hạn nợ", "han no", "hạn trả", "phải thu", "khách nợ", "sổ nợ",
-        "chưa trả", "chua tra", "nợ quá hạn", "thu hồi nợ", "khách còn nợ"
+        "chưa trả", "chua tra", "nợ quá hạn", "thu hồi nợ", "khách còn nợ",
+        "mua chịu", "mua chiu", "trả bớt", "tra bot", "trả nợ", "tra no", "thu nợ", "thu no", "ghi sổ", "ghi so"
     ]):
         return "cong_no"
 
@@ -171,8 +172,9 @@ def classify_intent(question: str) -> str:
         return "price_lookup"
 
     if re.search(
-        r"(?:bán|ban|mua)\s*(?:đc|được|duoc)?\s*(?:bao\s*nhiêu|bn|mấy)\s+(?:ly|phần|cái|kg|hộp|chai|gói|lon|bịch|suất|tô|chén|mét|thanh)"
-        r"|mấy\s+kg\s+|bao\s*nhiêu\s+kg\s+|may\s+kg\s+|bao\s*nhiu\s+kg\s+",
+        r"(?:bán|ban|mua|xuất)\s*(?:đc|được|duoc)?\s*(?:bao\s*nhiêu|bn|mấy|nhiu)\s+(?:ly|phần|cái|kg|hộp|chai|gói|lon|bịch|suất|tô|chén|mét|thanh|viên|lọ|ống|cây)"
+        r"|(?:số|so)\s+(?:lượng\s+)?(?:ly|phần|cái|kg|hộp|chai|gói|lon|bịch|suất|tô|chén|mét|thanh|viên|lọ|ống|cây|mặt\s*hàng|sản\s*phẩm|sp)\b.*(?:bán|ban|mua|xuất|ra).*(?:bao\s*nhiêu|bn|mấy|nhiu|gì|chi|nào|được|dc)"
+        r"|mấy\s+(?:kg|ly|lon|hộp|chai|cái)\b|bao\s*nhiêu\s+(?:kg|ly|lon|hộp|chai|cái)\b",
         q_lower,
     ):
         return "quantity_sum"
@@ -1186,9 +1188,10 @@ def solution(data):
     cols = df_sales.columns.tolist()
     status_col = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt', 'tình trạng', 'xử lý'])), None)
     if status_col:
-        df_sales = df_sales[~df_sales[status_col].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|trả|cancel', regex=True, na=False)]
+        df_sales = df_sales[~df_sales[status_col].astype(str).str.contains(r'hủy|huỷ|huy|trả|tra|hoàn(?!\s*(?:thành|tất))|hoan(?!\s*(?:thanh|tat))|cancel|return', case=False, na=False)]
 
-    mask = (df_sales['clean_date'].dt.year == 2026) & (df_sales['clean_date'].dt.month == 3)
+    # Áp dụng khoảng thời gian theo công thức trong prompt (dùng pd.Timestamp):
+    mask = (df_sales['clean_date'] >= pd.Timestamp("2026-03-01")) & (df_sales['clean_date'] <= pd.Timestamp("2026-03-31 23:59:59"))
     df_sales = df_sales[mask]
 
     if item_col:
@@ -1556,8 +1559,8 @@ def solution(data):
     cols_s = df_sales.columns.tolist()
     status_col = next((c for c in cols_s if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt', 'tình trạng'])), None)
     if status_col:
-        # BẮT BUỘC loại bỏ đơn hủy / trả hàng (diacritic-insensitive)
-        df_sales = df_sales[~df_sales[status_col].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|trả|tra|cancel|return')]
+        # BẮT BUỘC loại bỏ đơn hủy / trả hàng / hoàn hàng (diacritic-insensitive, không loại 'Đã hoàn thành')
+        df_sales = df_sales[~df_sales[status_col].astype(str).str.contains(r'hủy|huỷ|huy|trả|tra|hoàn(?!\s*(?:thành|tất))|hoan(?!\s*(?:thanh|tat))|cancel|return', case=False, na=False)]
 
     # 2. Lọc khoảng thời gian tuần trước (start_date <= date <= end_date)
     # Ví dụ tuần trước: 2026-06-08 đến 2026-06-14
@@ -1613,9 +1616,9 @@ def solution(data):
     code_col = next((c for c in cols if any(k in str(c).lower() for k in ['mã hàng', 'mã hh', 'ma hang', 'mã sp', 'mã'])), prod_col)
     st_col = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt'])), None)
 
-    # 2. Loại bỏ đơn hủy và lọc theo kỳ thời gian yêu cầu (ví dụ: tháng 9/2025)
+    # 2. Loại bỏ đơn hủy / trả hàng / hoàn hàng (không loại 'Đã hoàn thành') và lọc theo kỳ
     if st_col:
-        df_sales = df_sales[~df_sales[st_col].astype(str).str.lower().str.contains(r'hủy|huỷ|huy|trả|cancel', regex=True, na=False)]
+        df_sales = df_sales[~df_sales[st_col].astype(str).str.contains(r'hủy|huỷ|huy|trả|tra|hoàn(?!\s*(?:thành|tất))|hoan(?!\s*(?:thanh|tat))|cancel|return', case=False, na=False)]
     mask = (df_sales['clean_date'].dt.year == 2025) & (df_sales['clean_date'].dt.month == 9)
     df_period = df_sales[mask]
     if df_period.empty:
@@ -1957,6 +1960,35 @@ def solution(data):
     return round(float(pct_change), 2)
 ```""",
 
+    "numeric_list_monthly": r"""--- VÍ DỤ MINH HỌA: LIỆT KÊ DOANH THU THEO THỨ TỰ THỜI GIAN (NUMERIC LIST) ---
+Câu hỏi: "Liệt kê doanh thu 3 tháng liên tiếp từ tháng 2/2025 đến tháng 4/2025 theo thứ tự thời gian" (as_of_date = "2025-05-15")
+```python
+def solution(data):
+    df_sales = get_sales_table(data)
+    if df_sales is None or df_sales.empty:
+        return []
+
+    date_col = get_date_col(df_sales)
+    amt_col = get_amount_col(df_sales)
+    if not date_col or not amt_col:
+        return []
+
+    df_sales['clean_date'] = clean_date(df_sales[date_col])
+    cols = df_sales.columns.tolist()
+    status_col = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt', 'tình trạng', 'xử lý'])), None)
+    if status_col:
+        df_sales = df_sales[~df_sales[status_col].astype(str).str.contains(r'hủy|huỷ|huy|trả|tra|hoàn(?!\s*(?:thành|tất))|hoan(?!\s*(?:thanh|tat))|cancel|return', case=False, na=False)]
+
+    periods = [(2025, 2), (2025, 3), (2025, 4)]
+    results = []
+    for y, m in periods:
+        m_df = df_sales[(df_sales['clean_date'].dt.year == y) & (df_sales['clean_date'].dt.month == m)]
+        rev = clean_num(m_df[amt_col]).sum() if not m_df.empty else 0
+        results.append(int(round(rev)))
+
+    return results
+```""",
+
     "boolean_trend": """--- VÍ DỤ MINH HỌA: KIỂM TRA XU HƯỚNG DOANH THU (BOOLEAN TREND) ---
 Câu hỏi: "Từ tháng 7/2025 qua tháng 8/2025 rồi tháng 9/2025, doanh thu có tăng liên tục không?" (as_of_date = "2026-06-24")
 ```python
@@ -2011,6 +2043,13 @@ def retrieve_dynamic_few_shot(question: str, intent: str, entity_matches: Option
         example = EXEMPLAR_BANK.get("boolean_trend")
     elif is_date_question(question):
         example = EXEMPLAR_BANK.get("date_peak_revenue")
+    elif is_numeric_list_question(question):
+        if any(k in q_low for k in ["tháng", "thang", "liên tiếp", "lien tiep"]):
+            example = EXEMPLAR_BANK.get("numeric_list_monthly")
+        else:
+            example = EXEMPLAR_BANK.get("inventory_unit_conversion")
+    elif any(k in q_low for k in ["ca chiều", "ca sang", "ca sáng", "ca tối", "theo ca"]):
+        example = EXEMPLAR_BANK.get("shift_revenue")
     elif any(k in q_low for k in ["ngày tăng giá", "đợt tăng giá", "ngay trước ngày đó"]):
         example = EXEMPLAR_BANK.get("price_increase_impact")
     elif any(k in q_low for k in ["tỉ trọng", "ti trong", "tỷ trọng", "ty trong", "chiếm bao nhiêu %", "chiem bao nhieu %", "chiếm mấy %"]):
@@ -2021,11 +2060,9 @@ def retrieve_dynamic_few_shot(question: str, intent: str, entity_matches: Option
         example = EXEMPLAR_BANK.get("average_order_value")
     elif any(k in q_low for k in ["hộp chẵn", "viên lẻ", "thùng và chai", "tồn kho"]):
         example = EXEMPLAR_BANK.get("inventory_unit_conversion")
-    elif any(k in q_low for k in ["tăng liên tục", "so với", "cùng kỳ", "cung ky", "thay đổi bao nhiêu", "tăng trưởng", "hơn hay kém", "hon hay kem"]):
-        example = EXEMPLAR_BANK.get("time_series")
     elif any(k in q_low for k in ["bán chạy", "nhiều nhất", "top", "cao nhất", "ít nhất", "thấp nhất"]):
         example = EXEMPLAR_BANK.get("ranking_topk")
-    elif any(k in q_low for k in ["công nợ", "cong no", "còn nợ", "con no", "tuổi nợ", "hạn nợ", "hạn trả", "phải thu", "khách nợ", "sổ nợ", "chưa trả"]):
+    elif any(k in q_low for k in ["công nợ", "cong no", "còn nợ", "con no", "tuổi nợ", "hạn nợ", "hạn trả", "phải thu", "khách nợ", "sổ nợ", "chưa trả", "mua chịu", "trả bớt"]):
         example = EXEMPLAR_BANK.get("cong_no")
     elif any(k in q_low for k in ["nhập hàng", "phiếu nhập", "tiền nhập", "nhap hang", "phieu nhap", "mua hàng", "cần trả ncc", "nhập kho", "nhập vào", "giá nhập", "nhap vao", "gia nhap"]):
         example = EXEMPLAR_BANK.get("purchase_import")
@@ -2033,8 +2070,6 @@ def retrieve_dynamic_few_shot(question: str, intent: str, entity_matches: Option
         example = EXEMPLAR_BANK.get("rate_percentage")
     elif any(k in q_low for k in ["đợt giao", "lượt giao", "chở giao", "giao hàng", "dot giao", "đợt hàng"]):
         example = EXEMPLAR_BANK.get("delivery_batches")
-    elif any(k in q_low for k in ["ca chiều", "ca sang", "ca sáng", "ca tối", "theo ca"]):
-        example = EXEMPLAR_BANK.get("shift_revenue")
     elif any(k in q_low for k in ["hôm nay", "ngày hôm nay", "hom nay", "doanh thu ngày", "doanh số ngày", "trong ngày"]):
         example = EXEMPLAR_BANK.get("daily_revenue", EXEMPLAR_BANK["aggregation"])
     elif intent == "cancelled_orders" or (any(k in q_low for k in ["huỷ", "hủy", "cancel"]) and any(k in q_low for k in ["đơn", "bill", "hoá đơn"])):
@@ -2047,6 +2082,8 @@ def retrieve_dynamic_few_shot(question: str, intent: str, entity_matches: Option
         example = EXEMPLAR_BANK.get("quantity_sum")
     elif intent == "multitable_join" or any(k in q_low for k in ["hoạt chất", "kê đơn", "ghép bảng", "chi tiết đơn", "thép"]):
         example = EXEMPLAR_BANK.get("multitable_join")
+    elif any(k in q_low for k in ["tăng liên tục", "so với", "cùng kỳ", "cung ky", "thay đổi bao nhiêu", "tăng trưởng", "hơn hay kém", "hon hay kem"]):
+        example = EXEMPLAR_BANK.get("time_series")
     elif intent in EXEMPLAR_BANK:
         example = EXEMPLAR_BANK[intent]
     else:
@@ -2265,7 +2302,7 @@ RÀNG BUỘC MỐC THỜI GIAN & THỰC THỂ:
 {entity_block}
 YÊU CẦU THỰC HIỆN:
 1. Quan sát danh sách bảng và cột ở System Prompt để chọn đúng bảng và cột. Không đoán tên bảng có ký tự lạ.
-2. Áp dụng khoảng thời gian đã được giải mã và mốc as_of_date để lọc dữ liệu.
+2. Áp dụng khoảng thời gian đã được giải mã và mốc as_of_date để lọc dữ liệu. BẮT BUỘC dùng đúng công thức lọc ngày trong mục 'RÀNG BUỘC MỐC THỜI GIAN' (START_DATE / END_DATE hoặc pd.Timestamp). TUYỆT ĐỐI KHÔNG tự tiện viết dt.month == 1 hay dt.month == 2 cho câu hỏi về Quý hay Nửa năm!
 {req_3}
 {return_format_instruction}
 5. Chỉ viết duy nhất một hàm `def solution(data):` trả về kết quả trong khối code ```python, không viết giải thích bên ngoài.

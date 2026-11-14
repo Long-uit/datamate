@@ -2737,11 +2737,11 @@ def main():
     parser.add_argument("--no_fill_abstain", action="store_true", help="Không tự động điền abstain cho các câu còn lại")
     parser.add_argument("--resume", action="store_true", help="Tiếp tục chạy các câu chưa hoàn thành")
     parser.add_argument("--tau_star", type=float, default=0.50, help="Ngưỡng độ tin cậy tối ưu để từ chối trả lời (mặc định: 0.50)")
-    parser.add_argument("--timeout", type=int, default=30, help="Thời gian chờ tối đa khi chạy code trong sandbox (giây)")
+    parser.add_argument("--timeout", type=int, default=15, help="Thời gian chờ tối đa khi chạy code trong sandbox (giây, mặc định: 15)")
     parser.add_argument("--in_process", action="store_true", help="Chạy code trực tiếp trong tiến trình thay vì sandbox")
     parser.add_argument("--max_new_tokens", type=int, default=768, help="Số token tối đa sinh ra từ LLM (mặc định: 768)")
     parser.add_argument("--replay_logs", type=str, default=None, help="Thư mục logs đã sinh để chạy lại sandbox + cổng abstention + format (bỏ qua LLM)")
-    parser.add_argument("--quantization", "--quant", type=str, default="4bit", choices=["8bit", "4bit", "none"], help="Chế độ lượng tử hóa mô hình (mặc định: 4bit)")
+    parser.add_argument("--quantization", "--quant", type=str, default="8bit", choices=["8bit", "4bit", "none"], help="Chế độ lượng tử hóa mô hình (mặc định: 8bit)")
     parser.add_argument("--preserve_order", action="store_true", help="Chạy đúng theo thứ tự gốc từ câu 1 đến câu cuối trong questions.jsonl (không gom nhóm theo shop)")
     parser.add_argument("--range", type=str, default=None, help="Chỉ định khoảng câu hỏi cần chạy (1-based, ví dụ: 1-50 hoặc 101-200)")
 

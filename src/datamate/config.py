@@ -67,7 +67,7 @@ class PathsConfig:
 @dataclass
 class OutputConfig:
     tau_star: float = 0.50
-    default_timeout: int = 30
+    default_timeout: int = 15
 
 
 @dataclass
@@ -153,7 +153,7 @@ def load_config(config_path: Optional[str | Path] = None) -> AppConfig:
         ),
         output=OutputConfig(
             tau_star=float(o_data.get("tau_star", 0.50)),
-            default_timeout=int(o_data.get("default_timeout", 30)),
+            default_timeout=int(o_data.get("default_timeout", 15)),
         ),
     )
 

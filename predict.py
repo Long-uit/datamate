@@ -447,7 +447,7 @@ def main():
             intent = classify_intent(normalized_q)
             temporal_res = resolve_temporal_context(normalized_q, as_of_date, calendar_path=calendar_str)
             temporal_text = format_temporal_for_prompt(temporal_res)
-            entity_matches = link_entities(question_text, candidates=candidates, threshold=0.55) if candidates else []
+            entity_matches = link_entities(normalized_q, candidates=candidates, threshold=0.55) if candidates else []
             pruned_schema = prune_schema_by_intent(
                 schema_str=schema_str,
                 intent=intent,
