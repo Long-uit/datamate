@@ -35,6 +35,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import numpy as np
 
+import re
+
 # Tự động nạp thư mục src vào sys.path để chạy trực tiếp không cần cài đặt package
 _SRC_DIR = str(Path(__file__).resolve().parent / "src")
 if _SRC_DIR not in sys.path:
