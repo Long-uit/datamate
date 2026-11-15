@@ -123,6 +123,9 @@ STATUS_SEMANTIC_CLUSTERS = {
     "PENDING": [
         "đang giao", "đang vận chuyển", "đang xử lý", "đang gửi", "shipping",
         "chờ giao", "đang giao dịch", "đang giao hàng",
+        "đang ship", "dang ship", "đang ship hàng", "chờ lấy", "chờ lấy hàng",
+        "đang lấy hàng", "chờ xác nhận", "chờ duyệt", "chờ xử lý", "chờ thanh toán",
+        "đang chuyển", "đang đóng gói", "đang soạn hàng",
     ],
 }
 
@@ -219,6 +222,14 @@ class StatusClassification(tuple):
         return hash((self[0], self[1]))
 
 
+_WARNED_UNSEEN_STATUS: set[str] = set()
+
+HEADER_STATUS_LABELS: set[str] = {
+    "trang thai", "trang thai don hang", "tinh trang", "status", "order status",
+    "ket qua", "xu ly", "trang thai xu ly", "tinh trang hddt",
+}
+
+
 def classify_status_value(raw_val: Any) -> StatusClassification:
     """
     Phân loại giá trị trạng thái theo phân cấp ngữ nghĩa tất định (Strict Priority Hierarchy).
@@ -226,11 +237,15 @@ def classify_status_value(raw_val: Any) -> StatusClassification:
     Categories: 'giữ', 'loại (huỷ)', 'loại (trả)', 'unknown'
 
     - null / empty / blank: return "giữ" (mặc định giao dịch hoạt động theo quyết định người dùng).
-    - novel / unseen values: log warning UNKNOWN, trả về "unknown", tuyệt đối không tự đoán.
+    - novel / unseen values: log warning UNKNOWN (deduplicated), trả về "unknown", tuyệt đối không tự đoán.
     """
     s = normalize_status_text(raw_val)
     if not s or s in ("nan", "none", "na", "null", "rỗng"):
         return StatusClassification("giữ", "Null/Empty value: retained as default active transaction")
+
+    # Nhận diện chuỗi tên cột trạng thái còn sót lại từ dòng tiêu đề lặp
+    if s in HEADER_STATUS_LABELS:
+        return StatusClassification("unknown", f"Header label artifact: '{raw_val}'")
 
     # Ưu tiên 1: Cụm từ TRẢ HÀNG (kiểm tra trước để bẫy cụm 'hoàn hàng', 'hoàn trả' trước chữ 'hoàn')
     for phrase in STATUS_SEMANTIC_CLUSTERS["RETURN"]:
@@ -252,8 +267,11 @@ def classify_status_value(raw_val: Any) -> StatusClassification:
         if phrase in s:
             return StatusClassification("giữ", f"Matches pending/in-transit semantic phrase (Rule 1): '{phrase}'")
 
-    # Ưu tiên 5: GIÁ TRỊ LẠ CHƯA TỪNG THẤY -> KHÔNG TỰ ĐOÁN, GHI LOG CẢNH BÁO
-    log.warning("UNSEEN STATUS VALUE: '%s' does not match any known semantic cluster", raw_val)
+    # Ưu tiên 5: GIÁ TRỊ LẠ CHƯA TỪNG THẤY -> KHÔNG TỰ ĐOÁN, GHI LOG CẢNH BÁO (Deduplicated)
+    raw_str = str(raw_val).strip()
+    if raw_str not in _WARNED_UNSEEN_STATUS:
+        _WARNED_UNSEEN_STATUS.add(raw_str)
+        log.warning("UNSEEN STATUS VALUE: '%s' does not match any known semantic cluster", raw_val)
     return StatusClassification("unknown", f"UNSEEN STATUS VALUE: '{raw_val}' does not match any known semantic cluster")
 
 
@@ -801,6 +819,22 @@ def strip_embedded_subtotal_rows(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def strip_repeated_header_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Tự động phát hiện và loại bỏ các dòng lặp lại tiêu đề cột (do ngắt trang báo cáo
+    hoặc xuất file nối tiếp nhiều trang/kỳ từ hệ thống POS/ERP).
+    """
+    if df.empty or len(df) <= 1 or len(df.columns) < 2:
+        return df
+
+    cols_to_check = [str(c).strip().lower() for c in df.columns[:min(8, len(df.columns))]]
+    sample_sub = df.iloc[:, :len(cols_to_check)].astype(str).apply(lambda col: col.str.strip().str.lower())
+    is_header = (sample_sub == cols_to_check).sum(axis=1) >= 2
+    if is_header.any():
+        return df.loc[~is_header].reset_index(drop=True)
+    return df
+
+
 def propagate_partial_return_status(
     df: pd.DataFrame,
     order_id_col: Optional[str] = None,
@@ -944,13 +978,16 @@ def clean_dataframe(df: pd.DataFrame, filter_status: bool = False) -> pd.DataFra
     # 0b. Loại bỏ các dòng tổng ngày / tổng tháng / subtotal chèn giữa bảng POS
     df_no_subtotals = strip_embedded_subtotal_rows(df_no_summary)
 
-    order_col = find_order_id_col(list(df_no_subtotals.columns))
+    # 0c. Loại bỏ các dòng lặp lại tiêu đề cột (do ngắt trang hoặc nối file export)
+    df_no_headers = strip_repeated_header_rows(df_no_subtotals)
+
+    order_col = find_order_id_col(list(df_no_headers.columns))
     if order_col is None:
         # Không có cấu trúc đơn -> không can thiệp Rule 8
-        return df_no_subtotals.copy()
+        return df_no_headers.copy()
 
     # 1. Forward-fill các cột cấp đơn
-    df_ffilled = apply_group_forward_fill(df_no_subtotals, order_id_col=order_col)
+    df_ffilled = apply_group_forward_fill(df_no_headers, order_id_col=order_col)
     # 2. Khử trùng lặp dòng lỗi xuất file POS
     df_cleaned = deduplicate_order_rows(df_ffilled, order_id_col=order_col)
     # 3. Lan truyền trạng thái đơn trả hàng 1 phần sang toàn bộ đơn (Luật §1)

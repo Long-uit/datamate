@@ -261,6 +261,22 @@ class TestTemporalGrounder(unittest.TestCase):
         self.assertNotIn(".dt.date", hint_fb)
         self.assertNotIn(".date()", hint_fb)
 
+    def test_shorthand_date_and_range(self):
+        # 1. Định dạng MM/DD (8/26 với ngày > 12)
+        s, e = extract_query_date_range("8/26 tiền bán ca chiều là bnhiu?", as_of_date_str="2026-09-19")
+        self.assertEqual(s, "2026-08-26")
+        self.assertEqual(e, "2026-08-26")
+
+        # 2. Định dạng DD/MM (26/8)
+        s2, e2 = extract_query_date_range("ngày 26/8 tiền bán ca chiều", as_of_date_str="2026-09-19")
+        self.assertEqual(s2, "2026-08-26")
+        self.assertEqual(e2, "2026-08-26")
+
+        # 3. Khoảng ngày rút gọn (từ 1/8 đến 15/8)
+        s3, e3 = extract_query_date_range("từ 1/8 đến 15/8 doanh thu là bao nhiêu?", as_of_date_str="2026-09-19")
+        self.assertEqual(s3, "2026-08-01")
+        self.assertEqual(e3, "2026-08-15")
+
 
 if __name__ == "__main__":
     unittest.main()

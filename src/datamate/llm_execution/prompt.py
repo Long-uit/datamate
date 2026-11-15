@@ -287,6 +287,29 @@ def prune_schema_by_intent(
 
     kept_names: Set[str] = set()
 
+    # Nhận diện các bảng bán hàng chia theo phân vùng tháng (Partitioned Monthly Sales Tables)
+    monthly_sales_tables: dict[str, tuple[int, int]] = {}
+    for p in parsed_tables:
+        m_part = re.search(r"[_-]t(\d{1,2})[_-](\d{4})\b", p["name"].lower()) or re.search(r"banhang[_-]?t(\d{1,2})[_-](\d{4})", p["name"].lower())
+        if m_part:
+            m_val = int(m_part.group(1))
+            y_val = int(m_part.group(2))
+            if 1 <= m_val <= 12 and 2000 <= y_val <= 2050:
+                monthly_sales_tables[p["name"]] = (y_val, m_val)
+
+    # Nếu có nhiều bảng chia theo tháng (>= 3 bảng) và câu hỏi có mốc thời gian cụ thể
+    target_months: set[tuple[int, int]] = set()
+    if len(monthly_sales_tables) >= 3 and temporal_info:
+        for key in ("start_date", "end_date", "comparison_start", "comparison_end"):
+            val_d = temporal_info.get(key)
+            if val_d:
+                try:
+                    s_str = str(val_d).strip()[:10]
+                    p_y, p_m = int(s_str[:4]), int(s_str[5:7])
+                    target_months.add((p_y, p_m))
+                except Exception:
+                    pass
+
     for p in parsed_tables:
         t_name_low = p["name"].lower()
         t_name_norm = unicodedata.normalize("NFKD", t_name_low).encode("ascii", "ignore").decode("utf-8")
@@ -343,10 +366,15 @@ def prune_schema_by_intent(
             kept_names.add(p["name"])
             continue
 
-        # --- NGUYÊN TẮC VÀNG 4: MIỄN NHIỄM CHO BẢNG BÁN HÀNG (Primary Sales Immunity) ---
+        # --- NGUYÊN TẮC VÀNG 4: MIỄN NHIỄM CHO BẢNG BÁN HÀNG (Primary Sales Immunity & Partition Pruning) ---
         if is_sales:
             # Trong mọi truy vấn bán hàng, doanh thu, đơn hàng, mặt hàng, bảng bán hàng được miễn nhiễm
             if intent not in ("expense", "purchase_import"):
+                if p["name"] in monthly_sales_tables and target_months:
+                    # Partition Pruning: chỉ giữ bảng phân vùng tháng khớp kỳ truy vấn
+                    if monthly_sales_tables[p["name"]] in target_months:
+                        kept_names.add(p["name"])
+                    continue
                 kept_names.add(p["name"])
                 continue
 
@@ -393,10 +421,15 @@ def prune_schema_by_intent(
         for p in parsed_tables if p["name"] in kept_names
     )
     if not has_kept_sales and intent not in ("purchase_import", "expense"):
-        for p in parsed_tables:
-            if any(k in p["role"].lower() for k in ["bán hàng", "hóa đơn"]) or any(k in p["name"].lower() for k in ["donhang", "hoadon", "banhang"]):
-                kept_names.add(p["name"])
-                break
+        if monthly_sales_tables:
+            sorted_m = sorted(monthly_sales_tables.items(), key=lambda x: x[1], reverse=True)
+            for name, _ in sorted_m[:2]:
+                kept_names.add(name)
+        else:
+            for p in parsed_tables:
+                if any(k in p["role"].lower() for k in ["bán hàng", "hóa đơn"]) or any(k in p["name"].lower() for k in ["donhang", "hoadon", "banhang"]):
+                    kept_names.add(p["name"])
+                    break
 
     # --- NGUYÊN TẮC VÀNG 3: QUAN HỆ KHÓA NGOẠI & BẢO TOÀN CẶP BẢNG ---
     # 3.1. Nếu giữ bảng chi tiết dòng hàng (chi_tiet_don, DanhSachHoaDonChiTiet), bắt buộc giữ bảng đơn hàng (don_hang, DanhSachHoaDon)
@@ -694,9 +727,10 @@ NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN:
    `st_c = next((c for c in cols if any(k in str(c).lower() for k in ['trạng thái', 'status', 'ghi chú tt'])), None)`
    `if st_c: df = df[~df[st_c].astype(str).str.contains(r'hủy|huỷ|huy|trả|tra|hoàn|hoan|cancel|return', case=False, na=False)]`
 6. Tiện ích sẵn có trong môi trường: `get_sales_table`, `get_date_col`, `get_amount_col`, `get_qty_col`, `get_item_col`, `get_order_col`, `get_customer_col`, `get_price_col`, `get_status_col`, `clean_num`, `clean_date`, `filter_valid_sales`, `revenue`, `count_orders`, `debt`. Không import lại.
-7. Nếu dữ liệu sau lọc rỗng hoặc không tìm thấy: trả về 0 (doanh thu/số đơn/số lượng), 0.0 (tỉ lệ), hoặc [] (top-k). Không return None.
+7. Nếu dữ liệu sau lọc rỗng hoặc không tìm thấy: trả về 0 (doanh thu/số đơn/số lượng), 0.0 (tỉ lệ), "" (tên đối tượng), hoặc [] (top-k). Không return None.
 8. Trả về đúng 1 giá trị vô hướng (int, float, str, list). Không trả về dictionary chứa nhiều thông tin.
-9. TUYỆT ĐỐI KHÔNG raise DataNotFoundError hay các Exception khác. Nếu bảng/cột không khớp, hãy trả về 0, 0.0 hoặc []!"""
+9. An toàn khi tìm Top-1 (idxmax): BẮT BUỘC kiểm tra series không rỗng trước khi gọi `idxmax()`: `if len(grp) == 0: return ""` hoặc `if grp.empty: return ""`. TUYỆT ĐỐI KHÔNG gọi .idxmax() trên Series rỗng để tránh crash ValueError!
+10. TUYỆT ĐỐI KHÔNG raise DataNotFoundError hay các Exception khác. Nếu bảng/cột không khớp, hãy trả về 0, 0.0 hoặc []!"""
 
     conditional_rules: List[str] = []
     q_clean = _strip_accents(q_low)
@@ -708,7 +742,8 @@ NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN:
 
     if any(k in q_clean for k in ["mat hang nao", "san pham nao", "mon nao", "hang nao", "thuoc nao", "sp nao"]):
         conditional_rules.append(
-            "- [CÂU HỎI TÌM MẶT HÀNG/SẢN PHẨM]: Câu hỏi hỏi 'mặt hàng nào' / 'sản phẩm nào' -> BẮT BUỘC group by theo tên sản phẩm và RETURN chuỗi tên mặt hàng (string, vd: return 'Gạch ống'). TUYỆT ĐỐI KHÔNG RETURN TỔNG TIỀN."
+            "- [CÂU HỎI TÌM MẶT HÀNG/SẢN PHẨM]: Câu hỏi hỏi 'mặt hàng nào' / 'sản phẩm nào' -> BẮT BUỘC group by theo tên sản phẩm và RETURN chuỗi tên mặt hàng (string, vd: return 'Gạch ống'). "
+            "An toàn: `grp = df.groupby(prod_col)[qty_col].sum()`; `if len(grp) == 0: return ''`; `return str(grp.idxmax())`. TUYỆT ĐỐI KHÔNG RETURN TỔNG TIỀN."
         )
 
     if any(k in q_clean for k in ["khach nao", "khach hang nao", "ai mua", "khach nao mua"]):
@@ -856,7 +891,7 @@ NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN:
 
     if any(k in q_low for k in ["nhà cung cấp", "nha cung cap", "nhaf cung cap", "ncc"]):
         conditional_rules.append(
-            "- [Nhà cung cấp (Supplier)]: Khi hỏi về nhà cung cấp (nhập nhiều tiền nhất từ NCC nào), tìm bảng nhập hàng (`SoNhapHang` / `phieu_nhap`), tìm cột nhà cung cấp `ncc_col = next((c for c in cols if any(k in str(c).lower() for k in ['nhà cung cấp', 'nha cung cap', 'ncc', 'đối tác', 'nhà phân phối'])), None)`, nhóm theo `ncc_col` để tính tổng tiền nhập `clean_num(df[amt_col]).sum()`, và trả về tên chuỗi của NCC đứng đầu `df.groupby(ncc_col)['clean_amt'].sum().idxmax()`. TUYỆT ĐỐI KHÔNG trả về số tiền nhập!"
+            "- [Nhà cung cấp (Supplier)]: Khi hỏi về nhà cung cấp (nhập nhiều tiền nhất từ NCC nào), tìm bảng nhập hàng (`SoNhapHang` / `phieu_nhap`), tìm cột nhà cung cấp `ncc_col = next((c for c in cols if any(k in str(c).lower() for k in ['nhà cung cấp', 'nha cung cap', 'ncc', 'đối tác', 'nhà phân phối'])), None)`, nhóm theo `ncc_col` để tính tổng tiền nhập `grp = df.groupby(ncc_col)['clean_amt'].sum()`, và trả về tên chuỗi của NCC đứng đầu: `if len(grp) == 0: return ''`; `return str(grp.idxmax())`. TUYỆT ĐỐI KHÔNG trả về số tiền nhập!"
         )
 
     if intent == "average_order_value" or re.search(r"(?:gi[aá]s?\s*tr[iị]\s*)?trung\s*b[iì]nh\s*(?:m[oộ]t|1)\s*đ[oơ]n|tb\s*(?:m[oộ]t|1)\s*đ[oơ]n|\baov\b", q_low):
@@ -2188,6 +2223,9 @@ def build_prompt(
     intent = classify_intent(question)
     few_shot_block = retrieve_dynamic_few_shot(question=question, intent=intent, entity_matches=entity_matches)
 
+    temporal_info = resolve_temporal_context(question, as_of_date, calendar_path=calendar_path)
+    temporal_text = format_temporal_for_prompt(temporal_info)
+
     if force_full_schema:
         active_schema = schema_str
     else:
@@ -2196,10 +2234,8 @@ def build_prompt(
             intent=intent,
             question=question,
             entity_matches=entity_matches,
+            temporal_info=temporal_info,
         )
-
-    temporal_info = resolve_temporal_context(question, as_of_date, calendar_path=calendar_path)
-    temporal_text = format_temporal_for_prompt(temporal_info)
 
     entity_block = ""
     matches = entity_matches

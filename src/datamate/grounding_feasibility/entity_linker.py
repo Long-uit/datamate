@@ -277,17 +277,38 @@ BUSINESS_ENTITY_STOPWORDS: set[str] = {
     "cửa hàng", "cua hang", "tổng cộng", "tong cong", "bao nhiêu", "bao nhieu", "tỉ trọng", "ti trong", "phần trăm", "phan tram",
 }
 
+# Đơn vị đo lường / đóng gói trong bán lẻ - tuyệt đối không coi là tên thực thể sản phẩm
+MEASURE_UNITS: set[str] = {
+    "ly", "cốc", "coc", "chai", "lon", "cái", "cai", "chiếc", "chiec", "hộp", "hop",
+    "thùng", "thung", "viên", "vien", "vỉ", "vi", "lốc", "loc", "phần", "phan",
+    "bát", "bat", "tô", "to", "đĩa", "dia", "suất", "suat", "cuộn", "cuon",
+    "bao", "mét", "met", "m", "kg", "g", "gam", "lít", "lit", "l", "ml",
+    "túi", "tui", "bịch", "bich", "cây", "cay", "bình", "binh", "can", "tuýp", "tuyp", "gói", "goi",
+}
+
+# Các cột số lượng / tiền tệ / đơn vị / thuộc tính đo lường - cấm trích xuất thực thể
+NON_ENTITY_COL_PATTERNS = [
+    r"s[oố]\s*l[uư][oơ]ng|sl\b|qty|quantity",
+    r"gi[aá]|price|cost|đ[oơ]n\s*gi[aá]|giaban|dongia",
+    r"ti[eề]n|amount|total|th[aà]nh\s*ti[eề]n",
+    r"chi[eế]t\s*kh[aấ]u|gi[aả]m\s*gi[aá]|discount",
+    r"đ[oơ]n\s*v[iị]|dvt|unit",
+    r"t[iỉ]\s*l[eệ]|h[eệ]\s*s[oố]|rate|ratio",
+    r"ng[aà]y|date|time|th[oờ]i\s*gian",
+    r"tr[aạ]ng\s*th[aá]i|status",
+    r"ghi\s*ch[uú]|note|description",
+    r"s[oố]\s*đi[eệ]n\s*tho[aạ]i|sđt|phone",
+    r"đ[iị]a\s*ch[iỉ]|address",
+]
+
 # Các cột tiềm năng chứa thực thể (Mở rộng toàn diện các trường nghiệp vụ)
 ENTITY_COL_MAP = [
     ("product", [
-        r"s[aả]n\s*ph[aẩ]m",
-        r"t[eê]n\s*h[aà]ng",
-        r"t[eê]n\s*m[aặ]t\s*h[aà]ng",
-        r"m[aặ]t\s*h[aà]ng",
-        r"thu[oố]c",
+        r"t[eê]n\s*(?:s[aả]n\s*ph[aẩ]m|h[aà]ng|m[aặ]t\s*h[aà]ng|thu[oố]c|sp|d[iị]ch\s*v[uụ])",
+        r"^(?:s[aả]n\s*ph[aẩ]m|h[aà]ng\s*h[oó]a|m[aặ]t\s*h[aà]ng|thu[oố]c)$",
         r"sku",
-        r"m[aã]\s*h[aà]ng",
-        r"m[aã]\s*sp",
+        r"m[aã]\s*(?:h[aà]ng|sp|thu[oố]c|v[aậ]t\s*t[uư])",
+        r"^(?:t[eê]n|ten)$",
     ]),
     ("active_ingredient", [
         r"ho[aạ]t\s*ch[aấ]t",
@@ -304,23 +325,18 @@ ENTITY_COL_MAP = [
         r"category",
     ]),
     ("customer", [
-        r"kh[aá]ch\s*h[aà]ng",
         r"t[eê]n\s*kh[aá]ch",
+        r"^(?:kh[aá]ch\s*h[aà]ng|khachhang|khach)$",
         r"m[aã]\s*kh",
         r"m[aã]\s*kh[aá]ch",
     ]),
     ("staff", [
-        r"nh[aâ]n\s*vi[eê]n",
-        r"ng[uư][oờ]i\s*b[aá]n",
-        r"thu\s*ng[aâ]n",
-        r"d[uư][oợ]c\s*s[iĩ]",
-        r"staff",
+        r"t[eê]n\s*(?:nh[aâ]n\s*vi[eê]n|nv|thu\s*ng[aâ]n|th[oợ])",
+        r"^(?:nh[aâ]n\s*vi[eê]n|ng[uư][oờ]i\s*b[aá]n|thu\s*ng[aâ]n|d[uư][oợ]c\s*s[iĩ]|th[oợ]|staff)$",
     ]),
     ("supplier", [
-        r"nh[aà]\s*cung\s*c[aấ]p",
-        r"ncc",
-        r"nh[aà]\s*ph[aâ]n\s*ph[oố]i",
-        r"supplier",
+        r"t[eê]n\s*(?:nh[aà]\s*cung\s*c[aấ]p|ncc|đ[oố]i\s*t[aá]c)",
+        r"^(?:nh[aà]\s*cung\s*c[aấ]p|ncc|nh[aà]\s*ph[aâ]n\s*ph[oố]i|supplier)$",
     ]),
     ("channel", [
         r"k[eê]nh\s*b[aá]n",
@@ -515,6 +531,10 @@ def extract_candidates_from_business(business: BusinessData) -> list[Candidate]:
         for col in ti.columns:
             norm_col = normalize_entity_text(col)
 
+            # Bỏ qua ngay các cột số lượng, tiền tệ, ngày tháng, trạng thái, đơn vị đo lường
+            if any(re.search(pat, norm_col) for pat in NON_ENTITY_COL_PATTERNS):
+                continue
+
             # Xác định loại thực thể qua ENTITY_COL_MAP mở rộng
             entity_type = None
             for e_type, patterns in ENTITY_COL_MAP:
@@ -541,6 +561,16 @@ def extract_candidates_from_business(business: BusinessData) -> list[Candidate]:
                 for val in unique_vals:
                     val_str = str(val).strip()
                     if not val_str or len(val_str) < 2:
+                        continue
+                    # Bỏ qua giá trị rác / nan / null
+                    if val_str.lower() in ("nan", "none", "null", "chưa có", "không có"):
+                        continue
+                    # Bỏ qua nếu là số thuần túy hoặc số lượng kèm đơn vị (ví dụ: '1 ly', '2 ly', '10.5', '500k')
+                    if re.match(r"^\d+(?:[.,]\d+)?(?:\s*[a-zA-Z\w]+)?$", val_str):
+                        continue
+                    norm_v = normalize_entity_text(val_str)
+                    # Bỏ qua nếu là đơn vị đo lường hoặc từ dừng kinh doanh
+                    if norm_v in MEASURE_UNITS or norm_v in BUSINESS_ENTITY_STOPWORDS:
                         continue
                     key = (entity_type, val_str)
                     if key not in seen:
@@ -627,6 +657,8 @@ def fuzzy_entity_match_score(query: str, target: str) -> float:
     # Bắt buộc từ này phải xuất hiện trọn vẹn trong câu hỏi!
     if len(t_tokens) == 1:
         single_tk = list(t_tokens)[0]
+        if single_tk in MEASURE_UNITS:
+            return 0.0
         if len(single_tk) <= 5:
             if single_tk in q_tokens:
                 return 0.95
@@ -685,8 +717,14 @@ def link_entities(
         target_norm = cand.norm_value
         target_unaccented = remove_accents(target_norm)
 
-        # 1. Bỏ qua nếu giá trị thực thể trùng hoàn toàn với từ dừng kinh doanh
-        if target_norm in BUSINESS_ENTITY_STOPWORDS or target_unaccented in BUSINESS_ENTITY_STOPWORDS:
+        # 1. Bỏ qua nếu giá trị thực thể trùng với từ dừng kinh doanh, đơn vị đo lường hoặc số thuần túy
+        if (
+            target_norm in BUSINESS_ENTITY_STOPWORDS
+            or target_unaccented in BUSINESS_ENTITY_STOPWORDS
+            or target_norm in MEASURE_UNITS
+            or target_unaccented in MEASURE_UNITS
+            or re.match(r"^\d+(?:[.,]\d+)?(?:\s*[a-zA-Z\w]+)?$", cand.value.strip())
+        ):
             continue
 
         # 2. Khách hàng/nhân viên/nhà cung cấp: ngăn chặn false positive từ từ đơn lẻ khi câu hỏi không hỏi người

@@ -290,9 +290,47 @@ def resolve_temporal(
         except Exception:
             pass
 
-    # 0a-2. Ngày cụ thể: ví dụ "vào ngày 01/12/2025", "ngay 01/12/2025", "ngày 01/12/2025" (bỏ qua nếu đã khớp m_span_from_date)
-    m_exact_date = re.search(r"(?:vào\s+ngày|vao\s+ngay|ngay|ngày)\s+(\d{1,2}[/-]\d{1,2}[/-]\d{4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})", q)
-    if m_exact_date and not m_span_from_date:
+    # 0a-2. Khoảng ngày rút gọn: ví dụ "từ 1/8 đến 15/8", "từ ngày 01/08 đến 15/08/2025"
+    m_range = re.search(
+        r"(?:từ|tu)\s*(?:ngày|ngay)?\s*([0-3]?\d)[/-]([0-1]?\d)(?:[/-](\d{4}))?\s*(?:đến|den|tới|toi|-)\s*(?:ngày|ngay)?\s*([0-3]?\d)[/-]([0-1]?\d)(?:[/-](\d{4}))?",
+        q,
+    )
+    if m_range and not m_span_from_date:
+        try:
+            rd1, rm1, ry1 = int(m_range.group(1)), int(m_range.group(2)), m_range.group(3)
+            rd2, rm2, ry2 = int(m_range.group(4)), int(m_range.group(5)), m_range.group(6)
+            # Chuẩn hóa nếu tháng/ngày đảo ngược
+            if rd1 > 12 and rm1 <= 12:
+                r_day1, r_m1 = rd1, rm1
+            elif rm1 > 12 and rd1 <= 12:
+                r_day1, r_m1 = rm1, rd1
+            else:
+                r_day1, r_m1 = rd1, rm1
+
+            if rd2 > 12 and rm2 <= 12:
+                r_day2, r_m2 = rd2, rm2
+            elif rm2 > 12 and rd2 <= 12:
+                r_day2, r_m2 = rm2, rd2
+            else:
+                r_day2, r_m2 = rd2, rm2
+
+            r_y2 = int(ry2) if ry2 else (d.year if date(d.year, r_m2, r_day2) <= d else d.year - 1)
+            r_y1 = int(ry1) if ry1 else (r_y2 if r_m1 <= r_m2 else r_y2 - 1)
+
+            range_start = date(r_y1, r_m1, r_day1)
+            range_end = date(r_y2, r_m2, r_day2)
+            windows.append(TimeWindow(
+                start_date=range_start.isoformat(),
+                end_date=range_end.isoformat(),
+                label=f"range_{range_start.isoformat()}_{range_end.isoformat()}",
+                description=f"Từ ngày {range_start.strftime('%d/%m/%Y')} đến {range_end.strftime('%d/%m/%Y')}",
+            ))
+        except Exception:
+            pass
+
+    # 0a-3. Ngày cụ thể đầy đủ năm: ví dụ "vào ngày 01/12/2025", "ngay 01/12/2025", "2025-12-01"
+    m_exact_date = re.search(r"(?:(?:\b(?:vào|vao|ngày|ngay|hôm|hom)\s+)|(?<!\d))(\d{1,2}[/-]\d{1,2}[/-]\d{4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})\b", q)
+    if m_exact_date and not m_span_from_date and not m_range:
         d_str = m_exact_date.group(1)
         try:
             if "/" in d_str:
@@ -309,6 +347,33 @@ def resolve_temporal(
                 label=f"exact_date_{exact_d.isoformat()}",
                 description=f"Ngày {exact_d.strftime('%d/%m/%Y')} ({exact_d.isoformat()})",
             ))
+        except Exception:
+            pass
+
+    # 0a-4. Ngày rút gọn không ghi năm (ví dụ: "8/26 tiền bán ca chiều là bnhiu?", "ngày 26/8", "hôm 15/9")
+    m_shorthand = re.search(r"(?:(?:\b(?:vào|vao|ngày|ngay|hôm|hom)\s+)|(?<!\d))([0-3]?\d)[/-]([0-3]?\d)\b(?!\s*%)", q)
+    if m_shorthand and not m_span_from_date and not m_range and not m_exact_date:
+        try:
+            n1, n2 = int(m_shorthand.group(1)), int(m_shorthand.group(2))
+            if n1 > 0 and n2 > 0:
+                if n1 > 12 and 1 <= n2 <= 12:
+                    s_day, s_month = n1, n2
+                elif n2 > 12 and 1 <= n1 <= 12:
+                    s_day, s_month = n2, n1
+                elif 1 <= n1 <= 31 and 1 <= n2 <= 12:
+                    s_day, s_month = n1, n2
+                else:
+                    s_day, s_month = 0, 0
+
+                if 1 <= s_month <= 12 and 1 <= s_day <= pycalendar.monthrange(d.year, s_month)[1]:
+                    s_year = d.year if date(d.year, s_month, s_day) <= d else d.year - 1
+                    exact_d = date(s_year, s_month, s_day)
+                    windows.append(TimeWindow(
+                        start_date=exact_d.isoformat(),
+                        end_date=exact_d.isoformat(),
+                        label=f"exact_date_{exact_d.isoformat()}",
+                        description=f"Ngày {exact_d.strftime('%d/%m/%Y')} ({exact_d.isoformat()})",
+                    ))
         except Exception:
             pass
 

@@ -248,7 +248,7 @@ def main():
     parser.add_argument("--timeout", type=int, default=15, help="Thời gian chờ tối đa khi chạy code trong sandbox (giây, mặc định: 15)")
     parser.add_argument("--in_process", action="store_true", help="Chạy code trực tiếp trong tiến trình (bảo vệ cache bằng bản sao RAM) thay vì sandbox subprocess")
     parser.add_argument("--quantization", "--quant", type=str, default="8bit", choices=["8bit", "4bit", "none"], help="Chế độ lượng tử hóa mô hình (mặc định: 8bit)")
-    parser.add_argument("--max_new_tokens", type=int, default=768, help="Số token tối đa sinh ra cho mỗi câu (mặc định: 768)")
+    parser.add_argument("--max_new_tokens", type=int, default=512, help="Số token tối đa sinh ra cho mỗi câu (mặc định: 512)")
     parser.add_argument("--preserve_order", action="store_true", help="Chạy đúng theo thứ tự gốc từ câu 1 đến câu cuối trong questions.jsonl (không gom nhóm theo shop)")
     parser.add_argument("--range", type=str, default=None, help="Chỉ định khoảng câu hỏi cần chạy (1-based, ví dụ: 1-100 hoặc 501-1000)")
     args = parser.parse_args()

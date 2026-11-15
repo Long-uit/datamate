@@ -1027,7 +1027,14 @@ def execute_code_in_env(
 
         if "FINAL_RESULT" not in namespace:
             if "solution" in namespace and callable(namespace["solution"]):
-                _raw = namespace["solution"](smart_data)
+                try:
+                    _raw = namespace["solution"](smart_data)
+                except ValueError as ve:
+                    err_msg = str(ve).lower()
+                    if "empty sequence" in err_msg or "argmax" in err_msg or "nanargmax" in err_msg:
+                        _raw = ""
+                    else:
+                        raise
                 captured = captured_stdout.getvalue()
                 # Bắt lỗi âm thầm khi code LLM có try...except Exception và trả về None nhưng in ra lỗi
                 if (_raw is None or (isinstance(_raw, str) and not _raw.strip())) and (

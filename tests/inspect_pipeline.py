@@ -1219,7 +1219,7 @@ def run_single_inspection(
         print(f"  • Nạp mô hình {args.model_id} (4-bit NF4)...")
         t0 = time.time()
         client = LLMClient(model_id=args.model_id, auto_load=True)
-        code_text = client.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=getattr(args, "max_new_tokens", 1536))
+        code_text = client.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=getattr(args, "max_new_tokens", 512))
         gen_time_s = time.time() - t0
         latencies["llm_gen"] = gen_time_s * 1000
         print(f"  • Thời gian sinh mã : {gen_time_s:.2f}s ({latencies['llm_gen']:.1f}ms)")
@@ -1281,7 +1281,7 @@ def run_single_inspection(
                 retry_round=1,
                 temporal_text=format_temporal_for_prompt(temp_info),
             )
-            retry_code = client.generate_code(prompt=retry_user, system_prompt=retry_sys, max_new_tokens=getattr(args, "max_new_tokens", 1536))
+            retry_code = client.generate_code(prompt=retry_user, system_prompt=retry_sys, max_new_tokens=getattr(args, "max_new_tokens", 512))
             r_res, r_err, r_ms = execute_solution(
                 code_text=retry_code,
                 biz_dir=data_root / biz_id,
@@ -2261,7 +2261,7 @@ def run_batch_evaluation(args: argparse.Namespace):
             else:
                 t_llm = time.perf_counter()
                 assert llm is not None
-                code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=getattr(args, "max_new_tokens", 1536))
+                code_text = llm.generate_code(prompt=user_prompt, system_prompt=sys_prompt, max_new_tokens=getattr(args, "max_new_tokens", 512))
                 mod_latencies["llm_gen"] = round((time.perf_counter() - t_llm) * 1000, 2)
                 self_correction_count = 0
                 self_correction_trace = []
@@ -2320,7 +2320,7 @@ def run_batch_evaluation(args: argparse.Namespace):
                     temporal_text=format_temporal_for_prompt(temp_info),
                 )
                 t_retry_gen = time.perf_counter()
-                retry_code = llm.generate_code(prompt=retry_user, system_prompt=retry_sys, max_new_tokens=getattr(args, "max_new_tokens", 1536))
+                retry_code = llm.generate_code(prompt=retry_user, system_prompt=retry_sys, max_new_tokens=getattr(args, "max_new_tokens", 512))
                 mod_latencies["llm_gen"] = round(mod_latencies["llm_gen"] + (time.perf_counter() - t_retry_gen) * 1000, 2)
 
                 raw_retry, err_retry, ms_retry, type_retry, src_retry = execute_solution(
@@ -2739,7 +2739,7 @@ def main():
     parser.add_argument("--tau_star", type=float, default=0.50, help="Ngưỡng độ tin cậy tối ưu để từ chối trả lời (mặc định: 0.50)")
     parser.add_argument("--timeout", type=int, default=15, help="Thời gian chờ tối đa khi chạy code trong sandbox (giây, mặc định: 15)")
     parser.add_argument("--in_process", action="store_true", help="Chạy code trực tiếp trong tiến trình thay vì sandbox")
-    parser.add_argument("--max_new_tokens", type=int, default=768, help="Số token tối đa sinh ra từ LLM (mặc định: 768)")
+    parser.add_argument("--max_new_tokens", type=int, default=512, help="Số token tối đa sinh ra từ LLM (mặc định: 512)")
     parser.add_argument("--replay_logs", type=str, default=None, help="Thư mục logs đã sinh để chạy lại sandbox + cổng abstention + format (bỏ qua LLM)")
     parser.add_argument("--quantization", "--quant", type=str, default="8bit", choices=["8bit", "4bit", "none"], help="Chế độ lượng tử hóa mô hình (mặc định: 8bit)")
     parser.add_argument("--preserve_order", action="store_true", help="Chạy đúng theo thứ tự gốc từ câu 1 đến câu cuối trong questions.jsonl (không gom nhóm theo shop)")

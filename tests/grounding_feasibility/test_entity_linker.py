@@ -101,6 +101,43 @@ class TestEntityLinker(unittest.TestCase):
         self.assertIn("Cà phê đen", cand_values)
         self.assertIn("Bạc xỉu", cand_values)
 
+    def test_exclude_measure_units_and_quantity_columns(self):
+        # Kiểm tra không trích xuất đơn vị/số lượng từ cột Số lượng sản phẩm hay Đơn vị tính
+        df_order = pd.DataFrame({
+            "Mã đơn hàng": ["ORD01", "ORD02"],
+            "Tên sản phẩm": ["Trà sữa trân châu", "Trà đào"],
+            "Số lượng sản phẩm": ["1 ly", "2 ly"],
+            "Đơn vị tính": ["ly", "ly"],
+        })
+        t1 = TableInfo(
+            table_id="t_01",
+            source_file=Path("orders.csv"),
+            fixed_file_name="orders.csv",
+            sheet_name=None,
+            df=df_order,
+            header_row_detected=0,
+            n_rows=2,
+            columns=list(df_order.columns),
+        )
+        bd = BusinessData(business_id="tea_shop", tables=[t1])
+        cands = extract_candidates_from_business(bd)
+        cand_values = [c.value for c in cands]
+
+        # Phải có sản phẩm trà
+        self.assertIn("Trà sữa trân châu", cand_values)
+        self.assertIn("Trà đào", cand_values)
+        # Tuyệt đối KHÔNG có '1 ly', '2 ly', 'ly'
+        self.assertNotIn("1 ly", cand_values)
+        self.assertNotIn("2 ly", cand_values)
+        self.assertNotIn("ly", cand_values)
+
+        # Kiểm tra link_entities không khớp nhầm 'ly' trong câu hỏi
+        m = link_entities("nhóm trà có mặt hàng nào bán được nhiều ly nhất?", cands)
+        matched_values = [item.matched_value for item in m]
+        self.assertNotIn("1 ly", matched_values)
+        self.assertNotIn("2 ly", matched_values)
+        self.assertNotIn("ly", matched_values)
+
 
 if __name__ == "__main__":
     unittest.main()
