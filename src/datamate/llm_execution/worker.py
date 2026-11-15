@@ -77,6 +77,21 @@ COLUMN_CLUSTER_ALIASES: Dict[str, list[str]] = {
         "mahang", "ma_hang", "mã mặt hàng", "mã sản phẩm", "mã sản phẩm bán",
         "product_id", "sku", "mã món"
     ],
+    "status": [
+        "trạng thái", "trangthai", "trang_thai", "trạng thái giao", "trangthaigiao", "trạng thái đơn", "trangthaidon",
+        "tình trạng", "tinhtrang", "tinh_trang", "ghi chú tt", "ghichutt", "ghi_chu_tt", "xử lý", "xuly", "xu_ly",
+        "status", "delivery_status", "delivery status", "delivery", "giao hàng", "giaohang", "giao_hang", "trạng thái xử lý"
+    ],
+    "staff": [
+        "mã nv", "manv", "ma_nv", "mã nv bán", "manvban", "ma_nv_ban", "mã nhân viên", "manhanvien", "ma_nhan_vien",
+        "nhân viên", "nhanvien", "nhan_vien", "tên nv", "tennv", "ten_nv", "người bán", "nguoiban", "nguoi_ban",
+        "thu ngân", "thungan", "thu_ngan", "người tạo", "nguoitao", "nguoi_tao", "nv bán", "nvban"
+    ],
+    "customer": [
+        "khách hàng", "khachhang", "khach_hang", "tên khách", "tenkhach", "ten_khach", "mã khách", "makhach", "ma_khach",
+        "makh", "ma_kh", "khách", "khach", "khách hàng (tên)", "tên khách hàng", "ten_khach_hang",
+        "sdt", "số điện thoại", "so_dien_thoai", "sđt", "phone"
+    ],
 }
 
 
@@ -213,32 +228,61 @@ def get_status_col(df: Any) -> Any:
     cols = list(df.columns)
     for c in cols:
         norm = _norm_col_name(c)
-        if norm in ("trangthai", "status", "tinhtrang", "ghichutt", "xuly", "trangthaixuly"):
+        if norm in ("trangthai", "status", "tinhtrang", "ghichutt", "xuly", "trangthaixuly", "trangthaigiao", "trangthaidon"):
             return c
     for c in cols:
         norm = _norm_col_name(c)
-        if any(k in norm for k in ("trangthai", "status", "tinhtrang", "ghichutt")):
+        if any(k in norm for k in ("trangthai", "status", "tinhtrang", "ghichutt", "xuly")):
             return c
     return None
 
 
 def get_sales_table(data: Any) -> Any:
-    """Lấy bảng bán hàng tối ưu nhất từ dictionary data."""
+    """Lấy bảng bán hàng tối ưu nhất từ dictionary data.
+    Nếu dữ liệu bán hàng bị phân mảnh theo thời gian (nhiều tháng/nhiều năm),
+    tự động gộp tất cả các partition lại thành 1 DataFrame đầy đủ."""
     if not data or not isinstance(data, dict):
         return None
-    # 1. Ưu tiên bảng bán hàng có cả ngày và tiền (loại trừ nhập hàng, nhà cung cấp, chi phí, phiếu giao)
+
+    # 1. Thuộc tính hoặc key canonical đã có sẵn
+    if hasattr(data, "_unified_sales") and getattr(data, "_unified_sales") is not None:
+        return getattr(data, "_unified_sales")
+    for canonical_k in ("sales", "ban_hang", "banhang", "don_hang", "donhang"):
+        if canonical_k in data:
+            return data[canonical_k]
+
+    # 2. Phát hiện các partition bán hàng có date và amount/qty
+    sales_dfs: list[Any] = []
     for name, df in data.items():
+        if not hasattr(df, "columns"):
+            continue
         n_clean = _norm_col_name(name)
-        if any(k in n_clean for k in ("nhap", "ncc", "chiphi", "phieugiao", "giaohang")):
+        if any(k in n_clean for k in ("nhap", "ncc", "chiphi", "phieuthu", "phieugiao", "giaohang", "tonkho", "thekho", "baocaoca", "banggia", "lichsu", "quydoi", "hanghoa", "khachhang", "sotay")):
             continue
         if get_date_col(df) is not None and (get_amount_col(df) is not None or get_qty_col(df) is not None):
-            return df
-    # 2. Tìm bảng có tên liên quan đến bán hàng hoặc đơn hàng
+            sales_dfs.append(df)
+
+    if sales_dfs:
+        if len(sales_dfs) == 1:
+            return sales_dfs[0]
+        try:
+            import pandas as pd
+            unified = pd.concat(sales_dfs, ignore_index=True)
+            if hasattr(data, "__setattr__"):
+                try:
+                    data._unified_sales = unified
+                except Exception:
+                    pass
+            return unified
+        except Exception:
+            return sales_dfs[0]
+
+    # 3. Fallback tìm bảng có tên liên quan đến bán hàng hoặc đơn hàng
     for name, df in data.items():
         n_clean = _norm_col_name(name)
         if any(k in n_clean for k in ("banhang", "sobanhang", "donhang", "hoadon", "chitietdon", "sales", "order")):
             return df
-    # 3. Fallback trả về DataFrame đầu tiên có date_col
+    # 4. Fallback trả về DataFrame đầu tiên có date_col
     for name, df in data.items():
         if hasattr(df, "columns") and get_date_col(df) is not None:
             return df
@@ -669,9 +713,13 @@ class AliasedDataDict(dict):
 
 
 def build_canonical_data_dict(bd: Any) -> AliasedDataDict:
-    """Xây dựng từ điển bảng chính tắc (tránh nạp trùng bảng) kèm ánh xạ bí danh `_aliases`."""
+    """Xây dựng từ điển bảng chính tắc (tránh nạp trùng bảng) kèm ánh xạ bí danh `_aliases` và tự động gộp partition bán hàng."""
+    import pandas as pd
     data_dict = AliasedDataDict()
     aliases: Dict[str, str] = {}
+    sales_partitions: list[pd.DataFrame] = []
+    sheet_to_dfs: Dict[str, list[pd.DataFrame]] = {}
+
     for ti in getattr(bd, "tables", []):
         t_base = Path(ti.fixed_file_name).stem if getattr(ti, "fixed_file_name", None) else ti.table_id
         t_name = f"{t_base}_{ti.sheet_name}" if ti.sheet_name and ti.sheet_name != "Sheet1" else t_base
@@ -680,10 +728,42 @@ def build_canonical_data_dict(bd: Any) -> AliasedDataDict:
         data_dict[t_name] = ti.df
         if ti.sheet_name and ti.sheet_name != "Sheet1" and ti.sheet_name != t_name:
             aliases[ti.sheet_name] = t_name
+            sheet_to_dfs.setdefault(ti.sheet_name, []).append(ti.df)
         if t_base != t_name:
             aliases[t_base] = t_name
         if ti.table_id and ti.table_id != t_name:
             aliases[ti.table_id] = t_name
+
+        # Thu thập ứng viên partition bán hàng
+        n_clean = _norm_col_name(t_name)
+        if not any(k in n_clean for k in ("nhap", "ncc", "chiphi", "phieuthu", "phieugiao", "giaohang", "tonkho", "thekho", "baocaoca", "banggia", "lichsu", "quydoi", "hanghoa", "khachhang", "sotay")):
+            if hasattr(ti.df, "columns") and get_date_col(ti.df) is not None and (get_amount_col(ti.df) is not None or get_qty_col(ti.df) is not None):
+                sales_partitions.append(ti.df)
+
+    # 1. Gộp sheet xuất hiện ở nhiều file (ví dụ: DonHang_ChiTiet trong 17 file ở dev_002, hoặc BanHang trong 2 file ở dev_003)
+    for sheet_name, dfs in sheet_to_dfs.items():
+        if len(dfs) > 1:
+            try:
+                unified_sheet_df = pd.concat(dfs, ignore_index=True)
+                data_dict[sheet_name] = unified_sheet_df
+                aliases[sheet_name] = sheet_name
+            except Exception:
+                pass
+
+    # 2. Tạo bảng bán hàng thống nhất (Unified Sales Table)
+    if sales_partitions:
+        try:
+            if len(sales_partitions) == 1:
+                unified_sales_df = sales_partitions[0]
+            else:
+                unified_sales_df = pd.concat(sales_partitions, ignore_index=True)
+            data_dict._unified_sales = unified_sales_df
+            for canonical_key in ("sales", "ban_hang", "banhang", "don_hang", "donhang"):
+                if canonical_key not in data_dict:
+                    data_dict[canonical_key] = unified_sales_df
+                    aliases[canonical_key] = canonical_key
+        except Exception:
+            pass
 
     data_dict._aliases = aliases
     return data_dict
@@ -726,6 +806,11 @@ class SmartDataDict(dict):
         nk = self._normalize(key)
         if nk in self._norm_map:
             return super().__getitem__(self._norm_map[nk])
+        # Nếu truy vấn khái niệm bán hàng chung chung và có bảng unified_sales
+        if nk in ("sales", "banhang", "donhang", "hoadon", "chitietdon", "donhangchitiet"):
+            sales_tbl = self.get_sales_table()
+            if sales_tbl is not None:
+                return sales_tbl
         # Khớp mềm nếu một bên chứa bên kia
         for norm_cand, orig_k in self._norm_map.items():
             if nk and (nk in norm_cand or norm_cand in nk):
@@ -852,7 +937,15 @@ def execute_code_in_env(
                     )
                     if d_col:
                         try:
-                            s_dt = clean_date(df_copy[d_col])
+                            cached_dt_attr = f"_parsed_dt_{d_col}"
+                            if hasattr(v, cached_dt_attr):
+                                s_dt = getattr(v, cached_dt_attr)
+                            else:
+                                s_dt = clean_date(v[d_col])
+                                try:
+                                    setattr(v, cached_dt_attr, s_dt)
+                                except Exception:
+                                    pass
                             mask_le = s_dt.isna() | (s_dt.dt.date <= cutoff_dt.date())
                             if not mask_le.all():
                                 df_copy = df_copy.loc[mask_le].reset_index(drop=True)

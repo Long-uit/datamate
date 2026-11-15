@@ -245,7 +245,7 @@ def main():
     parser.add_argument("--resume", action="store_true", help="Tiếp tục chạy từ câu hỏi chưa hoàn thành (bỏ qua các câu đã có trong file submission)")
     parser.add_argument("--tau_star", type=float, default=0.50, help="Ngưỡng độ tin cậy tối ưu tau* để từ chối trả lời (mặc định: 0.50)")
     parser.add_argument("--seed", type=int, default=42, help="Cố định random seed cho tính tái lập tuyệt đối (mặc định: 42)")
-    parser.add_argument("--timeout", type=int, default=15, help="Thời gian chờ tối đa khi chạy code trong sandbox (giây, mặc định: 15)")
+    parser.add_argument("--timeout", type=int, default=25, help="Thời gian chờ tối đa khi chạy code trong sandbox (giây, mặc định: 25)")
     parser.add_argument("--in_process", action="store_true", help="Chạy code trực tiếp trong tiến trình (bảo vệ cache bằng bản sao RAM) thay vì sandbox subprocess")
     parser.add_argument("--quantization", "--quant", type=str, default="8bit", choices=["8bit", "4bit", "none"], help="Chế độ lượng tử hóa mô hình (mặc định: 8bit)")
     parser.add_argument("--max_new_tokens", type=int, default=512, help="Số token tối đa sinh ra cho mỗi câu (mặc định: 512)")

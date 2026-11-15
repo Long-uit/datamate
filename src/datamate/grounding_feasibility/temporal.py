@@ -290,12 +290,38 @@ def resolve_temporal(
         except Exception:
             pass
 
+    # 0a-1. Khoảng tháng (Month Range): ví dụ "từ th5/2025 đến th7/2025", "từ tháng 5 đến tháng 7 năm 2025"
+    m_mrange = re.search(
+        r"(?:từ|tu)\s*(?:th[aá]ng|thang|thg|th|t)?\s*([0-1]?\d)(?:[/-](\d{2,4}))?\s*(?:đến|den|tới|toi|-)\s*(?:hết\s*)?(?:th[aá]ng|thang|thg|th|t)?\s*([0-1]?\d)(?:[/-](\d{2,4}))?",
+        q,
+    )
+    if m_mrange and not m_span_from_date:
+        try:
+            mr1, mr_y1, mr2, mr_y2 = int(m_mrange.group(1)), m_mrange.group(2), int(m_mrange.group(3)), m_mrange.group(4)
+            if 1 <= mr1 <= 12 and 1 <= mr2 <= 12:
+                my2 = int(mr_y2) if mr_y2 else (d.year if date(d.year, mr2, 1) <= d else d.year - 1)
+                if my2 < 100:
+                    my2 += 2000
+                my1 = int(mr_y1) if mr_y1 else my2
+                if my1 < 100:
+                    my1 += 2000
+                m_range_start = date(my1, mr1, 1)
+                m_range_end = get_month_end(my2, mr2)
+                windows.append(TimeWindow(
+                    start_date=m_range_start.isoformat(),
+                    end_date=m_range_end.isoformat(),
+                    label=f"month_range_{my1}_{mr1:02d}_to_{my2}_{mr2:02d}",
+                    description=f"Từ tháng {mr1}/{my1} đến tháng {mr2}/{my2} (từ {m_range_start.isoformat()} đến {m_range_end.isoformat()})",
+                ))
+        except Exception:
+            pass
+
     # 0a-2. Khoảng ngày rút gọn: ví dụ "từ 1/8 đến 15/8", "từ ngày 01/08 đến 15/08/2025"
     m_range = re.search(
         r"(?:từ|tu)\s*(?:ngày|ngay)?\s*([0-3]?\d)[/-]([0-1]?\d)(?:[/-](\d{4}))?\s*(?:đến|den|tới|toi|-)\s*(?:ngày|ngay)?\s*([0-3]?\d)[/-]([0-1]?\d)(?:[/-](\d{4}))?",
         q,
     )
-    if m_range and not m_span_from_date:
+    if m_range and not m_span_from_date and not windows:
         try:
             rd1, rm1, ry1 = int(m_range.group(1)), int(m_range.group(2)), m_range.group(3)
             rd2, rm2, ry2 = int(m_range.group(4)), int(m_range.group(5)), m_range.group(6)
@@ -352,12 +378,15 @@ def resolve_temporal(
 
     # 0a-4. Ngày rút gọn không ghi năm (ví dụ: "8/26 tiền bán ca chiều là bnhiu?", "ngày 26/8", "hôm 15/9")
     # Lưu ý: Không chạy nếu câu hỏi đang nói về tháng (has_month_ctx) hoặc n2 là năm (20..35) trong so sánh tháng
-    has_month_context = bool(re.search(r"\bth[aá]ng|\bthang\b|tháng nào|xem tháng", q))
+    has_month_context = bool(re.search(r"\bth[aá]ng|\bthang\b|\bth\b|\bthg\b|tháng nào|xem tháng", q_no_acc))
     m_shorthand = re.search(r"(?:(?:\b(?:vào|vao|ngày|ngay|hôm|hom)\s+)|(?<!\d))([0-3]?\d)[/-]([0-3]?\d)\b(?!\s*%)", q)
     if m_shorthand and not m_span_from_date and not m_range and not m_exact_date and not has_month_context:
         try:
             n1, n2 = int(m_shorthand.group(1)), int(m_shorthand.group(2))
-            if n1 > 0 and n2 > 0:
+            if 1 <= n1 <= 12 and 20 <= n2 <= 35:
+                # Dạng M/YY (ví dụ: 7/25, 11/25, 3/26) là Tháng M Năm 20YY, để mục 9 (Tháng M) xử lý chính xác
+                pass
+            elif n1 > 0 and n2 > 0:
                 if n1 > 12 and 1 <= n2 <= 12:
                     s_day, s_month = n1, n2
                 elif n2 > 12 and 1 <= n1 <= 12:
@@ -379,14 +408,15 @@ def resolve_temporal(
         except Exception:
             pass
 
-    # 0b. Kiểm tra trước cụm "từ đầu năm" và "từ đầu tháng" để tránh "hôm nay"/"hnay"/"bữa nay" bị khớp sớm thành 1 ngày
+    # 0b. Kiểm tra trước cụm "từ đầu năm", "từ đầu tháng" hoặc "N ngày qua" để tránh "hôm nay"/"hnay"/"bữa nay" bị khớp sớm thành 1 ngày
     ytd_pattern = r"tu\s*dau\s*nam(\s*(?:cho\s*)?(toi|den)\s*(het\s*)?(nay|hnay|(?:ngay\s*)?hom\s*nay|bua\s*nay))?"
     mtd_pattern = r"tu\s*dau\s*thang(\s*nay)?(\s*(?:cho\s*)?(toi|den)\s*(het\s*)?(nay|hnay|(?:ngay\s*)?hom\s*nay|bua\s*nay))?"
     has_ytd = bool(re.search(ytd_pattern, q_no_acc))
     has_mtd = bool(re.search(mtd_pattern, q_no_acc))
+    has_ndays_phrase = bool(re.search(r"(\d+)\s*ngay\s*(gan\s*nhat|qua|vua\s*qua|gan\s*day)", q_no_acc))
 
-    # 1. Hôm nay / ngày mốc (loại trừ nếu thuộc cụm từ đầu năm hoặc từ đầu tháng)
-    if not has_ytd and not has_mtd and re.search(r"\bhom\s*nay\b|\bngay\s*moc\b|\bhnay\b|\bbua\s*nay\b", q_no_acc):
+    # 1. Hôm nay / ngày mốc (loại trừ nếu thuộc cụm từ đầu năm, từ đầu tháng hoặc N ngày qua)
+    if not has_ytd and not has_mtd and not has_ndays_phrase and re.search(r"\bhom\s*nay\b|\bngay\s*moc\b|\bhnay\b|\bbua\s*nay\b", q_no_acc):
         windows.append(TimeWindow(
             start_date=d.isoformat(),
             end_date=d.isoformat(),
@@ -530,16 +560,18 @@ def resolve_temporal(
                 y_val = y_raw if y_raw >= 100 else 2000 + y_raw
                 extracted_months.append((m_val, y_val))
 
-        # 9c. Định dạng M/YYYY độc lập: "8/2025", "08/2025", "11/2024"
-        for m in re.finditer(r"(?<!\d/)(?<!\d-)(?<!\d)([0-1]?\d)/(20\d{2})\b", q):
+        # 9c. Định dạng M/YYYY độc lập hoặc gạch nối: "8/2025", "08/2025", "11/2024", "6-2025"
+        for m in re.finditer(r"(?<!\d/)(?<!\d-)(?<!\d)([0-1]?\d)[/-](20\d{2})\b", q):
             m_val = int(m.group(1))
             if 1 <= m_val <= 12:
                 y_val = int(m.group(2))
                 extracted_months.append((m_val, y_val))
 
-        # 9d. Định dạng M/YY trong ngữ cảnh tháng: "3/25, 4/25 và 5/25 xem tháng nào"
-        if has_month_ctx:
-            for m in re.finditer(r"(?<!\d/)(?<!\d-)(?<!\d)([0-1]?\d)/(2[0-9])\b", q):
+        # 9d. Định dạng M/YY (ví dụ: "7/25", "3/25", "11/25", "2/26", "3/26"):
+        # Áp dụng khi có ngữ cảnh tháng HOẶC độc lập nếu YY thuộc 20..35 và không có tiền tố ngày/hôm
+        for m in re.finditer(r"(?<!\d/)(?<!\d-)(?<!\d)([0-1]?\d)[/-](2[0-9]|3[0-5])\b", q):
+            prefix = q[:m.start()]
+            if not re.search(r"(?:ng[aà]y|h[oô]m|v[aà]o)\s*$", prefix, re.IGNORECASE):
                 m_val = int(m.group(1))
                 if 1 <= m_val <= 12:
                     y_val = int(m.group(2)) + 2000
