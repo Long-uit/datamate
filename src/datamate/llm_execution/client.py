@@ -731,7 +731,7 @@ class LLMClient:
             default=15.0
         ) if num_gpus > 0 else 15.0
 
-        MAX_SAFE_INPUT_TOKENS = 8192 if min_vram_gb >= 24.0 else 2800
+        MAX_SAFE_INPUT_TOKENS = 8192 if min_vram_gb >= 24.0 else 4096
 
         # Tỉa text sạch sẽ bảo toàn cấu trúc ChatML (không bao giờ cắt đứt tensor)
         cleaned_messages = [dict(m) for m in messages]
@@ -748,8 +748,11 @@ class LLMClient:
                     # 2. Cắt bớt phần chi tiết cột schema nếu vẫn quá dài (> 4,500 ký tự)
                     if len(content) > 4500 and "### CHI TIẾT CÁC BẢNG VÀ CỘT:" in content:
                         head_sec, detail_sec = content.split("### CHI TIẾT CÁC BẢNG VÀ CỘT:", 1)
-                        detail_lines = detail_sec.splitlines()
-                        content = f"{head_sec}\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n" + "\n".join(detail_lines[:50])
+                        detail_lines = [
+                            ln for ln in detail_sec.splitlines()
+                            if not ln.strip().startswith("- Dòng mẫu:") and not ln.strip().startswith("Sample:")
+                        ]
+                        content = f"{head_sec}\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n" + "\n".join(detail_lines[:45])
                     m["content"] = content
 
         chat_text = self.tokenizer.apply_chat_template(
@@ -776,13 +779,20 @@ class LLMClient:
         inputs = self.tokenizer([chat_text], return_tensors="pt").to(self.model.device)
         start_len = inputs.input_ids.shape[1]
 
-        # Nếu sau khi tỉa text vẫn vượt ngưỡng MAX_SAFE_INPUT_TOKENS, tiếp tục nén ở tầng text sạch
+        # Nếu sau khi tỉa text vẫn vượt ngưỡng MAX_SAFE_INPUT_TOKENS, nén gọn Schema (BẢO TOÀN 100% CÁC QUY TẮC)
         if start_len > MAX_SAFE_INPUT_TOKENS:
-            print(f"[LLMClient] ⚡ Prompt dài ({start_len} tokens). Tự động nén gọn System Prompt xuống {MAX_SAFE_INPUT_TOKENS} tokens...")
-            ratio = max(0.4, (MAX_SAFE_INPUT_TOKENS - 400) / max(start_len, 1))
+            print(f"[LLMClient] ⚡ Prompt dài ({start_len} tokens). Tự động tinh gọn Schema xuống dưới {MAX_SAFE_INPUT_TOKENS} tokens...")
             for m in cleaned_messages:
                 if m.get("role") == "system":
-                    m["content"] = m["content"][:int(len(m["content"]) * ratio)].strip()
+                    content = m["content"]
+                    if "### CHI TIẾT CÁC BẢNG VÀ CỘT:" in content:
+                        head_sec, detail_sec = content.split("### CHI TIẾT CÁC BẢNG VÀ CỘT:", 1)
+                        compact_lines = [
+                            ln for ln in detail_sec.splitlines()
+                            if ln.strip().startswith("Bảng:") or ln.strip().startswith("- Cột:")
+                        ]
+                        content = f"{head_sec}\n### CHI TIẾT CÁC BẢNG VÀ CỘT:\n" + "\n".join(compact_lines[:25])
+                    m["content"] = content
             chat_text = self.tokenizer.apply_chat_template(
                 cleaned_messages,
                 tokenize=False,

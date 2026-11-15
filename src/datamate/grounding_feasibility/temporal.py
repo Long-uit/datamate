@@ -351,8 +351,10 @@ def resolve_temporal(
             pass
 
     # 0a-4. Ngày rút gọn không ghi năm (ví dụ: "8/26 tiền bán ca chiều là bnhiu?", "ngày 26/8", "hôm 15/9")
+    # Lưu ý: Không chạy nếu câu hỏi đang nói về tháng (has_month_ctx) hoặc n2 là năm (20..35) trong so sánh tháng
+    has_month_context = bool(re.search(r"\bth[aá]ng|\bthang\b|tháng nào|xem tháng", q))
     m_shorthand = re.search(r"(?:(?:\b(?:vào|vao|ngày|ngay|hôm|hom)\s+)|(?<!\d))([0-3]?\d)[/-]([0-3]?\d)\b(?!\s*%)", q)
-    if m_shorthand and not m_span_from_date and not m_range and not m_exact_date:
+    if m_shorthand and not m_span_from_date and not m_range and not m_exact_date and not has_month_context:
         try:
             n1, n2 = int(m_shorthand.group(1)), int(m_shorthand.group(2))
             if n1 > 0 and n2 > 0:
@@ -502,23 +504,55 @@ def resolve_temporal(
                 description=f"{n} ngày liền trước (từ {prev_start.isoformat()} đến {prev_end.isoformat()})",
             ))
 
-    # 9. Tháng M (có hoặc không ghi năm)
-    m_month = re.search(r"\bth(?:[aá]ng|ang|angs)\s*(\d{1,2})(?:\s*(?:/|n[aă]m|[\s\-])\s*(\d{4}))?\b", q)
-    if (
-        m_month
-        and not re.search(r"\bth[aá]ng\s*(n[aà]y|tr[uư][oớ]c|r[oồ]i)\b", m_month.group(0))
-        and not re.search(r"n[uử]a\s*(đ[aầ]u|cu[oố]i)|10\s*ng[aà]y\s*(đ[aầ]u|gi[uữ]a|cu[oố]i)|\b(r[aăằ]m|ram|m[uù]ng\s*1)\b", q)
-    ):
-        m_val = int(m_month.group(1))
-        if 1 <= m_val <= 12:
-            if m_month.group(2):
-                y_val = int(m_month.group(2))
-            else:
-                if date(d.year, m_val, 1) <= d:
-                    y_val = d.year
-                else:
-                    y_val = d.year - 1
+    # 9. Tháng M (có hoặc không ghi năm, hỗ trợ T{M}/{YYYY}, th{M}/{YYYY}, M/YYYY, và so sánh M/YY)
+    if not re.search(r"n[uử]a\s*(đ[aầ]u|cu[oố]i)|10\s*ng[aà]y\s*(đ[aầ]u|gi[uữ]a|cu[oố]i)|\b(r[aăằ]m|ram|m[uù]ng\s*1)\b", q):
+        extracted_months: List[Tuple[int, int]] = []
+        has_month_ctx = bool(re.search(r"\bth[aá]ng|\bthang\b|tháng nào|xem tháng", q))
 
+        # 9a. Định dạng có tiền tố tháng: "tháng 7 năm 2025", "thang 7/2025", "th7/2025", "thg 7/2025", "th 07"
+        for m in re.finditer(r"\b(?:th[aá]ng|thang|thangs|thg|th)\s*(\d{1,2})(?:\s*(?:/|n[aă]m|[\s\-])\s*(\d{2,4}))?\b", q):
+            if re.search(r"\bth[aá]ng\s*(n[aà]y|tr[uư][oớ]c|r[oồ]i)\b", m.group(0)):
+                continue
+            m_val = int(m.group(1))
+            if 1 <= m_val <= 12:
+                if m.group(2):
+                    y_raw = int(m.group(2))
+                    y_val = y_raw if y_raw >= 100 else 2000 + y_raw
+                else:
+                    y_val = d.year if date(d.year, m_val, 1) <= d else d.year - 1
+                extracted_months.append((m_val, y_val))
+
+        # 9b. Định dạng T{M}/{YYYY hoặc YY}: "T5/2025", "t5/2025", "t07/2025", "t5/25"
+        for m in re.finditer(r"\b[tT](\d{1,2})/(20\d{2}|\d{2})\b", q):
+            m_val = int(m.group(1))
+            if 1 <= m_val <= 12:
+                y_raw = int(m.group(2))
+                y_val = y_raw if y_raw >= 100 else 2000 + y_raw
+                extracted_months.append((m_val, y_val))
+
+        # 9c. Định dạng M/YYYY độc lập: "8/2025", "08/2025", "11/2024"
+        for m in re.finditer(r"(?<!\d/)(?<!\d-)(?<!\d)([0-1]?\d)/(20\d{2})\b", q):
+            m_val = int(m.group(1))
+            if 1 <= m_val <= 12:
+                y_val = int(m.group(2))
+                extracted_months.append((m_val, y_val))
+
+        # 9d. Định dạng M/YY trong ngữ cảnh tháng: "3/25, 4/25 và 5/25 xem tháng nào"
+        if has_month_ctx:
+            for m in re.finditer(r"(?<!\d/)(?<!\d-)(?<!\d)([0-1]?\d)/(2[0-9])\b", q):
+                m_val = int(m.group(1))
+                if 1 <= m_val <= 12:
+                    y_val = int(m.group(2)) + 2000
+                    extracted_months.append((m_val, y_val))
+
+        # Loại bỏ trùng lặp giữ nguyên thứ tự
+        unique_months: List[Tuple[int, int]] = []
+        for item in extracted_months:
+            if item not in unique_months:
+                unique_months.append(item)
+
+        if len(unique_months) == 1:
+            m_val, y_val = unique_months[0]
             m_start = date(y_val, m_val, 1)
             m_end = get_month_end(y_val, m_val)
             windows.append(TimeWindow(
@@ -526,6 +560,20 @@ def resolve_temporal(
                 end_date=m_end.isoformat(),
                 label=f"month_{y_val}_{m_val:02d}",
                 description=f"Tháng {m_val}/{y_val}",
+            ))
+        elif len(unique_months) > 1:
+            # Nhiều tháng trong câu hỏi so sánh -> tạo TimeWindow bao quát toàn bộ kỳ
+            sorted_m = sorted(unique_months, key=lambda x: (x[1], x[0]))
+            first_m, first_y = sorted_m[0]
+            last_m, last_y = sorted_m[-1]
+            cmp_start = date(first_y, first_m, 1)
+            cmp_end = get_month_end(last_y, last_m)
+            months_str = ", ".join(f"{m}/{y}" for m, y in unique_months)
+            windows.append(TimeWindow(
+                start_date=cmp_start.isoformat(),
+                end_date=cmp_end.isoformat(),
+                label=f"compare_months_{first_y}_{first_m:02d}_to_{last_y}_{last_m:02d}",
+                description=f"So sánh các tháng {months_str} (từ {cmp_start.isoformat()} đến {cmp_end.isoformat()})",
             ))
 
     # 9.1. Nửa đầu tháng / Nửa cuối tháng

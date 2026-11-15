@@ -730,7 +730,9 @@ NGUYÊN TẮC THIẾT KẾ MÃ NGUỒN:
 7. Nếu dữ liệu sau lọc rỗng hoặc không tìm thấy: trả về 0 (doanh thu/số đơn/số lượng), 0.0 (tỉ lệ), "" (tên đối tượng), hoặc [] (top-k). Không return None.
 8. Trả về đúng 1 giá trị vô hướng (int, float, str, list). Không trả về dictionary chứa nhiều thông tin.
 9. An toàn khi tìm Top-1 (idxmax): BẮT BUỘC kiểm tra series không rỗng trước khi gọi `idxmax()`: `if len(grp) == 0: return ""` hoặc `if grp.empty: return ""`. TUYỆT ĐỐI KHÔNG gọi .idxmax() trên Series rỗng để tránh crash ValueError!
-10. TUYỆT ĐỐI KHÔNG raise DataNotFoundError hay các Exception khác. Nếu bảng/cột không khớp, hãy trả về 0, 0.0 hoặc []!"""
+10. TUYỆT ĐỐI KHÔNG raise DataNotFoundError hay các Exception khác. Nếu bảng/cột không khớp, hãy trả về 0, 0.0 hoặc []!
+11. [Khách hàng (Điều 3)]: Khi xếp hạng, đếm hoặc tìm khách hàng (ví dụ: 'khách có số đơn nhiều nhất', 'khách chi tiêu cao nhất'): BẮT BUỘC loại bỏ khách lẻ/vãng lai: `df = df[~df[cust_col].astype(str).str.contains(r'lẻ|khách lẻ|vãng lai|kl|nan|none', case=False, na=False)]`. TUYỆT ĐỐI KHÔNG BAO GIỜ trả về 'khách lẻ' hay 'khách vãng lai' làm câu trả lời!
+12. [Tiền tệ & AOV (Điều 9)]: Khi tính giá trị trung bình đơn hàng (AOV), doanh thu, tiền nợ: luôn làm tròn về số nguyên đồng (VND) bằng `int(round(...))`."""
 
     conditional_rules: List[str] = []
     q_clean = _strip_accents(q_low)

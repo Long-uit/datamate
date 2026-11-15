@@ -286,6 +286,14 @@ MEASURE_UNITS: set[str] = {
     "túi", "tui", "bịch", "bich", "cây", "cay", "bình", "binh", "can", "tuýp", "tuyp", "gói", "goi",
 }
 
+# Các từ cú pháp / giới từ / đơn vị chung trong tiếng Việt - cấm dùng làm từ duy nhất để khớp tên người
+COMMON_PREPOSITIONS_AND_SYNTAX: set[str] = {
+    "từ", "tu", "đến", "den", "tới", "toi", "và", "va", "cho", "của", "cua",
+    "với", "voi", "ở", "o", "trong", "về", "ve", "lại", "lai", "lên", "len",
+    "xuống", "xuong", "qua", "ra", "vào", "vao", "được", "duoc", "dc", "đc",
+    "hàng", "hang", "đơn", "don", "khách", "khach", "tiệm", "tiem", "shop",
+}
+
 # Các cột số lượng / tiền tệ / đơn vị / thuộc tính đo lường - cấm trích xuất thực thể
 NON_ENTITY_COL_PATTERNS = [
     r"s[oố]\s*l[uư][oơ]ng|sl\b|qty|quantity",
@@ -404,9 +412,9 @@ def _expand_single_token(
         if re.match(r"^(?:0?[1-9]|1[0-2])(?:/\d{2,4})?$", next_clean) or next_clean in ("này", "nay", "nayf", "trước", "trc", "truwowcs"):
             return f"{prefix}tháng{suffix}", "tháng"
 
-    # 3. Xử lý viết liền 'th5/2025', 'thg5/2025', 'th08/2025'
-    m_th_num = re.match(r"^(?:thg|th)(0?[1-9]|1[0-2])(/\d{2,4})?$", clean_t)
-    if m_th_num:
+    # 3. Xử lý viết liền 'th5/2025', 'thg5/2025', 'th08/2025', 't5/2025'
+    m_th_num = re.match(r"^(?:thg|th|t)(0?[1-9]|1[0-2])(/\d{2,4})?$", clean_t)
+    if m_th_num and (clean_t.startswith("th") or m_th_num.group(2)):
         full_w = f"tháng {m_th_num.group(1)}{m_th_num.group(2) or ''}"
         return f"{prefix}{full_w}{suffix}", full_w
 
@@ -644,6 +652,18 @@ def fuzzy_entity_match_score(query: str, target: str) -> float:
     if len(t_clean) >= 3 and re.search(pat_clean, q_clean):
         return 0.95
 
+    # Bảo vệ ngữ nghĩa có dấu: nếu cả query và target đều có dấu tiếng Việt,
+    # nhưng không có bất kỳ từ có dấu nào trùng nhau và target không phải là chuỗi con của query,
+    # tuyệt đối không dùng đối sánh không dấu để tránh khớp nhầm (vd: 'giá trị' khớp nhầm 'gia vị')
+    accent_pat = r"[áàảãạăắằẳẵặâấầẩẫậéèẻẽẹêếềểễệíìỉĩịóòỏõọôốồổỗộơớờởỡợúùủũụưứừửữựýỳỷỹỵđ]"
+    has_q_accents = bool(re.search(accent_pat, q_norm))
+    has_t_accents = bool(re.search(accent_pat, t_norm))
+    if has_q_accents and has_t_accents:
+        q_acc_tokens = set(q_norm.split())
+        t_acc_tokens = set(t_norm.split())
+        if not q_acc_tokens.intersection(t_acc_tokens) and t_norm not in q_norm:
+            return 0.0
+
     t_tokens = set(t_clean.split())
     q_tokens = set(q_clean.split())
     if not t_tokens or not q_tokens:
@@ -727,17 +747,23 @@ def link_entities(
         ):
             continue
 
-        # 2. Khách hàng/nhân viên/nhà cung cấp: ngăn chặn false positive từ từ đơn lẻ khi câu hỏi không hỏi người
+        # 2. Khách hàng/nhân viên/nhà cung cấp: ngăn chặn false positive từ từ đơn lẻ hoặc từ ngữ pháp rải rác
         if cand.entity_type in ("customer", "staff", "supplier"):
-            is_about_person = bool(re.search(r"\b(?:khach|nhan\s*vien|nguoi\s*ban|ncc|nha\s*cung\s*cap|ong|ba|anh|chi|doi\s*tac)\b", unaccented_q))
             c_tokens = target_unaccented.split()
-            if not is_about_person:
-                # Nếu câu hỏi không hỏi người, bắt buộc toàn bộ các từ trong tên phải xuất hiện chính xác
-                if len(c_tokens) < 2 or not all(re.search(r"(?<!\w)" + re.escape(tk) + r"(?!\w)", unaccented_q) for tk in c_tokens):
-                    continue
+            if target_unaccented in unaccented_q:
+                pass  # Trùng trọn vẹn chuỗi tên
+            elif len(c_tokens) >= 2:
+                has_contiguous_bigram = any(
+                    f"{c_tokens[i]} {c_tokens[i+1]}" in unaccented_q
+                    for i in range(len(c_tokens) - 1)
+                )
+                if not has_contiguous_bigram:
+                    distinctive_tokens = [tk for tk in c_tokens if tk not in COMMON_PREPOSITIONS_AND_SYNTAX]
+                    if not distinctive_tokens or not all(re.search(r"(?<!\w)" + re.escape(tk) + r"(?!\w)", unaccented_q) for tk in distinctive_tokens):
+                        continue
             else:
-                # Dù có hỏi người, không cho phép chỉ khớp 1 từ đơn lẻ
-                if len(c_tokens) >= 2 and sum(bool(re.search(r"(?<!\w)" + re.escape(tk) + r"(?!\w)", unaccented_q)) for tk in c_tokens) < 2:
+                single_tk = c_tokens[0] if c_tokens else ""
+                if not single_tk or single_tk in COMMON_PREPOSITIONS_AND_SYNTAX or not re.search(r"(?<!\w)(?:khach|anh|chi|ong|ba|co|chu|bac)\s+" + re.escape(single_tk) + r"(?!\w)", unaccented_q):
                     continue
 
         score = fuzzy_entity_match_score(expanded_q, cand.value)

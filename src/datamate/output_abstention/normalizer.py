@@ -860,7 +860,14 @@ def normalize_output(
 
     elif target_type == "number":
         q_low = _nfc(question).lower() if question else ""
-        if q_low and any(k in q_low for k in ("tiền", "tien", "doanh thu", "dthu", "chi phí", "giá bán", "giá nhập", "gia nhap", "lợi nhuận", "lãi", "vnd", "đồng", "nợ", "no ")):
+        is_currency = False
+        currency_keywords = (
+            "tiền", "tien", "doanh thu", "dthu", "chi phí", "giá bán", "gia ban",
+            "giá nhập", "gia nhap", "lợi nhuận", "lãi", "vnd", "đồng", "dong", "nợ", "no ",
+            "giá trị", "gia tri", "mỗi đơn", "moi don", "aov", "chi tiêu", "chi tieu",
+            "mua hết", "mua het", "tổng cộng", "tong cong", "bán đc bao nhiêu", "ban dc bao nhieu"
+        )
+        if q_low and any(k in q_low for k in currency_keywords):
             is_currency = True
         is_avg = bool(q_low and not is_currency and any(k in q_low for k in ("trung bình", "trung binh", "bình quân", "binh quan")))
         ans = normalize_number(raw_val, is_currency=is_currency, is_average=is_avg)
